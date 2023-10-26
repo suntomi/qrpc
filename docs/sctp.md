@@ -1,0 +1,11 @@
+### sctp受信の流れ
+- 外部からusrsctp_conninputで受信したバッファを渡す
+- 以下のように呼ばれる
+  - usrsctp_conninput
+  - sctp_common_input_processing
+  - sctp_process_data
+  - sctp_process_a_data_chunk
+  - sctp_deliver_reasm_check
+  - sctp_queue_data_for_reasm
+  - sctp_invoke_recv_callback
+    - なぜか受信バッファをmallocしたバッファにコピーしている。無くしても動きそう。(特にシングルスレッドなら)
