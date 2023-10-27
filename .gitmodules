@@ -1,0 +1,3 @@
+[submodule "src/ext/mediasoup"]
+	path = src/ext/mediasoup
+	url = https://github.com/suntomi/mediasoup
