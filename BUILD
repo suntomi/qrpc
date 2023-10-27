@@ -1,4 +1,4 @@
-load("@rules_foreign_cc//foreign_cc:defs.bzl", "make")
+# load("@rules_foreign_cc//foreign_cc:defs.bzl", "make")
 
 # this cannot work on OSX because wrapped version of libtool 
 # in bazel sandbox does not support --version option, which is necessary for meson.
@@ -9,8 +9,8 @@ load("@rules_foreign_cc//foreign_cc:defs.bzl", "make")
 #   name = "mediasoup",
 #   lib_source = "//src/ext/mediasoup:srcs",
 #   targets = ["libmediasoup-worker"],
-#   out_include_dir = "worker/include",
-#   out_static_libs = ["worker/out/Release/libmediasoup_worker.a"],
+#   out_include_dir = "src/ext/mediasoup/worker/include",
+#   out_static_libs = ["src/ext/mediasoup/worker/out/Release/libmediasoup_worker.a"],
 #   # without this tag, the build will fail with: 
 #   # Failed to establish a new connection: [Errno 1] Operation not permitted')': /simple/meson/
 #   # because of network access is sandboxed by default
