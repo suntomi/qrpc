@@ -1,6 +1,7 @@
 #pragma once
 
 #include "address.h"
+#include "io_processor.h"
 
 namespace base {
     class SessionFactory {

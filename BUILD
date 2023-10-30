@@ -27,6 +27,7 @@ cc_binary(
   name = "server",
   srcs = ["examples/server/main.cpp"],
   includes = [
+    "src",
     "src/ext/mediasoup/worker/include",
     "src/ext/mediasoup/worker/subprojects/abseil-cpp-20220623.0",
     "src/ext/mediasoup/worker/subprojects/nlohmann_json-3.10.5/include",

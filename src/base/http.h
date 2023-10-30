@@ -6,7 +6,7 @@
 #include <cstdlib>
 #include <regex>
 #include "defs.h"
-#include "io_processor.h"
+#include "session.h"
 
 namespace base {
     /****** HTTP status codes *******/
@@ -110,6 +110,14 @@ namespace base {
     public:
         HttpFSM() : m_p(nullptr) {}
         ~HttpFSM() { if (m_p != nullptr) { std::free(m_p); } }
+        void    move_from(HttpFSM &fsm) {
+            m_ctx = fsm.m_ctx;
+            m_max = fsm.m_max;
+            m_len = fsm.m_len;
+            m_buf = fsm.m_buf;
+            m_p = fsm.m_p;
+            fsm.m_p = nullptr;
+        }
         state   append(char *b, int bl);
         void    reset(uint32_t chunk_size);
     public:
@@ -170,7 +178,7 @@ namespace base {
                 const char *val;
             };
         public:
-            HttpSession(const Loop &l, Fd fd) : Session(l, fd) {}
+            HttpSession(const Loop &l, Fd fd, const Address &addr, bool server) : Session(l, fd, addr, server) {}
             const HttpFSM &req() const { return fsm_; }
             int Write(http_result_code_t rc, Header *h, size_t hsz, const char *body, size_t bsz) {
                 // +2 for status line and body
@@ -200,18 +208,22 @@ namespace base {
                 case HttpFSM::state_recv_bodylen:
                 case HttpFSM::state_recv_footer:
                 case HttpFSM::state_recv_comment:
-                case HttpFSM::state_websocket_establish:
                     return true; //not close connection
-                case HttpFSM::state_recv_finish:
-                    if (!cb_(*this)) {
+                case HttpFSM::state_websocket_establish:
+                case HttpFSM::state_recv_finish: {
+                    auto newsession = cb_(*this);
+                    if (newsession != nullptr) {
+                        ASSERT(newsession->fd() == fd_);
+                        loop_.ModProcessor(fd_, newsession);
                         fsm_.set_state(state_response_pending);
                         return true; //not close connection.
                         // callbacked module should cleanup connection after response is sent,
                         // by calling Destroy()
                     }
-                    break;
+                } break;
                 case HttpFSM::state_invalid:
                 case HttpFSM::state_error:
+                case HttpFSM::state_response_pending:
                 default:
                     ASSERT(false);
                     return false; // close connection
@@ -223,7 +235,7 @@ namespace base {
         private:
             HttpFSM fsm_;
         }
-        typedef std::function<bool (HttpSession&)> Callback;
+        typedef std::function<Session *(HttpSession&)> Callback;
     public:
         HttpServer(const Loop &l) : loop_(l) {}
         bool Listen(int port, Callback cb) {
@@ -235,29 +247,6 @@ namespace base {
     };
     typedef HttpServer::HttpSession HttpSession;
     typedef HttpServer::HttpSession::Header HttpHeader;
-
-    /******* HttpRouter *******/
-    class HttpRouter {
-    public:
-        typedef HttpServer::Callback Handler;
-        typedef HttpServer::HttpSession Response;
-        typedef HttpFSM Request;
-        HttpRouter() : route_() {}
-        void Route(const std::regex &pattern, Handler h) {
-            route_[pattern] = h;
-        }
-        void operator () (HttpSession &s) {
-            char buff[256];
-            const char *path = req.url(buff, sizeof(buff));
-            for (auto &it : route_) {
-                if (std::regex_match(path, it.first)) {
-                    it.second(s);
-                }
-            }
-        }
-    protected:
-        std::map<std::regex, Handler> route_;
-    };
 
     /******* WebSocketServer *******/
     class WebSocketServer : public Server<WebSocketServer::WebSocketSession> {
@@ -422,6 +411,24 @@ namespace base {
                 m_state(server ? state_server_handshake : state_client_handshake),
                 m_ctrl_frame(), m_sm() {}
             ~WebSocketSession() {}
+            WebSocketSession *UpgradeFrom(HttpSession &s) {
+                // ws will be created with established state
+                auto ws = new WebSocketSession(s.server(), s.fd(), s.addr(), s.fsm());
+                if (ws->send_handshake_response() < 0) {
+                    // fail to upgrade
+                    ASSERT(false);
+                    delete ws;
+                    return nullptr;
+                }
+                return ws;
+            }
+        protected:
+            WebSocketSession(Server &s, Fd fd, const Address &addr, HttpFSM &fsm) : 
+                Session(s, fd, addr, server),
+                m_state(state_established),
+                m_ctrl_frame(), m_sm() {
+                    m_sm.move_from(fsm);
+                }
         public:
             // reimplements IoProcessor (override Session's one)
             void OnEvent(Fd fd, const Event &e) {
@@ -790,12 +797,12 @@ namespace base {
                         hl = sizeof(frm.ext.nomask);
                     }
                 }
-                if (Syscall::Write((fd, buff, hl) < 0) {
+                if (Syscall::Write(fd, buff, hl) < 0) {
                     return QRPC_ESEND;
                 }
                 int r = (masked ?
-                    Syscall::Write((fd, mask_payload(const_cast<char *>(p), l, rnd, idx), l) :
-                    Syscall::Write((fd, p, l));
+                    Syscall::Write(fd, mask_payload(const_cast<char *>(p), l, rnd, idx), l) :
+                    Syscall::Write(fd, p, l));
                 /* cannot send all packet */
                 if (r < 0 || ((size_t)r) < l) {
                     /* TODO: should we cache remain buffer and send it slowly? */
@@ -869,7 +876,7 @@ namespace base {
                 }
                 return send_handshake_response(buffer);
             }
-        #define HS_CHECK(cond, ...)	if (!(cond)) { TRACE(__VA_ARGS__); return QRPC_EINVAL; }
+            #define HS_CHECK(cond, ...)	if (!(cond)) { TRACE(__VA_ARGS__); return QRPC_EINVAL; }
             inline int verify_handshake() {
                 char tok[256];
                 HS_CHECK(m_sm.hdrstr("Upgrade", tok, sizeof(tok)), "Upgrade header\n");
@@ -950,58 +957,82 @@ namespace base {
             inline State get_state() const { return (State)(m_state); }
             static inline void set_server(Fd fd, bool server) { m_server_conn_flags[fd] = (server ? 1 : 0); }
             static inline bool is_server(Fd fd) { return m_server_conn_flags[fd]; }
-        public:
-            static inline int send_handshake_request(Fd fd,
-                const char *host, const char *key, const char *origin, const char *protocol = nullptr) {
-                /*
-                * send client handshake
-                * ex)
-                * GET / HTTP/1.1
-                * Host: server.example.com
-                * Upgrade: websocket
-                * Connection: Upgrade
-                * Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
-                * Origin: http://example.com
-                * Sec-WebSocket-Protocol: chat, superchat
-                * Sec-WebSocket-Version: 13
-                */
-                char buff[CHUNK_SIZE], proto_header[CHUNK_SIZE];
-                if (protocol != nullptr) {
-                    Syscall::Sprintf((proto_header, sizeof(proto_header),
-                            "Sec-WebSocket-Protocol: %s\r\n", protocol);
-                }
-                size_t sz = Syscall::Sprintf((buff, sizeof(buff), 
-                        "GET / HTTP/1.1\r\n"
-                        "Host: %s\r\n"
-                        "Upgrade: websocket\r\n"
-                        "Connection: Upgrade\r\n"
-                        "Sec-WebSocket-Key: %s\r\n"
-                        "Origin: %s\r\n"
-                        "%s"
-                        "Sec-WebSocket-Version: 13\r\n\r\n",
-                        host, key, origin, protocol ? proto_header : "");
-                TRACE("ws request %s\n", buff);
-                return Syscall::Write(fd, buff, sz);
-            }
-            static inline int send_handshake_response(Fd fd, const char *accept_key) {
-                /*
-                * send server handshake
-                * ex)
-                * HTTP/1.1 101 Switching Protocols
-                * Upgrade: websocket
-                * Connection: Upgrade
-                * Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
-                */
-                char buff[CHUNK_SIZE];
-                size_t sz = Syscall::Sprintf((buff, sizeof(buff), 
-                        "HTTP/1.1 101 Switching Protocols\r\n"
-                        "Upgrade: websocket\r\n"
-                        "Connection: Upgrade\r\n"
-                        "Sec-WebSocket-Accept: %s\r\n\r\n",
-                        accept_key);
-                TRACE("ws response %s\n", buff);
-                return Syscall::Write(fd, buff, sz);
-            }
         };
+    public:
+        static inline int send_handshake_request(Fd fd,
+            const char *host, const char *key, const char *origin, const char *protocol = nullptr) {
+            /*
+            * send client handshake
+            * ex)
+            * GET / HTTP/1.1
+            * Host: server.example.com
+            * Upgrade: websocket
+            * Connection: Upgrade
+            * Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+            * Origin: http://example.com
+            * Sec-WebSocket-Protocol: chat, superchat
+            * Sec-WebSocket-Version: 13
+            */
+            char buff[CHUNK_SIZE], proto_header[CHUNK_SIZE];
+            if (protocol != nullptr) {
+                Syscall::Sprintf(proto_header, sizeof(proto_header),
+                        "Sec-WebSocket-Protocol: %s\r\n", protocol);
+            }
+            size_t sz = Syscall::Sprintf(buff, sizeof(buff), 
+                    "GET / HTTP/1.1\r\n"
+                    "Host: %s\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-WebSocket-Key: %s\r\n"
+                    "Origin: %s\r\n"
+                    "%s"
+                    "Sec-WebSocket-Version: 13\r\n\r\n",
+                    host, key, origin, protocol ? proto_header : "");
+            TRACE("ws request %s\n", buff);
+            return Syscall::Write(fd, buff, sz);
+        }
+        static inline int send_handshake_response(Fd fd, const char *accept_key) {
+            /*
+            * send server handshake
+            * ex)
+            * HTTP/1.1 101 Switching Protocols
+            * Upgrade: websocket
+            * Connection: Upgrade
+            * Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+            */
+            char buff[CHUNK_SIZE];
+            size_t sz = Syscall::Sprintf(buff, sizeof(buff), 
+                    "HTTP/1.1 101 Switching Protocols\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-WebSocket-Accept: %s\r\n\r\n",
+                    accept_key);
+            TRACE("ws response %s\n", buff);
+            return Syscall::Write(fd, buff, sz);
+        }
+    };
+    typedef WebSocketServer::WebSocketSession WebSocketSession;
+
+    /******* HttpRouter *******/
+    class HttpRouter {
+    public:
+        typedef HttpServer::Callback Handler;
+        typedef HttpServer::HttpSession Response;
+        typedef HttpFSM Request;
+        HttpRouter() : route_() {}
+        void Route(const std::regex &pattern, Handler h) {
+            route_[pattern] = h;
+        }
+        Session *operator () (HttpSession &s) {
+            char buff[256];
+            const char *path = req.url(buff, sizeof(buff));
+            for (auto &it : route_) {
+                if (std::regex_match(path, it.first)) {
+                    return it.second(s);
+                }
+            }
+        }
+    protected:
+        std::map<std::regex, Handler> route_;
     };
 }

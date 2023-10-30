@@ -45,6 +45,12 @@ class Loop : public LoopImpl, IoProcessor {
     ASSERT(fd < max_nfd_ && processors_[fd] != nullptr);
     return LoopImpl::Mod(fd, flags);
   }
+  inline void ModProcessor(Fd fd, IoProcessor *hnew) {
+    ASSERT(fd < max_nfd_ && processors_[fd] != nullptr);
+    auth h = processors_[fd];
+    processors_[fd] = hnew;
+    h->OnClose(fd);
+  }
   inline int Del(Fd fd) {
     ASSERT(fd < max_nfd_ && processors_[fd] != nullptr);
     int r = LoopImpl::Del(fd);
