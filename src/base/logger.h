@@ -38,7 +38,7 @@ namespace logger {
     long sec, nsec;
     clock::now(sec, nsec);
     char tsbuff[32];
-    sprintf(tsbuff, "%ld.%09ld", sec, nsec);
+    snprintf(tsbuff, sizeof(tsbuff), "%ld.%09ld", sec, nsec);
     j["ts"] = tsbuff; //((double)sec) + (((double)nsec) / (1000 * 1000 * 1000));
     j["id"] = id();
     j["lv"] = log_level_[lv];
@@ -56,7 +56,7 @@ namespace logger {
     j["line"] = line;
     j["func"] = func;
     if (trace_id != 0) {
-      j["tid"] = hexdump(reinteret_cast<char *>(&trace_id), sizeof(trace_id));
+      j["tid"] = hexdump(reinterpret_cast<char *>(&trace_id), sizeof(trace_id));
     }
   }
 
@@ -104,15 +104,15 @@ namespace logger {
     const std::string &fmt, const Args... args
   ) {
       char buffer[1024];
-      sprintf(buffer, fmt.c_str(), args...);
+      snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
       log(lv, file, line, func, trace_id, buffer);
   }
 
   inline void trace(
-    level::def lv, const std::string &file, int line, const std::string &func, 
+    level::def lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
     const json &j
   ) {
-      log(lv, file, line, func, 0, j);
+      log(lv, file, line, func, trace_id, j);
   }
 
   //short hands for each severity
@@ -129,22 +129,22 @@ namespace logger {
 }
 }
 
-#define QRPC_LOG(level_, trace_id__, ...) { ::nq::logger::log(::nq::logger::level::level__, __FILE__, __LINE__, __func__, trace_id__, __VA_ARGS__); }
+#define QRPC_LOG(level_, trace_id__, ...) { ::base::logger::log(::base::logger::level::level__, __FILE__, __LINE__, __func__, trace_id__, __VA_ARGS__); }
 #define QRPC_SLOG(level_, ...) QRPC_LOG(level_, ConnectionId(), __VA_ARGS__)
 #if defined(VERBOSE) || !defined(NDEBUG)
-  #define QRPC_VLOG(level__, ...) { ::nq::logger::trace(::nq::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
+  #define QRPC_VLOG(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
 #else
   #define QRPC_VLOG(level__, ...)
 #endif
 
 #if !defined(TRACE)
   #if defined(DEBUG)
-    #define TRACE(...) { ::nq::logger::trace(::nq::logger::level::trace, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+    #define TRACE(...) { ::base::logger::trace(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
   #else
     #define TRACE(...) // fprintf(stderr, __VA_ARGS__)
   #endif
 #endif
 
 #if !defined(DIE)
-  #define DIE(msg) { ::nq::logger::die(msg); }
+  #define DIE(msg) { ::base::logger::die(msg); }
 #endif

@@ -1,32 +1,51 @@
 #pragma once
 
 #include "address.h"
+#include "loop.h"
 #include "io_processor.h"
+
+#include <functional>
 
 namespace base {
     class SessionFactory {
     public:
         class Session : public IoProcessor {
         public:
-            Session(
-                SessionFactory &f,
-                Fd fd,
-                const Address &addr,
-                bool server
-            ) : factory_(f), fd_(fd), addr_(addr), server_(server) {}
-            Fd fd() const { return fd_; }
-            const Address &addr() const { return addr_; }
-            bool server() const { return server_; }
+            struct CloseReason {
+                qrpc_close_reason_code_t code;
+                int64_t detail_code;
+                std::string msg;
+            };
+        public:
+            Session(SessionFactory &f, Fd fd, const Address &addr) : 
+                factory_(f), fd_(fd), addr_(addr), close_reason_() {}
+            ~Session() {}
+            inline Fd fd() const { return fd_; }
+            inline SessionFactory &factory() { return factory_; }
+            inline const Address &addr() const { return addr_; }
+            inline bool closed() const { return close_reason_ != nullptr; }
+            inline void SetCloseReason(const CloseReason &reason) {
+                close_reason_.reset(new CloseReason(reason));
+                ASSERT(close_reason_ != nullptr);
+            }
+            inline void Close(
+                qrpc_close_reason_code_t code, int64_t detail_code = 0, const std::string &msg = ""
+            ) {
+                Close( { .code = code, .detail_code = detail_code, .msg = msg });
+            }
             // virtual functions to override
-            virtual void Destroy() { // override function should call this
-                if (fd_ != INVALID_FD) {
-                    factory_.Destroy(*this);
-                    fd_ = INVALID_FD;
+            virtual void Close(const CloseReason &reason) {
+                if (!closed()) {
+                    SetCloseReason(reason);
+                    factory_.Close(this);
                 }
             }
-            virtual bool OnConnect() { return true; }
-            virtual void OnClose(bool remote) {}
-            virtual bool OnRead(const char *p, size_t sz) = 0;
+            virtual int Send(const char *data, size_t sz) {
+                return Syscall::Write(fd_, data, sz);
+            }
+            virtual int OnConnect() { return QRPC_OK; }
+            virtual void OnClose() {}
+            virtual int OnRead(const char *p, size_t sz) = 0;
             // implements IoProcessor
             void OnEvent(Fd fd, const Event &e) override {
                 ASSERT(fd == fd_);
@@ -35,65 +54,76 @@ namespace base {
                         char buffer[4096];
                         size_t sz = sizeof(buffer);
                         if ((sz = Syscall::Read(fd, buffer, sz)) < 0) {
-                            if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+                            int err = Syscall::Errno();
+                            if (Syscall::WriteMayBlocked(err, false)) {
                                 break;
                             }
-                            Destroy();
+                            Close(QRPC_CLOSE_REASON_SYSCALL, err, Syscall::StrError(err));
                             return;
                         }
-                        if (sz == 0 || !OnRead(buffer, sz)) {
-                            Destroy();
+                        if (sz == 0 || (sz = OnRead(buffer, sz)) < 0) {
+                            Close(sz == 0 ? QRPC_CLOSE_REASON_REMOTE : QRPC_CLOSE_REASON_LOCAL, sz);
                         }
                     }
                 }
             }
             void OnClose(Fd fd) override {
                 ASSERT(fd == fd_);
-                OnClose(true);
+                OnClose();
             }
             int OnOpen(Fd fd) override {
                 ASSERT(fd == fd_);
-                if (!OnConnect()) {
-                    Destroy();
+                int r;
+                if ((r = OnConnect()) < 0) {
+                    return r;
                 }
+                return QRPC_OK;
             }
         protected:
             SessionFactory &factory_;
-            Address addr_;
             Fd fd_;
-            bool server_;
+            Address addr_;
+            std::unique_ptr<CloseReason> close_reason_;
         };
+        typedef std::function<Session* (Fd, const Address &)> FactoryMethod;
     public:
         SessionFactory(Loop &l) : loop_(l), sessions_() {}
-        Session *Open(const Address &a) {
+        virtual ~SessionFactory() {}
+        template <class S> S &server() { return static_cast<S&>(*this); }
+        template <class S> const S &server() const { return static_cast<const S&>(*this); }
+        Loop &loop() { return loop_; }
+        Session *Open(const Address &a, FactoryMethod m) {
             Fd fd = Syscall::Connect(a.sa(), a.salen());
-            return Create(fd, a, false);
+            return Create(fd, a, m);
         }
-        virtual Session *New(Fd fd, const Address &a, bool server) = 0;
+        bool Resolve(int family_pref, const std::string &host, int port, FactoryMethod m);
     protected:
-        Session *Create(Fd fd, const Address &a, bool server) {
-            Session *s = New(fd, sa, salen, server);
+        Session *Create(Fd fd, const Address &a, FactoryMethod &m) {
+            Session *s = m(fd, a);
             sessions_[fd] = s;
             if (loop_.Add(s->fd(), s, Loop::EV_READ | Loop::EV_WRITE) < 0) {
-                Destroy(s);
+                Close(s);
                 return nullptr;
             }
             return s;
         }
-        void Destroy(Session *s) {
+        void Close(Session *s) {
             Fd fd = s->fd();
-            loop_.Del(fd);
-            sessions_.erase(fd);
-            Syscall::Close(fd);
+            if (fd != INVALID_FD) {
+                sessions_.erase(fd);
+                loop_.Del(fd);
+                Syscall::Close(fd);
+            }
             delete s;
         }
     protected:
         Loop &loop_;
         std::map<Fd, Session*> sessions_;
     };
-    class Listener : public SessionFactory, IoProcessor {
+    class Listener : public SessionFactory, public IoProcessor {
     public:
-        Listener(Loop &l) : SessionFactory(l), port_(-1), fd_(INVALID_FD) {}
+        Listener(Loop &l, FactoryMethod m) : 
+            SessionFactory(l), port_(-1), fd_(INVALID_FD), factory_method_(m) {}
         Fd fd() const { return fd_; }
         bool Listen(int port) {
             port_ = port;
@@ -103,14 +133,14 @@ namespace base {
             while (true) {
                 struct sockaddr_storage sa;
                 socklen_t salen = sizeof(sa);
-                Fd afd = Syscall::Accept(fd_, &sa, &salen);
+                Fd afd = Syscall::Accept(fd_, sa, salen);
                 if (afd < 0) {
                     if (Syscall::WriteMayBlocked(errno, false)) {
                         break;
                     }
                     return;
                 }
-                Create(fd, Address(sa, salen), true);
+                Create(afd, Address(sa, salen), factory_method_);
             }
         }
         void Close() {
@@ -127,7 +157,7 @@ namespace base {
         }
 		void OnClose(Fd fd) {
             for (const auto &s : sessions_) {
-                Destroy(s);
+                s.second->Close(QRPC_CLOSE_REASON_LOCAL, 0, "listener closed");
             }
         }
 		int OnOpen(Fd fd) {
@@ -136,16 +166,16 @@ namespace base {
     protected:
         int port_;
         Fd fd_;
+        FactoryMethod factory_method_;
     };
-    template <class S, class C = S>
+    template <class S>
     class Server : public Listener {
     public:
-        Server(Loop &l) : Listener(l) {}
-        // implements SessionFactory
-        Session *New(Fd fd, const Address &a, bool server) {
-            static_assert(std::is_base_of_v<Session, S>, "S must be a descendant of Session");
-            static_assert(std::is_base_of_v<Session, C>, "C must be a descendant of Session");
-            return server ? new S(afd, a, server) : new C(afd, a, server);
-        }
-    }
+        Server(Loop &l, FactoryMethod m) : Listener(l, m) {}
+        Server(Loop &l) : Listener(l, [this](Fd fd, const Address &a) {
+            return new S(*this, fd, a);
+        }) {}
+    };
+    // external typedef
+    typedef SessionFactory::Session Session;
 }

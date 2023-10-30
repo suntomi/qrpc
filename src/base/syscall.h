@@ -25,7 +25,7 @@ namespace base {
 typedef int Fd;
 constexpr Fd INVALID_FD = -1; 
 #elif defined(__ENABLE_IOCP__)
-//TODO(iyatomi): windows definition
+//TODO(iyatomi): windows definition?
 #else
 #endif
 
@@ -37,6 +37,11 @@ class Syscall {
 public:
   static inline int Close(Fd fd) { return ::close(fd); }
   static inline int Errno() { return errno; }
+  static inline std::string StrError(int err = -1) {
+    thread_local static char err_buff[256];
+    auto sz = strerror_r(err < 0 ? Errno() : err, err_buff, sizeof(err_buff));
+    return std::string(err_buff, sz);
+  }
   static inline bool EAgain() {
     int eno = Errno();
     return (EINTR == eno || EAGAIN == eno || EWOULDBLOCK == eno);
@@ -68,7 +73,7 @@ public:
       auto tmp = (struct sockaddr_in6 *)&addr;
       tmp->sin6_len = GetSockAddrLen(AF_INET6);
       tmp->sin6_family = AF_INET6;
-      tmp->sin6_addr.s_addr = htonl(INADDR_ANY);
+      tmp->sin6_addr = IN6ADDR_ANY_INIT;
       tmp->sin6_port = Endian::HostToNet(port);
     } else {
       auto tmp = (struct sockaddr_in *)&addr;
@@ -80,24 +85,23 @@ public:
     return true;
   }
   static int SetSockAddr(
-    struct sockaddr_storage &addr, const char *addr_p, qrpc_size_t addr_len, uint16_t port
+    struct sockaddr_storage &addr, uint16_t port, bool in6
   ) {
-    if (addr_len == Syscall::GetIpAddrLen(AF_INET)) {
-      auto tmp = (struct sockaddr_in *)&addr;
-      tmp->sin_len = GetSockAddrLen(AF_INET);
-      tmp->sin_family = AF_INET;
-      tmp->sin_port = Endian::HostToNet(port);
-      memcpy(&tmp->sin_addr, addr_p, addr_len);
-    } else if (addr_len == Syscall::GetIpAddrLen(AF_INET6)) {
+    struct sockaddr *addr_p = reinterpret_cast<struct sockaddr *>(&addr);
+    if (in6) {
+      auto addr_len = GetIpAddrLen(AF_INET6);
       auto tmp = (struct sockaddr_in6 *)&addr;
       tmp->sin6_len = GetSockAddrLen(AF_INET6);
       tmp->sin6_family = AF_INET6;
       tmp->sin6_port = Endian::HostToNet(port);
       memcpy(&tmp->sin6_addr, addr_p, addr_len);
     } else {
-      TRACE("invalid addr_len:%u", addr_len);
-      ASSERT(false);
-      return -1;
+      auto addr_len = GetIpAddrLen(AF_INET);
+      auto tmp = (struct sockaddr_in *)&addr;
+      tmp->sin_len = GetSockAddrLen(AF_INET);
+      tmp->sin_family = AF_INET;
+      tmp->sin_port = Endian::HostToNet(port);
+      memcpy(&tmp->sin_addr, addr_p, addr_len);
     }
     return 0;
   }
@@ -235,7 +239,7 @@ public:
   }
 
   static Fd Accept(Fd listener_fd, struct sockaddr_storage &sa, socklen_t &salen, bool in6 = false) {
-    return accept(listener_fd, &sa, &salen);
+    return accept(listener_fd, reinterpret_cast<struct sockaddr *>(&sa), &salen);
   }
   static Fd Accept(Fd listener_fd, Address &a, bool in6 = false) {
     struct sockaddr_storage sa;
@@ -244,11 +248,11 @@ public:
     if (afd < 0) {
       return INVALID_FD;
     }
-    a = Address(sa, salen);
+    a.Reset(sa, salen);
     return afd;
   }
 
-  static Fd Connect(const sockaddr_storage &sa, socklen_t salen, bool in6 = false) {
+  static Fd Connect(const sockaddr *sa, socklen_t salen, bool in6 = false) {
     int fd = socket(in6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
       logger::error({
@@ -264,7 +268,7 @@ public:
     }
 
     // nonblocking connect may returns EAGAIN
-    if (connect(fd, &sa, salen) < 0 && !EAgain()) {
+    if (connect(fd, sa, salen) < 0 && !EAgain()) {
       Close(fd);
       return INVALID_FD;
     }
@@ -298,8 +302,6 @@ public:
       logger::warn({
         {"msg", "Socket overflow detection not supported"}
       });
-    } else {
-      *overflow_supported = true;
     }
 
     if (!SetReceiveBufferSize(fd, kDefaultSocketReceiveBuffer)) {
@@ -318,7 +320,7 @@ public:
       return INVALID_FD;
     }
 
-    if (bind(fd, (struct sockaddr *)&sas, sizeof(sas)) < 0) {
+    if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), sizeof(sas)) < 0) {
       Close(fd);
       return INVALID_FD;
     }
@@ -397,13 +399,6 @@ public:
 
     return fd;
   }
-  static size_t Sprintf(char *buff, qrpc_size_t sz, const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    int r = vsnprintf(buff, sz, fmt, ap);
-    va_end(ap);
-    return r;
-  }
   static void *MemCopy(void *dst, const void *src, qrpc_size_t sz) {
     return memcpy(dst, src, sz);
   }
@@ -424,16 +419,16 @@ public:
   static int Read(Fd fd, void *p, qrpc_size_t sz) {
     return read(fd, p, sz);
   }
-  static int Write(Fd fd, void *p, qrpc_size_t sz) {
+  static int Write(Fd fd, const void *p, qrpc_size_t sz) {
     return write(fd, p, sz);
   }
-  static int Writev(Fd fd, void **pp, qrpc_size_t *psz, qrpc_size_t sz) {
+  static int Writev(Fd fd, const char *pp[], qrpc_size_t *psz, qrpc_size_t sz) {
     struct iovec iov[sz];
     for (size_t i = 0; i < sz; i++) {
-      iov[i].iov_base = pp[i];
+      iov[i].iov_base = const_cast<char *>(pp[i]);
       iov[i].iov_len = psz[i];
     }
-    return writev(fd, pp, sz);
+    return writev(fd, iov, sz);
   }
   static std::unique_ptr<uint8_t> ReadFile(const std::string &path, qrpc_size_t *p_size) {
     STATIC_ASSERT(sizeof(long) == sizeof(qrpc_size_t));

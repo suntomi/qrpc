@@ -3,7 +3,7 @@
 #include <map>
 #include <thread>
 
-#include "MoodyCamel/concurrentqueue.h"
+#include "moodycamel/concurrentqueue.h"
 
 #include "core/compat/nq_worker_compat.h"
 #include "core/nq_server_loop.h"

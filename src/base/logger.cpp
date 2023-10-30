@@ -1,6 +1,6 @@
 #include "logger.h"
 #include <mutex>
-#include <MoodyCamel/concurrentqueue.h>
+#include <moodycamel/concurrentqueue.h>
 #if defined(NO_LOG_WRITE_CALLBACK)
 #include <iostream>
 #endif
@@ -67,13 +67,14 @@ namespace logger {
   }
 
   thread_local char buffer[64 + 1];
-  static constexpr char hex = "0123456789abcdef";
+  static constexpr char hex[] = "0123456789abcdef";
   const char *hexdump(const void *p, size_t len) {
     size_t i = 0;
+    const char *cp = reinterpret_cast<const char *>(p);
     for (i = 0; i < len && i < (sizeof(buffer) >> 1); i++) {
-      auto v = p[i];
+      auto v = cp[i];
       buffer[2 * i] = hex[v >> 4];
-      buffer[2 * i + 1] = hex[v & 0xf]
+      buffer[2 * i + 1] = hex[v & 0xf];
     }
     buffer[2 * i + 1] = 0;
     return buffer;

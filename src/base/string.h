@@ -1,6 +1,6 @@
 #pragma once
 
-#include "base/defs.h"
+#include "defs.h"
 #define  _XOPEN_SOURCE_EXTENDED 1
 #include <strings.h>
 
@@ -16,7 +16,18 @@ namespace str {
     }
     return s;
   }
-  inline int cmp_nocase(const std::string &a, const std::string &b) {
-    return strcasecmp(a.c_str(), b.c_str());
+  static size_t Vprintf(char *buff, qrpc_size_t sz, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsnprintf(buff, sz, fmt, ap);
+    va_end(ap);
+    return r;
   }
+  inline int CmpNocase(const std::string &a, const std::string &b, size_t n) {
+    return strncasecmp(a.c_str(), b.c_str(), n);
+  }
+  inline void *Dup(const char *str, size_t n = 1024) {
+    return strndup(str, n);
+  }
+}
 }

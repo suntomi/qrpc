@@ -4,8 +4,8 @@
 
 #include <ares.h>
 
-#include "base/defs.h"
-#include "base/io_processor.h"
+#include "defs.h"
+#include "io_processor.h"
 
 namespace base {
 class Loop;
@@ -40,7 +40,7 @@ class AsyncResolver {
       auto q = (Query *)arg;
       if (q->family_ == AF_INET && (status == ARES_ENOTFOUND || status == ARES_ENODATA)) {
         q->family_ = AF_INET6;
-        q->resolver_->StartResolve(q);
+        q->resolver_->Resolve(q);
         return;
       }
       q->OnComplete(status, timeouts, hostent);
@@ -82,6 +82,7 @@ class AsyncResolver {
   void Resolve(Query *q) { q->resolver_ = this; queries_.push_back(q); }
   void Resolve(const char *host, int family, Callback cb, void *arg);
   void Poll(Loop *l);
+  inline bool Initialized() const { return channel_ != nullptr; }
   static inline int PtoN(const std::string &host, int *af, void *buff, qrpc_size_t buflen) {
     *af = host.find(':') == std::string::npos ?  AF_INET : AF_INET6;
     if (Syscall::GetIpAddrLen(*af) > buflen) {

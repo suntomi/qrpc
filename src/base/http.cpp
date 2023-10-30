@@ -6,7 +6,6 @@
 #include <thread>
 
 #include "logger.h"
-#include "debug.h"
 
 #define EXPAND_BUFFER
 
@@ -26,11 +25,11 @@ namespace base {
     }
 
     HttpFSM::state
-    HttpFSM::append(char *b, int bl)
+    HttpFSM::append(const char *b, int bl)
     {
         //  TRACE("append %u byte <%s>\n", bl, b);
         state s = get_state();
-        char *w = b;
+        const char *w = b;
         uint32_t limit = (m_max - 1);
         while (s != state_error && s != state_recv_finish) {
             if (m_len >= limit) {
@@ -497,35 +496,55 @@ namespace base {
         return true;
     }
 
-    /******* HttpServer *******/
-    HttpServer::HttpServer() {
-        port_ = -1;
-        callback = [](HttpFSM &, IResponseWriter &) {};
+
+    /******* HttpSession *******/
+    int HttpSession::OnRead(const char *p, size_t sz) {
+        fsm_.append(p, sz);
+        switch (fsm_.get_state()) {
+        case HttpFSM::state_recv_header:
+        case HttpFSM::state_recv_body:
+        case HttpFSM::state_recv_body_nochunk:
+        case HttpFSM::state_recv_bodylen:
+        case HttpFSM::state_recv_footer:
+        case HttpFSM::state_recv_comment:
+            return QRPC_OK; //not close connection
+        case HttpFSM::state_websocket_establish:
+        case HttpFSM::state_recv_finish: {
+            auto newsession = factory_.server<HttpServer>().cb()(*this);
+            if (newsession != nullptr) {
+                ASSERT(newsession->fd() == fd_);
+                factory_.loop().ModProcessor(fd_, newsession);
+                fsm_.set_state(HttpFSM::state_response_pending);
+                // connection does not closed here.
+                // callbacked module should cleanup connection after response is sent,
+                // by calling Close(...)
+            } else {
+                Close(QRPC_CLOSE_REASON_LOCAL);
+                // after here, cannot touch this object.
+            }
+            return QRPC_OK;
+        } break;
+        case HttpFSM::state_invalid:
+        case HttpFSM::state_error:
+        case HttpFSM::state_response_pending:
+        default:
+            ASSERT(false);
+        }
+        return QRPC_EINVAL; // close connection
     }
 
-    bool HttpServer::Listen(int port, Callback cb) {
-        port_ = port;
-        callback_ = cb;
-        return ((fd_ = Syscall::Listen(port)) >= 0);
+    int WebSocketSession::send_handshake_request(const char *host) {
+        init_key();
+        char out[base64::buffsize(sizeof(m_key_ptr))], origin[256];
+        base64::encode(m_key_ptr, sizeof(m_key_ptr), out, sizeof(out));
+        str::Vprintf(origin, sizeof(origin), "http://%s", host);
+        return WebSocketServer::send_handshake_request(fd(), host, out, origin, NULL);
     }
-    void HttpServer::IResponseWriter::WriteResponse(const uint8_t *p, size_t l) {
-        auto length = std::to_string(l);
-        Header hds = {
-            .key=(char *)"Content-Length", .value=(char *)length.c_str()
-        };
-        WriteHeader(HRC_OK, &hds, 1);
-        WriteBody(p, l);
-    }
-    void HttpServer::OnEvent(Fd fd, const Event &e) {
-        if (Loop::Readable(e)) {
-            struct sockaddr_storage sa;
-            Fd afd = Syscall::Accept(fd_, &sa);
+    int WebSocketSession::send_handshake_response() {
+        char buffer[base64::buffsize(sha1::kDigestSize)], *p;
+        if (!(p = init_accept_key_from_header(buffer, sizeof(buffer)))) {
+            return QRPC_EINVAL;
         }
-    }
-    void HttpServer::OnClose(Fd fd) {
-        ASSERT(fd == fd_);
-        Syscall::Close(fd_);
-    }
-    int HttpServer::OnOpen(Fd fd) {
+        return WebSocketServer::send_handshake_response(fd(), buffer);
     }
 }

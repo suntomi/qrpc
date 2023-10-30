@@ -1,6 +1,4 @@
-#include "memory.h"
-#include "assert.h"
-#include "logger.h"
+#include "defs.h"
 
 #if defined(QRPC_ANDROID)
 #include <malloc.h>
@@ -11,8 +9,8 @@ namespace base {
 // borrowed from chromium source 'base/memory/aligned_memory.cpp'
 void* AlignedAlloc(size_t size, size_t alignment) {
   ASSERT(size > 0U);
-  ASSERT(alignment & (alignment - 1) == 0U);
-  ASSERT(alignment % sizeof(void*) == 0U);
+  ASSERT((alignment & (alignment - 1)) == 0U);
+  ASSERT((alignment % sizeof(void*)) == 0U);
   void* ptr = nullptr;
 #if defined(OS_WIN)
   ptr = _aligned_malloc(size, alignment);
@@ -41,7 +39,7 @@ void* AlignedAlloc(size_t size, size_t alignment) {
     ASSERT(false);
   }
   // Sanity check alignment just to be safe.
-  ASSERT(reinterpret_cast<uintptr_t>(ptr) & (alignment - 1) == 0U);
+  ASSERT((reinterpret_cast<uintptr_t>(ptr) & (alignment - 1)) == 0U);
   return ptr;
 }
 

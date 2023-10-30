@@ -7,6 +7,8 @@
 #include <regex>
 #include "defs.h"
 #include "session.h"
+#include "string.h"
+#include "crypto.h"
 
 namespace base {
     /****** HTTP status codes *******/
@@ -61,13 +63,7 @@ namespace base {
     } http_result_code_t;
 
 
-
     /******* HttpFSM *******/
-    #define GET_8(ptr)      (*((uint8_t *)(ptr)))
-    #define GET_16(ptr)     (*((uint16_t *)(ptr)))
-    #define GET_32(ptr)     (*((uint32_t *)(ptr)))
-    #define GET_64(ptr)     (*((uint64_t *)(ptr)))
-
     class HttpFSM {
     public:
         typedef http_result_code_t result_code;
@@ -118,7 +114,7 @@ namespace base {
             m_p = fsm.m_p;
             fsm.m_p = nullptr;
         }
-        state   append(char *b, int bl);
+        state   append(const char *b, int bl);
         void    reset(uint32_t chunk_size);
     public:
         void    set_state(state s) { m_ctx.state = s; }
@@ -168,796 +164,802 @@ namespace base {
         result_code putrc();
     };
 
+
     /******* HttpServer *******/
-    class HttpServer : public Server<HttpServer::HttpSession> {
+    class HttpSession : public Session {
     public:
-        class HttpSession : public Session {
-        public:
-            struct Header {
-                const char *key;
-                const char *val;
-            };
-        public:
-            HttpSession(const Loop &l, Fd fd, const Address &addr, bool server) : Session(l, fd, addr, server) {}
-            const HttpFSM &req() const { return fsm_; }
-            int Write(http_result_code_t rc, Header *h, size_t hsz, const char *body, size_t bsz) {
-                // +2 for status line and body
-                const char *ptrs[hsz + 2];
-                char buffers[hsz + 1][1024];
-                size_t sizes[hsz + 2];
-                snprintf(buffers[0], sizeof(buffers[0]), "HTTP/1.1 %d\r\n", rc);
-                ptrs[0] = buffers[0];
-                for (size_t i = 1; i <= hsz; i++) {
-                    ptrs[i] = buffers[i];
-                    sizes[i] = snprintf(
-                        buffers[i], sizeof(buffers[i]), "%s: %s%s", 
-                        h[i].key, h[i].val, i == hsz ? "\r\n\r\n" : "\r\n"
-                    );
-                }
-                ptrs[hsz + 1] = body;
-                sizes[hsz + 1] = blen;
-                return Syscall::Writev(fd_, buffers, sizes);
+        struct Header {
+            const char *key;
+            const char *val;
+        };
+    public:
+        HttpSession(SessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) {}
+        const HttpFSM &req() const { return fsm_; }
+        const HttpFSM &fsm() const { return fsm_; }
+        HttpFSM &fsm() { return fsm_; }
+        int Write(http_result_code_t rc, Header *h, size_t hsz, const char *body, size_t bsz) {
+            // +2 for status line and body
+            const char *ptrs[hsz + 2];
+            char buffers[hsz + 1][1024];
+            size_t sizes[hsz + 2];
+            snprintf(buffers[0], sizeof(buffers[0]), "HTTP/1.1 %d\r\n", rc);
+            ptrs[0] = buffers[0];
+            for (size_t i = 1; i <= hsz; i++) {
+                ptrs[i] = buffers[i];
+                sizes[i] = snprintf(
+                    buffers[i], sizeof(buffers[i]), "%s: %s%s", 
+                    h[i].key, h[i].val, i == hsz ? "\r\n\r\n" : "\r\n"
+                );
             }
-            // implements Session
-            bool OnRead(const char *p, size_t sz) {
-                fsm_.append(p, sz);
-                switch (fsm_.get_state()) {
-                case HttpFSM::state_recv_header:
-                case HttpFSM::state_recv_body:
-                case HttpFSM::state_recv_body_nochunk:
-                case HttpFSM::state_recv_bodylen:
-                case HttpFSM::state_recv_footer:
-                case HttpFSM::state_recv_comment:
-                    return true; //not close connection
-                case HttpFSM::state_websocket_establish:
-                case HttpFSM::state_recv_finish: {
-                    auto newsession = cb_(*this);
-                    if (newsession != nullptr) {
-                        ASSERT(newsession->fd() == fd_);
-                        loop_.ModProcessor(fd_, newsession);
-                        fsm_.set_state(state_response_pending);
-                        return true; //not close connection.
-                        // callbacked module should cleanup connection after response is sent,
-                        // by calling Destroy()
-                    }
-                } break;
-                case HttpFSM::state_invalid:
-                case HttpFSM::state_error:
-                case HttpFSM::state_response_pending:
-                default:
-                    ASSERT(false);
-                    return false; // close connection
-                }
-                Destroy(); //cannot touch this after here
-                return true;
-            }
-            // use default for OnConnect/OnClose
-        private:
-            HttpFSM fsm_;
+            ptrs[hsz + 1] = body;
+            sizes[hsz + 1] = bsz;
+            return Syscall::Writev(fd_, ptrs, sizes, hsz + 2);
         }
+        // implements Session
+        int OnRead(const char *, size_t sz) override;
+        int Send(const char *p, size_t sz) override {
+            DIE("Send does not supported. use HttpSession::Write instead");
+            return QRPC_ENOTSUPPORT;
+        }
+        // use default for OnConnect/OnClose
+    public: 
+        // utilities
+        template<class... Args>
+        int Error(http_result_code_t rc, const std::string &fmt, const Args... args) {
+            char buffer[1024];
+            size_t len = snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
+            std::string lenstr = std::to_string(len);
+            Header h[] = {
+                {.key = "Content-Type", .val = "text/plain"},
+                {.key = "Content-Length", .val = lenstr.c_str()},
+            };
+            return Write(rc, h, 1, buffer, len);
+        }
+        template<class... Args>
+        int NotFound(const std::string &fmt, const Args... args) {
+            return Error(HRC_NOT_FOUND, fmt, args...);
+        }
+    private:
+        HttpFSM fsm_;
+    };
+
+
+    /******* HttpServer *******/
+    class HttpServer : public Server<HttpSession> {
+    public:
         typedef std::function<Session *(HttpSession&)> Callback;
     public:
-        HttpServer(const Loop &l) : loop_(l) {}
+        HttpServer(Loop &l) : Server<HttpSession>(l) {}
+        ~HttpServer() {}
+        Callback &cb() { return callback_; }
         bool Listen(int port, Callback cb) {
             callback_ = cb;
-            return Server::Listen(port);
+            return Server<HttpSession>::Listen(port);
         }
     protected:
         Callback callback_;
     };
-    typedef HttpServer::HttpSession HttpSession;
-    typedef HttpServer::HttpSession::Header HttpHeader;
+    typedef HttpSession::Header HttpHeader;
 
-    /******* WebSocketServer *******/
-    class WebSocketServer : public Server<WebSocketServer::WebSocketSession> {
-    public:
-        class WebSocketSession : public Session {
-            /* web socket frame struct */
-            /*---------------------------------------------------------------------------
-                0                   1                   2                   3
-                0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-                +-+-+-+-+-------+-+-------------+-------------------------------+
-                |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
-                |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
-                |N|V|V|V|       |S|             |   (if payload len==126/127)   |
-                | |1|2|3|       |K|             |                               |
-                +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
-                |     Extended payload length continued, if payload len == 127  |
-                + - - - - - - - - - - - - - - - +-------------------------------+
-                |                               |Masking-key, if MASK set to 1  |
-                +-------------------------------+-------------------------------+
-                | Masking-key (continued)       |          Payload Data         |
-                +-------------------------------- - - - - - - - - - - - - - - - +
-                :                     Payload Data continued ...                :
-                + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
-                |                     Payload Data continued ...                |
-                +---------------------------------------------------------------+
 
-            ------------------------------------------------------------------------------*/
-            struct Frame {
-                struct Header {
-                protected:
-                    union {
-                        uint16_t bits;
-                        struct { /* for GCC, we can use this but not portable (example, OSX cannot process this correctly) */
-                            uint8_t opcode:4, rsv3:1, rsv2:1, rsv1:1, fin:1;
-                            uint8_t payload_len:7, mask:1;
-                        } quick_look;
-                    } data;
-                public:
-                    /* we should do like below. */
-                    inline bool fin() const { return (data.bits & (1 << 7)); }
-                    inline bool rsv1() const { return (data.bits & (1 << 6)); }
-                    inline bool rsv2() const { return (data.bits & (1 << 5)); }
-                    inline bool rsv3() const { return (data.bits & (1 << 4)); }
-                    inline int opcode() const { return (data.bits & 0x000F); }
-                    inline bool mask() const { return (data.bits & (1 << 15)); }
-                    inline int payload_len() const { return ((data.bits & 0x7F00) >> 8); }
-                    inline void set_controls(bool f, bool m, uint8_t opc) {
-                        data.bits = 0;
-                        if (f) { data.bits |= (1 << 7); }
-                        if (m) { data.bits |= (1 << 15); }
-                        data.bits |= (opc & 0x0F);
-                    }
-                    inline void set_payload_len(uint8_t len) {
-                        data.bits |= ((len & 0x7F) << 8);
-                    }
-                };
+    /******* WebSocketSession *******/
+    class WebSocketSession : public Session {
+        /* web socket frame struct */
+        /*---------------------------------------------------------------------------
+            0                   1                   2                   3
+            0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+            +-+-+-+-+-------+-+-------------+-------------------------------+
+            |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+            |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
+            |N|V|V|V|       |S|             |   (if payload len==126/127)   |
+            | |1|2|3|       |K|             |                               |
+            +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
+            |     Extended payload length continued, if payload len == 127  |
+            + - - - - - - - - - - - - - - - +-------------------------------+
+            |                               |Masking-key, if MASK set to 1  |
+            +-------------------------------+-------------------------------+
+            | Masking-key (continued)       |          Payload Data         |
+            +-------------------------------- - - - - - - - - - - - - - - - +
+            :                     Payload Data continued ...                :
+            + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
+            |                     Payload Data continued ...                |
+            +---------------------------------------------------------------+
+
+        ------------------------------------------------------------------------------*/
+        struct Frame {
+            struct Header {
+            protected:
                 union {
-                    Header h;
-                    struct {
-                        uint16_t padd;
-                        uint8_t masking_key[4];
-                        uint8_t payload_data[0];
-                    } mask;
-                    struct {
-                        uint16_t padd;
-                        uint8_t payload_data[0];
-                    } nomask;
-                    struct {
-                        uint16_t padd;
-                        uint16_t ext_payload_len;
-                        uint8_t masking_key[4];
-                        uint8_t payload_data[0];
-                    } mask_0x7E;
-                    struct {
-                        uint16_t padd;
-                        uint16_t ext_payload_len;
-                        uint8_t payload_data[0];
-                    } nomask_0x7E;
-                    struct {
-                        uint16_t padd;
-                        uint16_t ext_payload_len[4];
-                        uint8_t masking_key[4];
-                        uint8_t payload_data[0];
-                    } mask_0x7F;
-                    struct {
-                        uint16_t padd;
-                        uint16_t ext_payload_len[4];
-                        uint8_t payload_data[0];
-                    } nomask_0x7F;
-                } ext;
-
-                inline uint8_t get_opcode() const { return ext.h.opcode(); }
-                inline bool masked() const { return ext.h.mask(); }
-            };
-            static const uint32_t MAX_ADDR_LEN = 255;
-            static const uint32_t CONTROL_FRAME_MAX = 125;
-            static const uint32_t READSIZE = 512;
-            struct ControlFrame {
-                char m_buff[CONTROL_FRAME_MAX];
-                uint8_t m_len, padd[2];
-                ControlFrame() : m_len(0) {}
-                void reset() { m_len = 0; }
-                inline int drain(WebSocketSession &c, size_t remain) {
-                    int r; 
-                    if ((r = c.read_body_and_fd(c.fd(), m_buff + m_len, remain)) <= 0) {
-                        return r;
-                    }
-                    m_len += r;
-                    return m_len;
+                    uint16_t bits;
+                    struct { /* for GCC, we can use this but not portable (example, OSX cannot process this correctly) */
+                        uint8_t opcode:4, rsv3:1, rsv2:1, rsv1:1, fin:1;
+                        uint8_t payload_len:7, mask:1;
+                    } quick_look;
+                } data;
+            public:
+                /* we should do like below. */
+                inline bool fin() const { return (data.bits & (1 << 7)); }
+                inline bool rsv1() const { return (data.bits & (1 << 6)); }
+                inline bool rsv2() const { return (data.bits & (1 << 5)); }
+                inline bool rsv3() const { return (data.bits & (1 << 4)); }
+                inline int opcode() const { return (data.bits & 0x000F); }
+                inline bool mask() const { return (data.bits & (1 << 15)); }
+                inline int payload_len() const { return ((data.bits & 0x7F00) >> 8); }
+                inline void set_controls(bool f, bool m, uint8_t opc) {
+                    data.bits = 0;
+                    if (f) { data.bits |= (1 << 7); }
+                    if (m) { data.bits |= (1 << 15); }
+                    data.bits |= (opc & 0x0F);
+                }
+                inline void set_payload_len(uint8_t len) {
+                    data.bits |= ((len & 0x7F) << 8);
                 }
             };
-            enum State {
-                state_init,
-                state_client_handshake,
-                state_client_handshake_2,
-                state_server_handshake,
-                state_established,
-                state_recv_frame,
-                state_recv_mask,
-                state_recv_mask_0x7E,
-                state_recv_mask_0x7F,
-                state_recv,
-                state_recv_0x7E,
-                state_recv_0x7F,
-            };
-            enum opcode {
-                opcode_continuation_frame, //*  %x0 denotes a continuation frame
-                opcode_text_frame,	//*  %x1 denotes a text frame
-                opcode_binary_frame,	//*  %x2 denotes a binary frame
-                //*  %x3-7 are reserved for further non-control frames
-                reserved_non_control_frame1,
-                reserved_non_control_frame2,
-                reserved_non_control_frame3,
-                reserved_non_control_frame4,
-                reserved_non_control_frame5,
-
-                opcode_connection_close,	//*  %x8 denotes a connection close
-                opcode_ping,	//*  %x9 denotes a ping
-                opcode_pong,	// *  %xA denotes a pong
-                //*  %xB-F are reserved for further control frames
-                reserved_control_frame1,
-                reserved_control_frame2,
-                reserved_control_frame3,
-                reserved_control_frame4,
-            };
-        public:
-            uint8_t m_state, m_flen, m_mask_idx, padd;
             union {
-                uint32_t m_key[4];
-                char m_key_ptr[16];
-            };
-            ControlFrame m_ctrl_frame;
-            uint64_t m_read;
-            union {
-                Frame m_frame;
-                char m_frame_buff[sizeof(Frame)];
-            };
-            HttpFSM m_sm;
-        public:
-            WebSocketSession(Server &s, Fd fd, const Address &addr, bool server) : 
-                Session(s, fd, addr, server),
-                m_state(server ? state_server_handshake : state_client_handshake),
-                m_ctrl_frame(), m_sm() {}
-            ~WebSocketSession() {}
-            WebSocketSession *UpgradeFrom(HttpSession &s) {
-                // ws will be created with established state
-                auto ws = new WebSocketSession(s.server(), s.fd(), s.addr(), s.fsm());
-                if (ws->send_handshake_response() < 0) {
-                    // fail to upgrade
-                    ASSERT(false);
-                    delete ws;
-                    return nullptr;
-                }
-                return ws;
-            }
-        protected:
-            WebSocketSession(Server &s, Fd fd, const Address &addr, HttpFSM &fsm) : 
-                Session(s, fd, addr, server),
-                m_state(state_established),
-                m_ctrl_frame(), m_sm() {
-                    m_sm.move_from(fsm);
-                }
-        public:
-            // reimplements IoProcessor (override Session's one)
-            void OnEvent(Fd fd, const Event &e) {
-                int r;
-                while (get_state() < state_established) {
-                    if ((r = handshake(fd, Loop::Readable(e), Loop::Writable(e))) < 0) {
-                        if (r != QRPC_EAGAIN) {
-                            Close();
-                        }
-                        return;
-                    }
-                }
-                size_t sz = 4096;
-                while (true) {
-                    char buffer[sz];
-                    if ((r = read_frame(fd, buffer, sz)) < 0) {
-                        if (r == QRPC_ESIZE) {
-                            // expand buffer
-                            sz = sz << 1;
-                            if (sz > 65536) {
-                                // too large
-                                Close();
-                                return;
-                            }
-                        } else {
-                            if (r != QRPC_EAGAIN) {
-                                Close();
-                            }
-                            return;
-                        }
-                    }
-                    if (!OnRead(buffer, (size_t)r)) {
-                        Close();
-                        return;
-                    }
-                }
-            }
-        public:
-            inline void init_frame() { m_flen = 0; m_read = 0; m_mask_idx = 0; }
-            inline void init_key() {
-                m_key[0] = rand::gen32();
-                m_key[1] = rand::gen32();
-                m_key[2] = rand::gen32();
-                m_key[3] = rand::gen32();
-            }
-            inline int read_body_and_fd(Fd fd, char *p, size_t l) {
-                size_t bl = m_sm.bodylen();
-                if (bl > 0) {
-                    int r = Syscall::MemCopy(p, m_sm.body(), (bl < l ? bl : l));
-                    m_sm.consume_body(r);
+                Header h;
+                struct {
+                    uint16_t padd;
+                    uint8_t masking_key[4];
+                    uint8_t payload_data[0];
+                } mask;
+                struct {
+                    uint16_t padd;
+                    uint8_t payload_data[0];
+                } nomask;
+                struct {
+                    uint16_t padd;
+                    uint16_t ext_payload_len;
+                    uint8_t masking_key[4];
+                    uint8_t payload_data[0];
+                } mask_0x7E;
+                struct {
+                    uint16_t padd;
+                    uint16_t ext_payload_len;
+                    uint8_t payload_data[0];
+                } nomask_0x7E;
+                struct {
+                    uint16_t padd;
+                    uint16_t ext_payload_len[4];
+                    uint8_t masking_key[4];
+                    uint8_t payload_data[0];
+                } mask_0x7F;
+                struct {
+                    uint16_t padd;
+                    uint16_t ext_payload_len[4];
+                    uint8_t payload_data[0];
+                } nomask_0x7F;
+            } ext;
+
+            inline uint8_t get_opcode() const { return ext.h.opcode(); }
+            inline bool masked() const { return ext.h.mask(); }
+        };
+        static const uint32_t MAX_ADDR_LEN = 255;
+        static const uint32_t CONTROL_FRAME_MAX = 125;
+        static const uint32_t READSIZE = 512;
+        struct ControlFrame {
+            char m_buff[CONTROL_FRAME_MAX];
+            uint8_t m_len, padd[2];
+            ControlFrame() : m_len(0) {}
+            void reset() { m_len = 0; }
+            inline int drain(WebSocketSession &c, size_t remain) {
+                int r; 
+                if ((r = c.read_body_and_fd(c.fd(), m_buff + m_len, remain)) <= 0) {
                     return r;
                 }
-                return Syscall::Read(fd, p, l);
+                m_len += r;
+                return m_len;
             }
-            static inline char *mask_payload(char *p, size_t l, uint32_t mask, uint8_t &mask_idx) {
-                char *endp = (p + l);
-                if (mask_idx > 0) {
-                    while (endp > p && mask_idx < sizeof(mask)) {
-                        *p = ((*p) ^ (reinterpret_cast<uint8_t *>(&mask))[mask_idx]);
-                        p++; mask_idx++;
-                    }
-                    if (mask_idx >= sizeof(mask)) {
-                        mask_idx = 0;
-                    }
+        };
+        enum State {
+            state_init,
+            state_client_handshake,
+            state_client_handshake_2,
+            state_server_handshake,
+            state_established,
+            state_recv_frame,
+            state_recv_mask,
+            state_recv_mask_0x7E,
+            state_recv_mask_0x7F,
+            state_recv,
+            state_recv_0x7E,
+            state_recv_0x7F,
+        };
+        enum opcode {
+            opcode_continuation_frame, //*  %x0 denotes a continuation frame
+            opcode_text_frame,	//*  %x1 denotes a text frame
+            opcode_binary_frame,	//*  %x2 denotes a binary frame
+            //*  %x3-7 are reserved for further non-control frames
+            reserved_non_control_frame1,
+            reserved_non_control_frame2,
+            reserved_non_control_frame3,
+            reserved_non_control_frame4,
+            reserved_non_control_frame5,
+
+            opcode_connection_close,	//*  %x8 denotes a connection close
+            opcode_ping,	//*  %x9 denotes a ping
+            opcode_pong,	// *  %xA denotes a pong
+            //*  %xB-F are reserved for further control frames
+            reserved_control_frame1,
+            reserved_control_frame2,
+            reserved_control_frame3,
+            reserved_control_frame4,
+        };
+    public:
+        uint8_t m_state, m_flen, m_mask_idx, padd;
+        size_t m_sm_body_read;
+        std::string m_hostname;
+        union {
+            uint32_t m_key[4];
+            uint8_t m_key_ptr[16];
+        };
+        ControlFrame m_ctrl_frame;
+        uint64_t m_read;
+        union {
+            Frame m_frame;
+            char m_frame_buff[sizeof(Frame)];
+        };
+        HttpFSM m_sm;
+    public:
+        // create client/server session from begining
+        WebSocketSession(SessionFactory &f, Fd fd, const Address &addr, const std::string &hostname) : 
+            Session(f, fd, addr),
+            m_state(state_client_handshake),
+            m_sm_body_read(0), m_hostname(hostname), m_ctrl_frame(), m_sm() {}
+        WebSocketSession(SessionFactory &f, Fd fd, const Address &addr) : 
+            Session(f, fd, addr),
+            m_state(state_server_handshake),
+            m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {}
+        // for upgrading from http session
+        WebSocketSession(SessionFactory &f, Fd fd, const Address &addr, HttpFSM &fsm) : 
+            Session(f, fd, addr), m_state(state_established), m_ctrl_frame(), m_sm() {
+            m_sm.move_from(fsm);
+        }
+        ~WebSocketSession() {}
+    public:
+        // reimplements IoProcessor (override Session's one)
+        // implements Session
+        int Send(const char *p, size_t sz) override {
+            int r;
+            if ((r = WebSocketSession::write_frame(fd_, p, sz)) < 0) {
+                if (r != QRPC_EAGAIN) {
+                    Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
                 }
-                while ((endp - p) >= (int)sizeof(uint32_t)) {
-                    SET_32(p, (GET_32(p) ^ mask));
-                    p += sizeof(mask);
-                }
-                size_t remain = (endp - p);
-                if (remain > 0) {
-                    for (; p < endp; p++) {
-                        mask_idx = (remain - (endp - p));
-                        *p = ((*p) ^ (reinterpret_cast<uint8_t *>(&mask))[mask_idx]);
-                    }
-                    mask_idx++;
-                }
-                return (endp - l);
             }
-            inline State analyze_frame(size_t &over_read_length) {
-                if (m_flen < sizeof(uint16_t)) {
-                    return state_recv_frame;
+            return r;
+        }
+        void OnClose() override {
+            WebSocketSession::write_frame(fd(), "", 0, opcode_connection_close, false);
+        }
+        void OnEvent(Fd fd, const Event &e) override {
+            int r;
+            // this is invalid after Close is called
+            while (get_state() < state_established) {
+                if ((r = handshake(fd, Loop::Readable(e), Loop::Writable(e))) < 0) {
+                    if (r != QRPC_EAGAIN) {
+                        Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
+                    }
+                    return;
                 }
-                if (m_frame.ext.h.mask()) {
-                    if (m_frame.ext.h.payload_len() == 0x7F) {
-                        if (m_flen < (sizeof(m_frame.ext.mask_0x7F))) {
-                            return state_recv_frame;
-                        }
-                        over_read_length = (m_flen - (sizeof(m_frame.ext.mask_0x7F)));
-                        return state_recv_mask_0x7F;
+            }
+            size_t sz = 4096;
+            while (true) {
+                char buffer[sz];
+                if ((r = read_frame(fd, buffer, sz)) < 0) {
+                    if (r != QRPC_EAGAIN) {
+                        Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
                     }
-                    else if (m_frame.ext.h.payload_len() == 0x7E) {
-                        if (m_flen < (sizeof(m_frame.ext.mask_0x7E))) {
-                            return state_recv_frame;
-                        }
-                        over_read_length = (m_flen - (sizeof(m_frame.ext.mask_0x7E)));
-                        return state_recv_mask_0x7E;
+                    return;
+                }
+                if (r == 0 || (r = OnRead(buffer, (size_t)r)) < 0) {
+                    Close(r == 0 ? QRPC_CLOSE_REASON_REMOTE : QRPC_CLOSE_REASON_LOCAL, r);
+                    return;
+                }
+            }
+        }
+    public:
+        inline void init_frame() { m_flen = 0; m_read = 0; m_mask_idx = 0; }
+        inline void init_key() {
+            m_key[0] = random::gen32();
+            m_key[1] = random::gen32();
+            m_key[2] = random::gen32();
+            m_key[3] = random::gen32();
+        }
+        // sometimes, first a few frame of websocket received with handshake request.
+        // in this timing, receiver is still HTTP mode and store such frame data into
+        // body buffer of m_sm. so, we need to consume such data before handling data in socket.
+        inline int read_body_and_fd(Fd fd, char *p, size_t l) {
+            size_t bl = m_sm.bodylen() - m_sm_body_read;
+            size_t copied = 0;
+            if (bl > 0) {
+                copied += (bl < l ? bl : l);
+                Syscall::MemCopy(p, m_sm.body() + m_sm_body_read, copied);
+                ConsumeBody(copied);
+                l -= copied;
+                p += copied;
+                if (l == 0) {
+                    return copied;
+                }
+            }
+            copied += Syscall::Read(fd, p, l);
+            return copied;
+        }
+        inline void ConsumeBody(size_t l) { m_sm_body_read += l; }
+        static inline char *mask_payload(char *p, size_t l, uint32_t mask, uint8_t &mask_idx) {
+            char *endp = (p + l);
+            if (mask_idx > 0) {
+                while (endp > p && mask_idx < sizeof(mask)) {
+                    *p = ((*p) ^ (reinterpret_cast<uint8_t *>(&mask))[mask_idx]);
+                    p++; mask_idx++;
+                }
+                if (mask_idx >= sizeof(mask)) {
+                    mask_idx = 0;
+                }
+            }
+            while ((endp - p) >= (int)sizeof(uint32_t)) {
+                SET_32(p, (GET_32(p) ^ mask));
+                p += sizeof(mask);
+            }
+            size_t remain = (endp - p);
+            if (remain > 0) {
+                for (; p < endp; p++) {
+                    mask_idx = (remain - (endp - p));
+                    *p = ((*p) ^ (reinterpret_cast<uint8_t *>(&mask))[mask_idx]);
+                }
+                mask_idx++;
+            }
+            return (endp - l);
+        }
+        inline State analyze_frame(size_t &over_read_length) {
+            if (m_flen < sizeof(uint16_t)) {
+                return state_recv_frame;
+            }
+            if (m_frame.ext.h.mask()) {
+                if (m_frame.ext.h.payload_len() == 0x7F) {
+                    if (m_flen < (sizeof(m_frame.ext.mask_0x7F))) {
+                        return state_recv_frame;
                     }
-                    else {
-                        if (m_flen < (sizeof(m_frame.ext.mask))) {
-                            return state_recv_frame;
-                        }
-                        over_read_length = (m_flen - (sizeof(m_frame.ext.mask)));
-                        return state_recv_mask;
+                    over_read_length = (m_flen - (sizeof(m_frame.ext.mask_0x7F)));
+                    return state_recv_mask_0x7F;
+                }
+                else if (m_frame.ext.h.payload_len() == 0x7E) {
+                    if (m_flen < (sizeof(m_frame.ext.mask_0x7E))) {
+                        return state_recv_frame;
                     }
+                    over_read_length = (m_flen - (sizeof(m_frame.ext.mask_0x7E)));
+                    return state_recv_mask_0x7E;
                 }
                 else {
-                    if (m_frame.ext.h.payload_len() == 0x7F) {
-                        if (m_flen < (sizeof(m_frame.ext.nomask_0x7F))) {
-                            return state_recv_frame;
-                        }
-                        over_read_length = (m_flen - (sizeof(m_frame.ext.nomask_0x7F)));
-                        return state_recv_0x7F;
+                    if (m_flen < (sizeof(m_frame.ext.mask))) {
+                        return state_recv_frame;
                     }
-                    else if (m_frame.ext.h.payload_len() == 0x7E) {
-                        if (m_flen < (sizeof(m_frame.ext.nomask_0x7E))) {
-                            return state_recv_frame;
-                        }
-                        over_read_length = (m_flen - (sizeof(m_frame.ext.nomask_0x7E)));
-                        return state_recv_0x7E;
-                    }
-                    else {
-                        if (m_flen < (sizeof(m_frame.ext.nomask))) {
-                            return state_recv_frame;
-                        }
-                        over_read_length = (m_flen - (sizeof(m_frame.ext.nomask)));
-                        return state_recv;
-                    }
+                    over_read_length = (m_flen - (sizeof(m_frame.ext.mask)));
+                    return state_recv_mask;
                 }
             }
-            inline uint32_t get_mask() {
-                switch(get_state()) {
-                case state_recv_mask:
-                    return GET_32(m_frame.ext.mask.masking_key);
-                case state_recv_mask_0x7E:
-                    return GET_32(m_frame.ext.mask_0x7E.masking_key);
-                case state_recv_mask_0x7F:
-                    return GET_32(m_frame.ext.mask_0x7F.masking_key);
-                default:
-                    ASSERT(false);
-                    return 0;
+            else {
+                if (m_frame.ext.h.payload_len() == 0x7F) {
+                    if (m_flen < (sizeof(m_frame.ext.nomask_0x7F))) {
+                        return state_recv_frame;
+                    }
+                    over_read_length = (m_flen - (sizeof(m_frame.ext.nomask_0x7F)));
+                    return state_recv_0x7F;
+                }
+                else if (m_frame.ext.h.payload_len() == 0x7E) {
+                    if (m_flen < (sizeof(m_frame.ext.nomask_0x7E))) {
+                        return state_recv_frame;
+                    }
+                    over_read_length = (m_flen - (sizeof(m_frame.ext.nomask_0x7E)));
+                    return state_recv_0x7E;
+                }
+                else {
+                    if (m_flen < (sizeof(m_frame.ext.nomask))) {
+                        return state_recv_frame;
+                    }
+                    over_read_length = (m_flen - (sizeof(m_frame.ext.nomask)));
+                    return state_recv;
                 }
             }
-            inline size_t frame_size() {
-                switch(get_state()) {
-                case state_recv_mask:
-                    return m_frame.ext.h.payload_len();
-                case state_recv_mask_0x7E:
-                    return ntohs(m_frame.ext.mask_0x7E.ext_payload_len);
-                case state_recv_mask_0x7F:
-                    return ntohll(GET_64(m_frame.ext.mask_0x7F.ext_payload_len));
-                case state_recv:
-                    return m_frame.ext.h.payload_len();
-                case state_recv_0x7E:
-                    return ntohs(m_frame.ext.nomask_0x7E.ext_payload_len);
-                case state_recv_0x7F:
-                    return ntohll(GET_64(m_frame.ext.nomask_0x7F.ext_payload_len));
-                default:
-                    ASSERT(false);
-                    return 0;
-                }
+        }
+        inline uint32_t get_mask() {
+            switch(get_state()) {
+            case state_recv_mask:
+                return GET_32(m_frame.ext.mask.masking_key);
+            case state_recv_mask_0x7E:
+                return GET_32(m_frame.ext.mask_0x7E.masking_key);
+            case state_recv_mask_0x7F:
+                return GET_32(m_frame.ext.mask_0x7F.masking_key);
+            default:
+                ASSERT(false);
+                return 0;
             }
-            inline int drain_recv_data(Fd fd, bool &finished) {
-                int r; size_t remain = frame_size() - m_read, n_read;
-                analyze_frame(n_read);
+        }
+        inline size_t frame_size() {
+            switch(get_state()) {
+            case state_recv_mask:
+                return m_frame.ext.h.payload_len();
+            case state_recv_mask_0x7E:
+                return ntohs(m_frame.ext.mask_0x7E.ext_payload_len);
+            case state_recv_mask_0x7F:
+                return ntohll(GET_64(m_frame.ext.mask_0x7F.ext_payload_len));
+            case state_recv:
+                return m_frame.ext.h.payload_len();
+            case state_recv_0x7E:
+                return ntohs(m_frame.ext.nomask_0x7E.ext_payload_len);
+            case state_recv_0x7F:
+                return ntohll(GET_64(m_frame.ext.nomask_0x7F.ext_payload_len));
+            default:
+                ASSERT(false);
+                return 0;
+            }
+        }
+        inline int drain_recv_data(Fd fd, bool &finished) {
+            int r; size_t remain = frame_size() - m_read, n_read;
+            analyze_frame(n_read);
+            if (n_read > 0) {
+                Syscall::MemCopy(m_ctrl_frame.m_buff,
+                    m_frame_buff + (m_flen - n_read), n_read);
+                m_ctrl_frame.m_len += n_read;
+            }
+            while (remain > 0) {
+                if ((r = m_ctrl_frame.drain(*this, remain)) <= 0) {
+                    return r;
+                }
+                m_read += r;
+                remain -= r;
+            }
+            finished = (remain <= 0);
+            return QRPC_OK;
+        }
+        inline int read_frame(Fd fd, char *p, size_t l) {
+            int r; size_t remain, n_read;
+            char *orgp = p;
+        retry:
+            TRACE("length = %u %u\n", (int)l, get_state());
+            switch(get_state()) {
+            case state_established:
+                init_frame(); /* fall through */
+            case state_recv_frame: {
+                if ((r = read_body_and_fd(fd, m_frame_buff + m_flen, sizeof(Frame) - m_flen)) <= 0) {
+                    TRACE("read_frame read_body_and_fd fail %d %d\n", r, Syscall::Errno());
+                    if (r == 0) { return r; }
+                    if (Syscall::EAgain()) {
+                        goto again;
+                    }
+                    goto error;
+                }
+                m_flen += r;
+                m_state = analyze_frame(n_read);
+                if (m_state <= state_recv_frame) {
+                    goto again;
+                }
                 if (n_read > 0) {
-                    Syscall::MemCopy(m_ctrl_frame.m_buff,
-                        m_frame_buff + (m_flen - n_read), n_read);
-                    m_ctrl_frame.m_len += n_read;
-                }
-                while (remain > 0) {
-                    if ((r = m_ctrl_frame.drain(fd, *this, remain)) <= 0) {
-                        return r;
+                    if (l < n_read) {
+                        return QRPC_ESIZE;
                     }
-                    m_read += r;
-                    remain -= r;
+                    Syscall::MemCopy(p, m_frame_buff + (m_flen - n_read), n_read);
+                    if (m_frame.masked()) {
+                        mask_payload(p, n_read, get_mask(), m_mask_idx);
+                    }
+                    p += n_read;
+                    l -= n_read;
+                    m_read += n_read;
+                    TRACE("read %u byte\n", (int)n_read);
                 }
-                finished = (remain <= 0);
-                return NBR_SUCCESS;
-            }
-            inline int read_frame(Fd fd, char *p, size_t l) {
-                int r; size_t remain, n_read;
-                char *orgp = p;
-            retry:
-                TRACE("length = %u %u\n", (int)l, get_state());
-                switch(get_state()) {
-                case state_established:
-                    init_frame(); /* fall through */
-                case state_recv_frame: {
-                    if ((r = read_body_and_fd(fd, m_frame_buff + m_flen, sizeof(Frame) - m_flen)) <= 0) {
-                        TRACE("read_frame read_body_and_fd fail %d %d\n", r, Syscall::Errno());
+            }  /* fall through */
+            case state_recv_mask:
+            case state_recv_mask_0x7E:
+            case state_recv_mask_0x7F:
+            case state_recv:
+            case state_recv_0x7E:
+            case state_recv_0x7F: {
+                TRACE("opcode = %u, flen=%u\n", m_frame.get_opcode(), (int)frame_size());
+                switch(m_frame.get_opcode()) {
+                case opcode_continuation_frame:
+                case opcode_text_frame:
+                case opcode_binary_frame: {
+                    remain = frame_size() - m_read;
+                    if (remain <= 0) {
+                        if (m_read <= 0) {
+                            TRACE("non-control frame has no data\n");
+                            ASSERT(false);
+                            goto error;
+                        }
+                        // read all of current frame. new frame will be read next
+                        m_state = state_established;
+                        goto retry;
+                    }
+                    n_read = l;
+                    if (n_read > remain) { n_read = remain; }
+                    if ((r = read_body_and_fd(fd, p, n_read)) <= 0) {
                         if (r == 0) { return r; }
                         if (Syscall::EAgain()) {
                             goto again;
                         }
                         goto error;
                     }
-                    m_flen += r;
-                    m_state = analyze_frame(n_read);
-                    if (m_state <= state_recv_frame) {
-                        goto again;
+                    if (m_frame.masked()) {
+                        mask_payload(p, r, get_mask(), m_mask_idx);
                     }
-                    if (n_read > 0) {
-                        if (l < n_read) {
-                            return QRPC_ESIZE;
-                        }
-                        Syscall::MemCopy(p, m_frame_buff + (m_flen - n_read), n_read);
-                        if (m_frame.masked()) {
-                            mask_payload(p, n_read, get_mask(), m_mask_idx);
-                        }
-                        p += n_read;
-                        l -= n_read;
-                        m_read += n_read;
-                        TRACE("read %u byte\n", (int)n_read);
-                    }
-                }  /* fall through */
-                case state_recv_mask:
-                case state_recv_mask_0x7E:
-                case state_recv_mask_0x7F:
-                case state_recv:
-                case state_recv_0x7E:
-                case state_recv_0x7F: {
-                    TRACE("opcode = %u, flen=%u\n", m_frame.get_opcode(), (int)frame_size());
-                    switch(m_frame.get_opcode()) {
-                    case opcode_continuation_frame:
-                    case opcode_text_frame:
-                    case opcode_binary_frame: {
-                        remain = frame_size() - m_read;
-                        if (remain <= 0) {
-                            if (m_read <= 0) {
-                                TRACE("non-control frame has no data\n");
-                                ASSERT(false);
-                                goto error;
-                            }
-                            m_state = state_established;
-                            goto retry;
-                        }
-                        n_read = l;
-                        if (n_read > remain) { n_read = remain; }
-                        if ((r = read_body_and_fd(fd, p, n_read)) <= 0) {
-                            if (r == 0) { return r; }
-                            if (Syscall::EAgain()) {
-                                goto again;
-                            }
-                            goto error;
-                        }
-                        if (m_frame.masked()) {
-                            mask_payload(p, r, get_mask(), m_mask_idx);
-                        }
-                        m_read += r;
-                        p += r;
-                        l -= r;
-                        TRACE("read %u byte\n", r);
-                    } break;
-                    case opcode_connection_close: {
-                        /* body has 2 byte to indicate why connection close */
-                        bool finished;
-                        if ((r = drain_recv_data(fd, finished)) <= 0) {
-                            if (r == 0) { return r; }
-                            if (Syscall::EAgain()) {
-                                if (m_frame.masked()) {
-                                    mask_payload(m_ctrl_frame.m_buff, m_ctrl_frame.m_len, get_mask(), m_mask_idx);
-                                }
-                                goto again;
-                            }
-                            goto error;
-                        }
-                        if (finished) {
+                    m_read += r;
+                    p += r;
+                    l -= r;
+                    TRACE("read %u byte\n", r);
+                } break;
+                case opcode_connection_close: {
+                    /* body has 2 byte to indicate why connection close */
+                    bool finished;
+                    if ((r = drain_recv_data(fd, finished)) <= 0) {
+                        if (r == 0) { return r; }
+                        if (Syscall::EAgain()) {
                             if (m_frame.masked()) {
                                 mask_payload(m_ctrl_frame.m_buff, m_ctrl_frame.m_len, get_mask(), m_mask_idx);
                             }
-                            TRACE("close reason : %u\n", GET_16(m_ctrl_frame.m_buff));
-                            m_ctrl_frame.reset();
+                            goto again;
                         }
-                        return 0;/* return 0 byte to indicate connect close to caller */
+                        goto error;
                     }
-                    case opcode_ping:
-                    case opcode_pong: {
-                        bool finished;
-                        if ((r = drain_recv_data(fd, finished)) <= 0) {
-                            if (r == 0) { return r; }
-                            if (Syscall::EAgain()) {
-                                goto again;
+                    if (finished) {
+                        if (m_frame.masked()) {
+                            mask_payload(m_ctrl_frame.m_buff, m_ctrl_frame.m_len, get_mask(), m_mask_idx);
+                        }
+                        TRACE("close reason : %u\n", GET_16(m_ctrl_frame.m_buff));
+                        m_ctrl_frame.reset();
+                        Close(QRPC_CLOSE_REASON_REMOTE, GET_16(m_ctrl_frame.m_buff), "websocket close frame received");
+                    }
+                    return 0;/* return 0 byte to indicate connect close to caller */
+                }
+                case opcode_ping:
+                case opcode_pong: {
+                    bool finished;
+                    if ((r = drain_recv_data(fd, finished)) <= 0) {
+                        if (r == 0) { return r; }
+                        if (Syscall::EAgain()) {
+                            goto again;
+                        }
+                        goto error;
+                    }
+                    if (finished) {
+                        if (m_frame.get_opcode() == opcode_ping) {
+                            if (m_frame.masked()) {
+                                mask_payload(m_ctrl_frame.m_buff, m_ctrl_frame.m_len,
+                                    get_mask(), m_mask_idx);
                             }
-                            goto error;
+                            /* return pong */
+                            WebSocketSession::write_frame(fd,
+                                m_ctrl_frame.m_buff,
+                                m_ctrl_frame.m_len,
+                                opcode_pong,
+                                m_frame.masked()
+                            );
+                            /* if pong fails, keep on. */
                         }
-                        if (finished) {
-                            if (m_frame.get_opcode() == opcode_ping) {
-                                if (m_frame.masked()) {
-                                    mask_payload(m_ctrl_frame.m_buff, m_ctrl_frame.m_len,
-                                        get_mask(), m_mask_idx);
-                                }
-                                /* return pong */
-                                write_frame(fd,
-                                    m_ctrl_frame.m_buff,
-                                    m_ctrl_frame.m_len, opcode_pong);
-                                /* if pong fails, keep on. */
-                            }
-                            m_ctrl_frame.reset();
-                        }
-                    } break;
+                        m_ctrl_frame.reset();
                     }
-                    if (l > 0) {
-                        TRACE("%u byte remains. retry\n", (int)l);
-                        goto retry;
-                    }
-                    return p - orgp;
                 } break;
-                default:
-                    ASSERT(false);
-                    return QRPC_EINVAL;
                 }
-            again:
-                if (orgp < p) {
-                    return p - orgp;
+                if (l > 0) {
+                    TRACE("%u byte remains. retry\n", (int)l);
+                    goto retry;
                 }
-                return QRPC_EAGAIN;
-            error:
+                return p - orgp;
+            } break;
+            default:
+                ASSERT(false);
                 return QRPC_EINVAL;
             }
-            /* no fragmentation support */
-            static inline int write_frame(Fd fd, const char *p, size_t l,
-                opcode opc = opcode_binary_frame, bool masked = true, bool fin = true) {
-                char buff[sizeof(Frame)]; uint32_t rnd; uint8_t idx = 0;
-                Frame *pf = reinterpret_cast<Frame *>(buff);
-                size_t hl; Frame frm;
-                masked &= (!is_server(fd)); //force set no masked
-                pf->ext.h.set_controls(fin, masked, opc);
-                ASSERT(fin == pf->ext.h.fin());
-                if (l >= 0x7E) {
-                    if (l <= 0xFFFF) {
-                        pf->ext.h.set_payload_len(0x7E);
-                        if (pf->ext.h.mask()) {
-                            rnd = random::gen32();
-                            pf->ext.mask_0x7E.ext_payload_len = htons(l);
-                            SET_32(pf->ext.mask_0x7E.masking_key, rnd);
-                            hl = sizeof(frm.ext.mask_0x7E);
-                        }
-                        else {
-                            pf->ext.nomask_0x7E.ext_payload_len =  htons(l);
-                            hl = sizeof(frm.ext.nomask_0x7E);
-                        }
+        again:
+            if (orgp < p) {
+                return p - orgp;
+            }
+            return QRPC_EAGAIN;
+        error:
+            return QRPC_EINVAL;
+        }
+        /* no fragmentation support (TODO) */
+        static inline int write_frame(Fd fd, const char *p, size_t l,
+            opcode opc = opcode_binary_frame, bool masked = true, bool fin = true) {
+            char buff[sizeof(Frame)]; uint32_t rnd; uint8_t idx = 0;
+            Frame *pf = reinterpret_cast<Frame *>(buff);
+            size_t hl; Frame frm;
+            // temporary disable this. because I don't remember why I did that.
+            // masked &= (!is_server(fd)); //force set no masked
+            pf->ext.h.set_controls(fin, masked, opc);
+            ASSERT(fin == pf->ext.h.fin());
+            if (l >= 0x7E) {
+                if (l <= 0xFFFF) {
+                    pf->ext.h.set_payload_len(0x7E);
+                    if (pf->ext.h.mask()) {
+                        rnd = random::gen32();
+                        pf->ext.mask_0x7E.ext_payload_len = htons(l);
+                        SET_32(pf->ext.mask_0x7E.masking_key, rnd);
+                        hl = sizeof(frm.ext.mask_0x7E);
                     }
                     else {
-                        pf->ext.h.set_payload_len(0x7F);
-                        if (pf->ext.h.mask()) {
-                            rnd = rand::gen32();
-                            SET_64(pf->ext.mask_0x7F.ext_payload_len, htonll(l));
-                            SET_32(pf->ext.mask_0x7F.masking_key, rnd);
-                            hl = sizeof(frm.ext.mask_0x7F);
-                        }
-                        else {
-                            SET_64(pf->ext.nomask_0x7F.ext_payload_len, htonll(l));
-                            hl = sizeof(frm.ext.nomask_0x7F);
-                        }
+                        pf->ext.nomask_0x7E.ext_payload_len =  htons(l);
+                        hl = sizeof(frm.ext.nomask_0x7E);
                     }
                 }
                 else {
-                    pf->ext.h.set_payload_len(l);
+                    pf->ext.h.set_payload_len(0x7F);
                     if (pf->ext.h.mask()) {
-                        rnd = rand::gen32();
-                        SET_32(pf->ext.mask.masking_key, rnd);
-                        hl = sizeof(frm.ext.mask);
+                        rnd = random::gen32();
+                        SET_64(pf->ext.mask_0x7F.ext_payload_len, htonll(l));
+                        SET_32(pf->ext.mask_0x7F.masking_key, rnd);
+                        hl = sizeof(frm.ext.mask_0x7F);
                     }
                     else {
-                        hl = sizeof(frm.ext.nomask);
+                        SET_64(pf->ext.nomask_0x7F.ext_payload_len, htonll(l));
+                        hl = sizeof(frm.ext.nomask_0x7F);
                     }
                 }
-                if (Syscall::Write(fd, buff, hl) < 0) {
-                    return QRPC_ESEND;
+            }
+            else {
+                pf->ext.h.set_payload_len(l);
+                if (pf->ext.h.mask()) {
+                    rnd = random::gen32();
+                    SET_32(pf->ext.mask.masking_key, rnd);
+                    hl = sizeof(frm.ext.mask);
                 }
-                int r = (masked ?
-                    Syscall::Write(fd, mask_payload(const_cast<char *>(p), l, rnd, idx), l) :
-                    Syscall::Write(fd, p, l));
-                /* cannot send all packet */
-                if (r < 0 || ((size_t)r) < l) {
-                    /* TODO: should we cache remain buffer and send it slowly? */
-                    Close();
-                    ASSERT(Syscall::Errno() == EPIPE);
-                    return QRPC_ESEND;
-                }
-                return r;
-            }
-            inline int connect(Fd fd, void *addr, socklen_t len) {
-                m_sm.reset(fd, READSIZE);
-                setaddr(addr, len);
-                set_state(state_client_handshake);
-                if (tcp_connect(fd, addr, len) < 0) {
-                    return QRPC_ESYSCALL;
-                }
-                return QRPC_OK;
-            }
-            inline int accept(Fd fd, const address &a) {
-                setaddr(a);
-                m_sm.reset(fd, READSIZE);
-                m_state = ws_connection::state_server_handshake;
-                return fd;
-            }
-            inline char *init_accept_key_from_header(char *accept_key, size_t accept_key_len) {
-                /* get key from websocket header */
-                char kbuf[256]; int kblen;
-                if (!m_sm.hdrstr("Sec-Websocket-Key", kbuf, sizeof(kbuf), &kblen)) {
-                    return NULL;
-                }
-                char vbuf[256];	//it should be 16 byte
-                if (sizeof(m_key_ptr) != base64::decode(kbuf, kblen, vbuf)) {
-                    return NULL;
-                }
-                Syscall::MemCopy(m_key_ptr, vbuf, sizeof(m_key_ptr));
-                return generate_accept_key(accept_key, accept_key_len, kbuf);
-            }
-            inline char *generate_accept_key_from_value(char *accept_key, size_t accept_key_len,
-                char *key_buf/* must be 16byte */) {
-                /* base64 encode */
-                char enc[base64::buffsize(16)];
-                base64::encode(key_buf, 16, enc);
-                return generate_accept_key(accept_key, accept_key_len, enc);
-            }
-            static inline char *generate_accept_key(char *accept_key, size_t accept_key_len, const char *sec_key) {
-                if (accept_key_len < base64::buffsize(SHA1::kDigestSize)) {
-                    ASSERT(false); return NULL;
-                }
-                /* add salt */
-                char work[256];
-                char salt[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-                size_t l = Syscall::Sprintf((work, sizeof(work), "%s%s", sec_key, salt);
-                /* encoded by SHA-1(160bit) */
-                uint8_t digest[sha1::kDigestSize];
-                sha1::digest(work, l, digest);
-                /* base64 encode */
-                base64::encode(reinterpret_cast<char *>(digest), sizeof(digest), accept_key);
-                return accept_key;
-            }
-            inline int send_handshake_request(const char *host) {
-                init_key();
-                char out[base64::buffsize(sizeof(m_key_ptr))], origin[256];
-                base64::encode(m_key_ptr, sizeof(m_key_ptr), out);
-                Syscall::Sprintf((origin, sizeof(origin), "http://%s", host);
-                return send_handshake_request(host, out, origin, NULL);
-            }
-            inline int send_handshake_response() {
-                char buffer[base64::buffsize(SHA1::kDigestSize)], *p;
-                if (!(p = init_accept_key_from_header(buffer, sizeof(buffer)))) {
-                    return QRPC_EINVAL;
-                }
-                return send_handshake_response(buffer);
-            }
-            #define HS_CHECK(cond, ...)	if (!(cond)) { TRACE(__VA_ARGS__); return QRPC_EINVAL; }
-            inline int verify_handshake() {
-                char tok[256];
-                HS_CHECK(m_sm.hdrstr("Upgrade", tok, sizeof(tok)), "Upgrade header\n");
-                HS_CHECK(str::cmp_nocase(tok, "websocket", sizeof(tok)) == 0,
-                    "Upgrade invalid %s\n", tok);
-                HS_CHECK(m_sm.hdrstr("Connection", tok, sizeof(tok)), "Connection header\n");
-                HS_CHECK(str::cmp_nocase(tok, "upgrade", sizeof(tok)) == 0,
-                    "Connection invalid %s\n", tok);
-                switch(get_state()) {
-                case state_client_handshake_2: {
-                    char calculated[base64::buffsize(SHA1::kDigestSize)];
-                    HS_CHECK(m_sm.rc() == http::HRC_SWITCHING_PROTOCOLS, "invalid response %d\n", m_sm.rc());
-                    HS_CHECK(m_sm.hdrstr("Sec-WebSocket-Accept", tok, sizeof(tok)) != NULL,
-                        "Sec-WebSocket-Accept header\n");
-                    HS_CHECK(NULL != generate_accept_key_from_value(calculated, sizeof(calculated), m_key_ptr),
-                        "cannot calculate accept key from client data\n");
-                    HS_CHECK(util::str::cmp(tok, calculated) == 0,
-                        "Sec-WebSocket-Accept Invalid: [%s], should be [%s]\n", tok, calculated);
-                } return QRPC_OK;
-                case state_server_handshake: {
-                    HS_CHECK(m_sm.hashdr("Host"), "Host header\n");
-                    HS_CHECK(m_sm.hashdr("Sec-WebSocket-Key"), "Sec-WebSocket-Key header\n");
-                    /* TODO: optional header check? */
-                    int v;
-                    HS_CHECK(m_sm.hdrint("Sec-WebSocket-version", v) >= 0, "Sec-WebSocket-version header\n");
-                    HS_CHECK(v == 13, "version invalid %u\n", v);
-                } return QRPC_OK;
-                default:
-                    ASSERT(false);
-                    return QRPC_EINVAL;
+                else {
+                    hl = sizeof(frm.ext.nomask);
                 }
             }
-            int handshake(Fd fd, int r, int w)
-            {
-                char rbf[4096]; int rsz;
-                TRACE("ws::handshake: %d %d %d %d\n", fd, get_state(), r, w);
-                switch(get_state()) {
-                case state_client_handshake: {
-                    if (!w) { return QRPC_EAGAIN; }
-                    if (send_handshake_request() < 0) {
-                        return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
+            if (Syscall::Write(fd, buff, hl) < 0) {
+                return QRPC_ESYSCALL;
+            }
+            int r = (masked ?
+                Syscall::Write(fd, mask_payload(const_cast<char *>(p), l, rnd, idx), l) :
+                Syscall::Write(fd, p, l));
+            /* cannot send all packet */
+            if (r < 0 || ((size_t)r) < l) {
+                ASSERT(Syscall::Errno() == EPIPE);
+                return QRPC_ESYSCALL;
+            }
+            return r;
+        }
+        inline char *init_accept_key_from_header(char *accept_key, size_t accept_key_len) {
+            /* get key from websocket header */
+            char kbuf[256]; int kblen;
+            if (!m_sm.hdrstr("Sec-Websocket-Key", kbuf, sizeof(kbuf), &kblen)) {
+                return NULL;
+            }
+            uint8_t vbuf[256];	//it should be 16 byte
+            if (sizeof(m_key_ptr) != base64::decode(kbuf, kblen, vbuf, sizeof(vbuf))) {
+                return NULL;
+            }
+            Syscall::MemCopy(m_key_ptr, vbuf, sizeof(m_key_ptr));
+            return generate_accept_key(accept_key, accept_key_len, kbuf);
+        }
+        inline char *generate_accept_key_from_value(char *accept_key, size_t accept_key_len,
+            uint8_t *key_buf/* must be 16byte */) {
+            /* base64 encode */
+            char enc[base64::buffsize(16)];
+            base64::encode(key_buf, 16, enc, sizeof(enc));
+            return generate_accept_key(accept_key, accept_key_len, enc);
+        }
+        static inline char *generate_accept_key(char *accept_key, size_t accept_key_len, const char *sec_key) {
+            if (accept_key_len < base64::buffsize(sha1::kDigestSize)) {
+                ASSERT(false); return NULL;
+            }
+            /* add salt */
+            char work[256];
+            /* this value is decided by RFC */
+            char salt[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+            size_t l = str::Vprintf(work, sizeof(work), "%s%s", sec_key, salt);
+            /* encoded by SHA-1(160bit) */
+            uint8_t digest[sha1::kDigestSize];
+            sha1::digest(work, l, digest);
+            /* base64 encode */
+            base64::encode(digest, sizeof(digest), accept_key, sizeof(accept_key));
+            return accept_key;
+        }
+        int send_handshake_request(const char *host);
+        int send_handshake_response();
+        #define HS_CHECK(cond, ...)	if (!(cond)) { TRACE(__VA_ARGS__); return QRPC_EINVAL; }
+        inline int verify_handshake() {
+            char tok[256];
+            HS_CHECK(m_sm.hdrstr("Upgrade", tok, sizeof(tok)), "Upgrade header\n");
+            HS_CHECK(str::CmpNocase(tok, "websocket", sizeof(tok)) == 0,
+                "Upgrade invalid %s\n", tok);
+            HS_CHECK(m_sm.hdrstr("Connection", tok, sizeof(tok)), "Connection header\n");
+            HS_CHECK(str::CmpNocase(tok, "upgrade", sizeof(tok)) == 0,
+                "Connection invalid %s\n", tok);
+            switch(get_state()) {
+            case state_client_handshake_2: {
+                char calculated[base64::buffsize(sha1::kDigestSize)];
+                HS_CHECK(m_sm.rc() == HRC_SWITCHING_PROTOCOLS, "invalid response %d\n", m_sm.rc());
+                HS_CHECK(m_sm.hdrstr("Sec-WebSocket-Accept", tok, sizeof(tok)) != NULL,
+                    "Sec-WebSocket-Accept header\n");
+                HS_CHECK(NULL != generate_accept_key_from_value(calculated, sizeof(calculated), m_key_ptr),
+                    "cannot calculate accept key from client data\n");
+                HS_CHECK(str::CmpNocase(tok, calculated, sizeof(calculated)) == 0,
+                    "Sec-WebSocket-Accept Invalid: [%s], should be [%s]\n", tok, calculated);
+            } return QRPC_OK;
+            case state_server_handshake: {
+                HS_CHECK(m_sm.hashdr("Host"), "Host header\n");
+                HS_CHECK(m_sm.hashdr("Sec-WebSocket-Key"), "Sec-WebSocket-Key header\n");
+                /* TODO: optional header check? */
+                int v;
+                HS_CHECK(m_sm.hdrint("Sec-WebSocket-version", v) >= 0, "Sec-WebSocket-version header\n");
+                HS_CHECK(v == 13, "version invalid %u\n", v);
+            } return QRPC_OK;
+            default:
+                ASSERT(false);
+                return QRPC_EINVAL;
+            }
+        }
+        int handshake(Fd fd, int r, int w) {
+            char rbf[4096]; int rsz;
+            TRACE("WebSocketSession::handshake: %d %d %d %d\n", fd, get_state(), r, w);
+            switch(get_state()) {
+            case state_client_handshake: {
+                if (!w) { return QRPC_EAGAIN; }
+                if (send_handshake_request(m_hostname.c_str()) < 0) {
+                    return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
+                }
+                set_state(state_client_handshake_2);
+                return QRPC_EAGAIN;	//next state require read first
+            }
+            case state_client_handshake_2:
+            case state_server_handshake: {
+                if (!r) { return QRPC_EAGAIN; }
+                if ((rsz = Syscall::Read(fd, rbf, sizeof(rbf))) < 0) { 
+                    return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
+                }
+                TRACE("receive handshake packet [%s](%u)\n", rbf, rsz);
+                HttpFSM::state s = m_sm.append(rbf, rsz);
+                if (s == HttpFSM::state_recv_header) { return QRPC_EAGAIN; }
+                else if (s == HttpFSM::state_websocket_establish) {
+                    int err;
+                    if ((err = verify_handshake()) < 0) {
+                        ASSERT(false);
+                        return err;
                     }
-                    set_state(state_client_handshake_2);
-                    return QRPC_EAGAIN;	//next state require read first
-                }
-                case state_client_handshake_2:
-                case state_server_handshake: {
-                    if (!r) { return QRPC_EAGAIN; }
-                    if ((rsz = Syscall::Read(fd, rbf, sizeof(rbf))) < 0) { 
-                        return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
-                    }
-                    WS_TRACE("receive handshake packet [%s](%u)\n", rbf, rsz);
-                    HttpFSM::state s = m_sm.append(rbf, rsz);
-                    if (s == http::fsm::state_recv_header) { return QRPC_EAGAIN; }
-                    else if (s == http::fsm::state_websocket_establish) {
-                        int err;
-                        if ((err = verify_handshake()) < 0) {
-                            ASSERT(false);
-                            return err;
+                    if (get_state() == state_server_handshake) {
+                        if (send_handshake_response() < 0) {
+                            return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
                         }
-                        if (get_state() == state_server_handshake) {
-                            if (send_handshake_response() < 0) {
-                                return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
-                            }
-                        }
-                        set_state(state_established);
-                        return QRPC_OK;
                     }
-                    ASSERT(false);
-                    return QRPC_EINVAL;
+                    set_state(state_established);
+                    return QRPC_OK;
                 }
-                default:
-                    ASSERT(false);
-                    return QRPC_EINVAL;
-                }
+                ASSERT(false);
+                return QRPC_EINVAL;
             }
-            inline void set_state(State s) { m_state = s; }
-            inline State get_state() const { return (State)(m_state); }
-            static inline void set_server(Fd fd, bool server) { m_server_conn_flags[fd] = (server ? 1 : 0); }
-            static inline bool is_server(Fd fd) { return m_server_conn_flags[fd]; }
-        };
+            default:
+                ASSERT(false);
+                return QRPC_EINVAL;
+            }
+        }
+        inline void set_state(State s) { m_state = s; }
+        inline State get_state() const { return (State)(m_state); }
+    };
+
+
+    /******* WebSocketServer *******/
+    class WebSocketServer : public Server<WebSocketSession> {
+    public:
+        // intend to being called from HttpServer::Callback;
+        template <class WS>
+        WebSocketSession *UpgradeFrom(HttpSession &s) {
+            static_assert(std::is_base_of<WebSocketSession, WS>(), "S must be a descendant of WebSocketSession");
+            // ws will be created with established state
+            auto ws = new WS(s.factory(), s.fd(), s.addr(), s.fsm());
+            if (ws->send_handshake_response() < 0) {
+                // fail to upgrade
+                ASSERT(false);
+                delete ws;
+                return nullptr;
+            }
+            return ws;
+        }
+        template <class WS>
+        void Open(const std::string &host, int port) {
+            static_assert(std::is_base_of<WebSocketSession, WS>(), "S must be a descendant of WebSocketSession");
+            Server<WebSocketSession>::Resolve(AF_INET, host, port, [this, host](Fd fd, const Address &addr) {
+                return new WS(*this, fd, addr, host);
+            });
+        }
     public:
         static inline int send_handshake_request(Fd fd,
             const char *host, const char *key, const char *origin, const char *protocol = nullptr) {
@@ -973,12 +975,12 @@ namespace base {
             * Sec-WebSocket-Protocol: chat, superchat
             * Sec-WebSocket-Version: 13
             */
-            char buff[CHUNK_SIZE], proto_header[CHUNK_SIZE];
+            char buff[1024], proto_header[1024];
             if (protocol != nullptr) {
-                Syscall::Sprintf(proto_header, sizeof(proto_header),
+                str::Vprintf(proto_header, sizeof(proto_header),
                         "Sec-WebSocket-Protocol: %s\r\n", protocol);
             }
-            size_t sz = Syscall::Sprintf(buff, sizeof(buff), 
+            size_t sz = str::Vprintf(buff, sizeof(buff), 
                     "GET / HTTP/1.1\r\n"
                     "Host: %s\r\n"
                     "Upgrade: websocket\r\n"
@@ -1000,8 +1002,8 @@ namespace base {
             * Connection: Upgrade
             * Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
             */
-            char buff[CHUNK_SIZE];
-            size_t sz = Syscall::Sprintf(buff, sizeof(buff), 
+            char buff[1024];
+            size_t sz = str::Vprintf(buff, sizeof(buff), 
                     "HTTP/1.1 101 Switching Protocols\r\n"
                     "Upgrade: websocket\r\n"
                     "Connection: Upgrade\r\n"
@@ -1011,28 +1013,28 @@ namespace base {
             return Syscall::Write(fd, buff, sz);
         }
     };
-    typedef WebSocketServer::WebSocketSession WebSocketSession;
 
     /******* HttpRouter *******/
     class HttpRouter {
     public:
         typedef HttpServer::Callback Handler;
-        typedef HttpServer::HttpSession Response;
         typedef HttpFSM Request;
         HttpRouter() : route_() {}
         void Route(const std::regex &pattern, Handler h) {
-            route_[pattern] = h;
+            route_.push_back(std::make_pair(pattern, h));
         }
         Session *operator () (HttpSession &s) {
             char buff[256];
-            const char *path = req.url(buff, sizeof(buff));
+            const char *path = s.fsm().url(buff, sizeof(buff));
             for (auto &it : route_) {
                 if (std::regex_match(path, it.first)) {
                     return it.second(s);
                 }
             }
+            s.NotFound("no route matched for %s\n", path);
+            return nullptr; //session finished
         }
     protected:
-        std::map<std::regex, Handler> route_;
+        std::vector<std::pair<std::regex, Handler>> route_;
     };
 }

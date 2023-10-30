@@ -2,14 +2,14 @@
 
 #include <cstdint>
 #include <cstring>
-
+#include <random>
 namespace base {
   namespace random {
-    thread_local std::mt19937 engine(std::random_device{}());
+    std::mt19937 &prng();
     template <class N>
     inline N gen(N min, N max) {
       std::uniform_int_distribution<N> dist(min, max);
-      return dist(engine);
+      return dist(prng());
     }
     inline uint32_t gen32() {
       return gen<uint32_t>(0, UINT32_MAX);
@@ -21,11 +21,6 @@ namespace base {
 
   namespace sha1 {
     constexpr static int kDigestSize = 20;
-    inline void digest(const uint8_t* data, size_t len, uint8_t* digest) {
-      SHA1 sha1;
-      sha1.Update(data, len);
-      sha1.Final(digest);
-    }
     class SHA1 {
     public:
       SHA1() { Init(); }
@@ -149,16 +144,24 @@ namespace base {
         uint64_t count_;
         int buffer_pos_;
     };
+    inline void digest(const uint8_t* data, size_t len, uint8_t* out) {
+      SHA1 sha1;
+      sha1.Update(data, len);
+      sha1.Final(out);
+    }
+    inline void digest(const char *data, size_t len, uint8_t *out) {
+      digest(reinterpret_cast<const uint8_t*>(data), len, out);
+    }
   }
   namespace base64 {
       static const char kBase64Chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-      int buffsize(int len) {
+      inline int buffsize(int len) {
         return (len + 2) / 3 * 4 + 1;
       }
 
-      int encode(const uint8_t* src, int len, char* dst, int dstlen) {
-        int i, j;
+      inline int encode(const uint8_t* src, int len, char* dst, int dstlen) {
+        int i;
         uint8_t a, b, c;
         char* p = dst;
 
@@ -178,8 +181,8 @@ namespace base {
         return p - dst;
       }
 
-      int decode(const char* src, int len, uint8_t* dst, int dstlen) {
-        int i, j;
+      inline int decode(const char* src, int len, uint8_t* dst, int dstlen) {
+        int i;
         uint8_t a, b, c, d;
         uint8_t* p = dst;
 

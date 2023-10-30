@@ -69,8 +69,6 @@ typedef uint32_t qrpc_msgid_t;
 
 typedef uint32_t qrpc_stream_id_t;
 
-typedef uint64_t qrpc_close_reason_code_t;
-
 typedef struct qrpc_client_tag *qrpc_client_t; //NqClientLoop
 
 typedef struct qrpc_server_tag *qrpc_server_t; //NqServer
@@ -152,13 +150,22 @@ typedef enum {
   QRPC_EINVAL = -9,   //invalid parameter specified
   QRPC_EAGAIN = -10,  //temporary failure. retry required
   QRPC_ESIZE = -11,   //not enough size
+  QRPC_ECALLBACK = -12, //callback returns error
 } qrpc_error_t;
 
+typedef enum {
+  QRPC_CLOSE_REASON_NONE = 0,
+  QRPC_CLOSE_REASON_LOCAL = 1,   //application calls qrpc_conn_close
+  QRPC_CLOSE_REASON_REMOTE = 2,  //remote peer closed
+  QRPC_CLOSE_REASON_SYSCALL = 3, //some library function call fails
+  QRPC_CLOSE_REASON_RESOLVE = 4, //dns resolve fails
+} qrpc_close_reason_code_t;
+
 typedef struct {
-  bool app;                     //error is initiated by app close frame?
-  qrpc_close_reason_code_t code;  //explanation numeric error code
-  const char *msg;              //explanation message (can be any binary data other than text)
-  qrpc_size_t msglen;             //message length
+  qrpc_close_reason_code_t code; //explanation numeric error code
+  int64_t detail_code;           //explanation detail code
+  const char *msg;               //explanation message (can be any binary data other than text)
+  qrpc_size_t msglen;            //message length
 } qrpc_close_reason_t;
 
 QAPI_THREADSAFE const char *nq_error_detail_code2str(qrpc_error_t code, int detail_code);
@@ -208,7 +215,7 @@ QRPC_DECL_CLOSURE(void, qrpc_on_client_conn_open_t, void *, qrpc_conn_t, void **
 //last boolean indicates connection is closed from local(false) or remote(true).
 //if this function returns positive value,
 //connection automatically reconnect with back off which equals to returned value.
-QRPC_DECL_CLOSURE(qrpc_time_t, qrpc_on_client_conn_close_t, void *, qrpc_conn_t, qrpc_error_t, const qrpc_close_reason_t*, bool);
+QRPC_DECL_CLOSURE(qrpc_time_t, qrpc_on_client_conn_close_t, void *, qrpc_conn_t, const qrpc_close_reason_t*, bool);
 //client connection finalized. just after this callback is done, memory corresponding to the qrpc_conn_t, will be freed. 
 //because qrpc_conn_t is already invalidate when this callback invokes, almost qrpc_conn_* API returns invalid value in this callback.
 //so the callback is basically for cleanup user defined resourse, like closure arg pointer (1st arg) or user context (3rd arg).
@@ -219,7 +226,7 @@ QRPC_DECL_CLOSURE(void, qrpc_on_client_conn_finalize_t, void *, qrpc_conn_t, voi
 //server connection opened. same as qrpc_on_client_conn_open_t.
 QRPC_ALIAS_CLOSURE(qrpc_on_client_conn_open_t, qrpc_on_server_conn_open_t);
 //server connection closed. same as qrpc_on_client_conn_close_t but no reconnection feature
-QRPC_DECL_CLOSURE(void, qrpc_on_server_conn_close_t, void *, qrpc_conn_t, qrpc_error_t, const qrpc_close_reason_t*, bool);
+QRPC_DECL_CLOSURE(void, qrpc_on_server_conn_close_t, void *, qrpc_conn_t,  const qrpc_close_reason_t*, bool);
 
 
 /* conn */
@@ -459,7 +466,7 @@ QAPI_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modif
 //close and destroy conn/associated stream eventually, so never touch conn/stream/rpc after calling this API
 QAPI_THREADSAFE void qrpc_conn_close_ex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len);
 //same as qrpc_conn_close_ex but do not send reason code and detail
-QAPI_INLINE void qrpc_conn_close(qrpc_conn_t conn) { qrpc_conn_close_ex(conn, 0, (const uint8_t *)"", 0); }
+QAPI_INLINE void qrpc_conn_close(qrpc_conn_t conn) { qrpc_conn_close_ex(conn, QRPC_CLOSE_REASON_LOCAL, (const uint8_t *)"", 0); }
 //this just restart connection, if connection not start, start it, otherwise close connection once, then start again.
 //it never destroy connection itself, but associated stream/rpc all destroyed. (client only)
 QAPI_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn); 

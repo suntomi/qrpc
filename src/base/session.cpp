@@ -1,81 +1,79 @@
+#include "defs.h"
+#include "session.h"
 #include "address.h"
 #include "resolver.h"
+#include <netdb.h>
 
 namespace base {
+  typedef SessionFactory::FactoryMethod FactoryMethod;
+  typedef SessionFactory::Session::CloseReason CloseReason;
+
   struct DnsQuery : public AsyncResolver::Query {
-    int ConvertToSocketAddress(struct hostent *entries, int port, sockaddr_in &address) {
-      if (entries == nullptr ||
-          entries->h_addrtype != AF_INET ||
-          entries->h_length != sizeof(in_addr_t)) {
+    int port_;
+    int ConvertToSocketAddress(struct hostent *entries, int port, Address &addr) {
+      if (entries == nullptr) {
           return QRPC_ERESOLVE;
       }
+      struct sockaddr_storage address;
       memset(&address, 0, sizeof(address));
-      address.sin_family = AF_INET;
-      address.sin_port = htons(port);
-      memcpy(&address.sin_addr, entries->h_addr_list[0], sizeof(in_addr_t));
-
-      return true;
+      switch (entries->h_addrtype) {
+        case AF_INET: {
+          auto *sa = reinterpret_cast<struct sockaddr_in *>(&address);
+          sa->sin_family = entries->h_addrtype;
+          sa->sin_port = htons(port);
+          memcpy(&sa->sin_addr, entries->h_addr_list[0], sizeof(in_addr_t));
+          addr.Reset(reinterpret_cast<struct sockaddr *>(sa), Syscall::GetIpAddrLen(AF_INET));
+        } break;
+        case AF_INET6: {
+          auto *sa = reinterpret_cast<sockaddr_in6 *>(&address);
+          sa->sin6_family = entries->h_addrtype;
+          sa->sin6_port = htons(port);          
+          memcpy(&sa->sin6_addr, entries->h_addr_list[0], sizeof(in6_addr_t));
+          addr.Reset(reinterpret_cast<struct sockaddr *>(sa), Syscall::GetIpAddrLen(AF_INET6));
+        } break;
+        default:
+          return QRPC_ERESOLVE;
+      }
+      return 0;
     }
-    static qrpc_close_reason_t CreateAresCloseReason(int status) {
+    static CloseReason CreateAresCloseReason(int status) {
       auto ares_error = ares_strerror(status);
       return {
-        .app = false,
-        .code = NqLibraryError,
+        .code = QRPC_CLOSE_REASON_RESOLVE,
+        .detail_code = status,
         .msg = ares_error,
-        .msglen = (qrpc_size_t)strlen(ares_error)
       };
     }
   };
 
   struct SessionDnsQuery : public DnsQuery {
-    SocketFactory *factory_;
-    int port_;
-    SessionDnsQuery() : DnsQuery(), port_(0) {}
+    SessionFactory *factory_;
+    FactoryMethod factory_method_;
     void OnComplete(int status, int timeouts, struct hostent *entries) override {
       if (ARES_SUCCESS == status) {
         Address server_address;
         if (ConvertToSocketAddress(entries, port_, server_address)) {
-          factory_->Create(host_, server_id, server_address, config_);
+          factory_->Open(server_address, factory_method_);
           return;
         } else {
           status = ARES_ENOTFOUND;
         }
       }
-      qrpc_close_reason_t detail = CreateAresCloseReason(status);
-      //call on close with empty qrpc_conn_t. 
-      qrpc_conn_t empty = {{{0}}, nullptr};
-      qrpc_closure_call(config_.client().on_close, empty, qrpc_ERESOLVE, &detail, false);
+      CloseReason detail = CreateAresCloseReason(status);
+      Session *s = factory_method_(INVALID_FD, Address());
+      s->Close(detail);
+      // s is freed inside Close call.
     }
   };
 
-  struct ClosureDnsQuery : public DnsQuery {
-    qrpc_on_resolve_host_t cb_;
-    void OnComplete(int status, int timeouts, struct hostent *entries) override {
-      if (ARES_SUCCESS == status) {
-        qrpc_closure_call(cb_, qrpc_OK, nullptr, 
-            entries->h_addr_list[0], Syscall::GetIpAddrLen(entries->h_addrtype));
-      } else {
-        qrpc_close_reason_t detail = CreateAresCloseReason(status);
-        qrpc_closure_call(cb_, qrpc_ERESOLVE, &detail, nullptr, 0);
-      }
-    }  
-  };
-
-  // bool NqClientLoop::Resolve(int family_pref, const std::string &host, int port, const qrpc_clconf_t *conf) {
-  //   auto q = new NqDnsQueryForClient(*conf);
-  //   q->host_ = host;
-  //   q->loop_ = this;
-  //   q->family_ = family_pref;
-  //   q->port_ = port;
-  //   async_resolver_.StartResolve(q);  
-  //   return true;
-  // }
-  // bool NqClientLoop::Resolve(int family_pref, const std::string &host, qrpc_on_resolve_host_t cb) {
-  //   auto q = new NqDnsQueryForClosure;
-  //   q->host_ = host;
-  //   q->family_ = family_pref;
-  //   q->cb_ = cb;
-  //   async_resolver_.StartResolve(q);  
-  //   return true;
-  // }
+  bool SessionFactory::Resolve(int family_pref, const std::string &host, int port, FactoryMethod m) {
+    auto q = new SessionDnsQuery;
+    q->factory_ = this;
+    q->factory_method_ = m;
+    q->host_ = host;
+    q->family_ = family_pref;
+    q->port_ = port;
+    loop().ares().Resolve(q);
+    return true;
+  }
 }

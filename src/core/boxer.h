@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "MoodyCamel/concurrentqueue.h"
+#include "moodycamel/concurrentqueue.h"
 
 #include "qrpc.h"
 #include "base/allocator.h"

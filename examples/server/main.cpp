@@ -1,6 +1,7 @@
 #include "base/loop.h"
 #include "base/logger.h"
 #include "base/http.h"
+#include "base/string.h"
 #include "nlohmann/json.hpp"
 
 using json = nlohmann::json;
@@ -12,18 +13,19 @@ int main(int argc, char *argv[]) {
         TRACE("fail to init loop");
         exit(1);
     }
-    HttpServer s;
+    HttpServer s(l);
     HttpRouter r;
-    r.Route(R"/accept", [](HttpSession &s) {
+    r.Route(RGX("/accept"), [](HttpSession &s) {
         json j = {
             {"sdp", "hoge"}
         };
-        std::string body = std::to_string(j);
+        std::string body = j.dump();
+				std::string bodylen = std::to_string(body.length());
         HttpHeader h[] = {
             {.key = "Content-Type", .val = "application/json"},
-            {.key = "Content-Length", .val = std::to_string(body.length())}
+            {.key = "Content-Length", .val = bodylen.c_str()}
         };
-        s.Write(HRC_OK, &h, 2, body.c_str(), body.length());
+        s.Write(HRC_OK, h, 2, body.c_str(), body.length());
 				return nullptr;
     });
     if (!s.Listen(8080, r)) {

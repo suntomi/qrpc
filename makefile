@@ -4,7 +4,7 @@ OS=osx
 ARCH=arm64
 
 all:
-	bazel build :server --sandbox_debug --define os=$(OS)
+	bazel build :server --sandbox_debug
 
 build:
 	make -C $(CURDIR)/src/ext setup

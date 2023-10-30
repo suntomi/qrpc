@@ -2,20 +2,23 @@
 
 #include <cstdlib>
 
-#include "base/loop_impl.h"
-#include "base/io_processor.h"
+#include "loop_impl.h"
+#include "io_processor.h"
+#include "resolver.h"
 
 namespace base {
 class Loop : public LoopImpl, IoProcessor {
   IoProcessor **processors_;
   int max_nfd_;
+  AsyncResolver ares_;
   LoopImpl::Timeout timeout_;
- public:
+public:
   static const int kMinimumProcessorArraySize = 16;
   typedef LoopImpl::Event Event;
-  Loop() : LoopImpl(), processors_(nullptr), max_nfd_(-1) {}
+  Loop() : LoopImpl(), processors_(nullptr), max_nfd_(-1), ares_() {}
   ~Loop() { Close(); }
   template <class T> T *ProcessorAt(int fd) { return (T *)processors_[fd]; }
+  inline AsyncResolver &ares() { return ares_; }
   inline int Open(int max_nfd, uint64_t timeout_ns = 1000 * 1000) {
     if (max_nfd < kMinimumProcessorArraySize) {
       max_nfd = kMinimumProcessorArraySize;
@@ -47,7 +50,7 @@ class Loop : public LoopImpl, IoProcessor {
   }
   inline void ModProcessor(Fd fd, IoProcessor *hnew) {
     ASSERT(fd < max_nfd_ && processors_[fd] != nullptr);
-    auth h = processors_[fd];
+    auto h = processors_[fd];
     processors_[fd] = hnew;
     h->OnClose(fd);
   }
@@ -91,7 +94,12 @@ class Loop : public LoopImpl, IoProcessor {
       h->OnEvent(fd, ev);
     }
   }
- public: //IoProcessor
+  inline void PollAres() {
+    // need to initialize ares_ by using ares().Initialize(config)
+    ares_.Poll(this);
+    Poll();
+  }
+public: //IoProcessor
   void OnEvent(Fd fd, const Event &e) override { Poll(); }
   int OnOpen(Fd) override { return QRPC_OK; }
   void OnClose(Fd) override {}

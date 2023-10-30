@@ -1,4 +1,5 @@
-#include "base/resolver.h"
+#include "resolver.h"
+#include "loop.h"
 
 namespace base {
 // optmask, server_list, flags, timeout, lookups are member of the class
@@ -74,9 +75,11 @@ bool AsyncResolver::Initialize(const Config &config) {
   return true;
 }
 void AsyncResolver::Resolve(const char *host, int family, ares_host_callback cb, void *arg) {
+  ASSERT(channel_ != nullptr);
   ares_gethostbyname(channel_, host, family, cb, arg);
 }
 void AsyncResolver::Poll(Loop *l) {
+  ASSERT(channel_ != nullptr);
   Fd fds[ARES_GETSOCK_MAXNUM];
   auto bits = ares_getsock(channel_, fds, ARES_GETSOCK_MAXNUM);
   //synchronize socket i/o request with event loop registration state

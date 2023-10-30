@@ -8,7 +8,7 @@
 
 #include <algorithm>
 
-#include "base/defs.h"
+#include "defs.h"
 
 namespace base {
 struct Endian {

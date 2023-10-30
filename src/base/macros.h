@@ -42,3 +42,16 @@
 // use its type.
 template <typename T, size_t N> char (&ArraySizeHelper(T (&array)[N]))[N];
 #define arraysize(array) (sizeof(ArraySizeHelper(array)))
+
+/* memory access support */
+#define GET_8(ptr)		(*((uint8_t *)(ptr)))
+#define GET_16(ptr)		(*((uint16_t *)(ptr)))
+#define GET_32(ptr)		(*((uint32_t *)(ptr)))
+#define GET_64(ptr)		(*((uint64_t *)(ptr)))
+#define SET_8(ptr,v)	(*((uint8_t *)(ptr)) = v)
+#define SET_16(ptr,v)	(*((uint16_t *)(ptr)) = v)
+#define SET_32(ptr,v)	(*((uint32_t *)(ptr)) = v)
+#define SET_64(ptr,v)	(*((uint64_t *)(ptr)) = v)
+
+/* wrap terrible C++11 raw string literal */
+#define RGX(x) std::regex(R"("x")")
