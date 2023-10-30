@@ -25,7 +25,7 @@ cc_import(
 
 cc_binary(
   name = "server",
-  srcs = ["examples/server/main.cpp"],
+  srcs = glob(["examples/server/main.cpp", "src/qrpc.h", "src/qrpc.cpp", "src/base/**"]),
   includes = [
     "src",
     "src/ext/mediasoup/worker/include",
@@ -33,6 +33,6 @@ cc_binary(
     "src/ext/mediasoup/worker/subprojects/nlohmann_json-3.10.5/include",
     "src/ext/mediasoup/worker/subprojects/libuv-v1.44.2/include",
   ],
-  deps = [":mediasoup"],
+  deps = [":mediasoup", "//src/ext/cares:ares"],
   linkstatic = True,
 )

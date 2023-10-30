@@ -1,26 +1,28 @@
+# load("@//tools/bazel/libs:copy_file.bzl", "copy_file")
+
 config_setting(
-    name = "osx",
-    values = {"os": "osx"},
+    name = "darwin",
+    values = {"cpu": "darwin"},
 )
 
 config_setting(
-    name = "osx_x86_64",
-    values = {"cpu": "x86_64","os": "osx"},
+    name = "darwin_x86_64",
+    values = {"cpu": "darwin_x86_64"},
 )
 
 config_setting(
-    name = "osx_arm64",
-    values = {"cpu": "arm64","os": "osx"},
+    name = "darwin_arm64",
+    values = {"cpu": "darwin_arm64"},
 )
 
 config_setting(
-    name = "osx_arm64e",
-    values = {"cpu": "arm64e","os": "osx"},
+    name = "darwin_arm64e",
+    values = {"cpu": "darwin_arm64e"},
 )
 
 config_setting(
-    name = "win_x86_64",
-    values = {"cpu": "x86_64","os": "windows"},
+    name = "windows",
+    values = {"cpu": "x64_windows"},
 )
 
 # Android is not officially supported through C++.
@@ -36,65 +38,97 @@ config_setting(
 # This just helps with the build for now.
 config_setting(
     name = "ios_x86_64",
-    values = {"cpu": "x86_64","os": "ios"},
+    values = {"cpu": "ios_x86_64"},
 )
 
 config_setting(
     name = "ios_armv7",
-    values = {"cpu": "armv7","os": "ios"},
+    values = {"cpu": "ios_armv7"},
 )
 
 config_setting(
     name = "ios_armv7s",
-    values = {"cpu": "armv7s","os": "ios"},
+    values = {"cpu": "ios_armv7s"},
 )
 
 config_setting(
     name = "ios_arm64",
-    values = {"cpu": "arm64","os": "ios"},
+    values = {"cpu": "ios_arm64"},
 )
 
 config_setting(
     name = "ios_sim_arm64",
-    values = {"cpu": "arm64","os": "ios_sim"},
+    values = {"cpu": "ios_sim_arm64"},
 )
 
 # The following architectures are found in 
 # https://github.com/bazelbuild/bazel/blob/master/src/main/java/com/google/devtools/build/lib/rules/apple/ApplePlatform.java
 config_setting(
     name = "tvos_x86_64",
-    values = {"cpu": "x86_64","os": "tvos"},
+    values = {"cpu": "tvos_x86_64"},
 )
 
 config_setting(
     name = "tvos_arm64",
-    values = {"cpu": "arm64","os": "tvos"},
+    values = {"cpu": "tvos_arm64"}
 )
 
 config_setting(
     name = "watchos_i386",
-    values = {"cpu": "i386","os": "watchos"},
+    values = {"cpu": "watchos_i386"},
 )
 
 config_setting(
     name = "watchos_x86_64",
-    values = {"cpu": "x86_64","os": "watchos"},
+    values = {"cpu": "watchos_x86_64"}
 )
 
 config_setting(
     name = "watchos_armv7k",
-    values = {"cpu": "armv7k","os": "watchos"},
+    values = {"cpu": "watchos_armv7k"},
 )
 
 config_setting(
     name = "watchos_arm64_32",
-    values = {"cpu": "arm64_32","os": "watchos"},
+    values = {"cpu": "watchos_arm64_32"}
 )
 
 config_setting(
     name = "openbsd",
-    values = {"os": "openbsd"},
+    values = {"cpu": "openbsd"},
 )
+
+# copy_file(
+#     name = "ares_build_h",
+#     src = "@com_github_grpc_grpc//third_party/cares:ares_build.h",
+#     out = "ares_build.h",
+# )
+
+# copy_file(
+#     name = "ares_config_h",
+#     src = select({
+#         ":ios_x86_64": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":ios_armv7": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":ios_armv7s": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":ios_arm64": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":ios_sim_arm64": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":tvos_x86_64": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":tvos_arm64": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":watchos_i386": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":watchos_x86_64": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":watchos_armv7k": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":watchos_arm64_32": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":darwin": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":darwin_x86_64": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":darwin_arm64": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":darwin_arm64e": "@com_github_grpc_grpc//third_party/cares:config_darwin/ares_config.h",
+#         ":windows": "@com_github_grpc_grpc//third_party/cares:config_windows/ares_config.h",
+#         ":android": "@com_github_grpc_grpc//third_party/cares:config_android/ares_config.h",
+#         ":openbsd": "@com_github_grpc_grpc//third_party/cares:config_openbsd/ares_config.h",
+#         "//conditions:default": "@com_github_grpc_grpc//third_party/cares:config_linux/ares_config.h",
+#     }),
+#     out = "ares_config.h",
+# )
 
 cc_library(
     name = "ares",
@@ -188,25 +222,25 @@ cc_library(
         "cares/src/libares_writev.h",
         "cares/src/libares_nowarn.h",        
     ] + select({
-        ":ios_x86_64": "config_darwin/ares_config.h",
-        ":ios_armv7": "config_darwin/ares_config.h",
-        ":ios_armv7s": "config_darwin/ares_config.h",
-        ":ios_arm64": "config_darwin/ares_config.h",
-        ":ios_sim_arm64": "config_darwin/ares_config.h",
-        ":tvos_x86_64": "config_darwin/ares_config.h",
-        ":tvos_arm64": "config_darwin/ares_config.h",
-        ":watchos_i386": "config_darwin/ares_config.h",
-        ":watchos_x86_64": "config_darwin/ares_config.h",
-        ":watchos_armv7k": "config_darwin/ares_config.h",
-        ":watchos_arm64_32": "config_darwin/ares_config.h",
-        ":osx": "config_darwin/ares_config.h",
-        ":osx_x86_64": "config_darwin/ares_config.h",
-        ":osx_arm64": "config_darwin/ares_config.h",
-        ":osx_arm64e": "config_darwin/ares_config.h",
-        ":windows": "config_windows/ares_config.h",
-        ":android": "config_android/ares_config.h",
-        ":openbsd": "config_openbsd/ares_config.h",
-        "//conditions:default": "config_linux/ares_config.h",
+        ":ios_x86_64": ["config_darwin/ares_config.h"],
+        ":ios_armv7": ["config_darwin/ares_config.h"],
+        ":ios_armv7s": ["config_darwin/ares_config.h"],
+        ":ios_arm64": ["config_darwin/ares_config.h"],
+        ":ios_sim_arm64": ["config_darwin/ares_config.h"],
+        ":tvos_x86_64": ["config_darwin/ares_config.h"],
+        ":tvos_arm64": ["config_darwin/ares_config.h"],
+        ":watchos_i386": ["config_darwin/ares_config.h"],
+        ":watchos_x86_64": ["config_darwin/ares_config.h"],
+        ":watchos_armv7k": ["config_darwin/ares_config.h"],
+        ":watchos_arm64_32": ["config_darwin/ares_config.h"],
+        ":darwin": ["config_darwin/ares_config.h"],
+        ":darwin_x86_64": ["config_darwin/ares_config.h"],
+        ":darwin_arm64": ["config_darwin/ares_config.h"],
+        ":darwin_arm64e": ["config_darwin/ares_config.h"],
+        ":windows": ["config_windows/ares_config.h"],
+        ":android": ["config_android/ares_config.h"],
+        ":openbsd": ["config_openbsd/ares_config.h"],
+        "//conditions:default": ["config_linux/ares_config.h"],
     }),
     copts = [
         "-D_GNU_SOURCE",

@@ -1,8 +1,6 @@
-#include "core/nq_async_resolver.h"
+#include "base/resolver.h"
 
-#include "core/nq_loop.h"
-
-namespace qrpc {
+namespace base {
 // optmask, server_list, flags, timeout, lookups are member of the class
 AsyncResolver::Config::Config() : optmask(0), server_list(nullptr) {
   flags = 0;

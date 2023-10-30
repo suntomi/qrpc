@@ -1,3 +1,6 @@
 [submodule "src/ext/mediasoup"]
 	path = src/ext/mediasoup
 	url = https://github.com/suntomi/mediasoup
+[submodule "src/ext/cares/cares"]
+	path = src/ext/cares/cares
+	url = https://github.com/c-ares/c-ares.git
