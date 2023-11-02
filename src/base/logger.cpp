@@ -21,7 +21,7 @@ namespace logger {
     fputc('\n', stderr);
   }
   static writer_cb_t writer_ = default_writer;
-  static std::string id_ = "nq";
+  static std::string id_ = "qrpc";
   static std::mutex mtx_;
   static bool manual_flush_ = false;
   void configure(writer_cb_t cb, const std::string &id, bool manual_flush) {
