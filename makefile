@@ -1,14 +1,20 @@
 .PHONY: build
 
-OS=osx
-ARCH=arm64
+# debug/release
+MODE=debug
+ifeq ($(MODE),debug)
+	BUILD_OPT=--compilation_mode=dbg -s
+else
+	BUILD_OPT=--compilation_mode=opt -s
+endif
 
 all:
-	bazel build :server --sandbox_debug
+	bazel build :server $(BUILD_OPT)
 
-build:
+setup:
 	make -C $(CURDIR)/src/ext setup
-	bazel build :server --sandbox_debug
+
+build: setup all
 
 clean:
 	make -C $(CURDIR)/src/ext clean

@@ -1,11 +1,11 @@
 //this file is shared... so please not include client specific headers (eg. for TRACE)
-#include "http.h"
+#include "base/http.h"
 #include <memory.h>
 #include <stdlib.h>
 
 #include <thread>
 
-#include "logger.h"
+#include "base/logger.h"
 
 #define EXPAND_BUFFER
 

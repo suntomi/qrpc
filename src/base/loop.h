@@ -2,9 +2,9 @@
 
 #include <cstdlib>
 
-#include "loop_impl.h"
-#include "io_processor.h"
-#include "resolver.h"
+#include "base/loop_impl.h"
+#include "base/io_processor.h"
+#include "base/resolver.h"
 
 namespace base {
 class Loop : public LoopImpl, IoProcessor {

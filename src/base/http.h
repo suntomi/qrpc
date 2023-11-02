@@ -5,10 +5,10 @@
 #include <map>
 #include <cstdlib>
 #include <regex>
-#include "defs.h"
-#include "session.h"
-#include "string.h"
-#include "crypto.h"
+#include "base/defs.h"
+#include "base/session.h"
+#include "base/string.h"
+#include "base/crypto.h"
 
 namespace base {
     /****** HTTP status codes *******/

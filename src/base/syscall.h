@@ -15,9 +15,9 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-#include "address.h"
-#include "defs.h"
-#include "endian.h"
+#include "base/address.h"
+#include "base/defs.h"
+#include "base/endian.h"
 
 namespace base {
 

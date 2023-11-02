@@ -1,8 +1,8 @@
 #pragma once
 
 #include "qrpc.h"
-#include "defs.h"
-#include "syscall.h"
+#include "base/defs.h"
+#include "base/syscall.h"
 
 #if defined(__ENABLE_EPOLL__)
 #include <sys/epoll.h>

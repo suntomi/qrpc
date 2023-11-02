@@ -4,8 +4,8 @@
 
 #include <ares.h>
 
-#include "defs.h"
-#include "io_processor.h"
+#include "base/defs.h"
+#include "base/io_processor.h"
 
 namespace base {
 class Loop;
@@ -109,8 +109,7 @@ class AsyncResolver {
     if (converted != nullptr) {
       return 0;
     } else {
-      int eno = Syscall::Errno();
-      TRACE("failure ntop: %d", eno);
+      TRACE("failure ntop: %d", Syscall::Errno());
       return -1;
     }
   }

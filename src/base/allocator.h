@@ -4,9 +4,9 @@
 #include <vector>
 #include <memory>
 
-#include "memory.h"
+#include "base/memory.h"
 
-#include "defs.h"
+#include "base/defs.h"
 
 namespace base {
 struct EmptyBSS {

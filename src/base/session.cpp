@@ -1,7 +1,7 @@
-#include "defs.h"
-#include "session.h"
-#include "address.h"
-#include "resolver.h"
+#include "base/defs.h"
+#include "base/session.h"
+#include "base/address.h"
+#include "base/resolver.h"
 #include <netdb.h>
 
 namespace base {

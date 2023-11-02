@@ -1,5 +1,5 @@
-#include "resolver.h"
-#include "loop.h"
+#include "base/resolver.h"
+#include "base/loop.h"
 
 namespace base {
 // optmask, server_list, flags, timeout, lookups are member of the class
