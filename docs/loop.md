@@ -8,8 +8,9 @@
 
 ### 削除
 - Closeの呼び出し
-  - Close
+  - Close(from_local = true)
 - OnEventのエラー
   - 
 - remoteからの切断
   - readが0bytesになる
+  - Close(from_local = false)

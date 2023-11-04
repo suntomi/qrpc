@@ -27,6 +27,8 @@ constexpr Fd INVALID_FD = -1;
 #elif defined(__ENABLE_IOCP__)
 //TODO(iyatomi): windows definition?
 #else
+typedef int Fd;
+constexpr Fd INVALID_FD = -1; 
 #endif
 
 #ifndef SO_RXQ_OVFL
@@ -66,7 +68,7 @@ public:
       return false;
     }
   }
-  static bool SetListnerAddress(
+  static int SetListnerAddress(
     struct sockaddr_storage &addr, uint16_t port, bool in6
   ) {
     if (in6) {
@@ -75,35 +77,16 @@ public:
       tmp->sin6_family = AF_INET6;
       tmp->sin6_addr = IN6ADDR_ANY_INIT;
       tmp->sin6_port = Endian::HostToNet(port);
+      return tmp->sin6_len;
     } else {
       auto tmp = (struct sockaddr_in *)&addr;
       tmp->sin_len = GetSockAddrLen(AF_INET);
       tmp->sin_family = AF_INET;
       tmp->sin_addr.s_addr = htonl(INADDR_ANY);
       tmp->sin_port = Endian::HostToNet(port);
+      return tmp->sin_len;
     }
     return true;
-  }
-  static int SetSockAddr(
-    struct sockaddr_storage &addr, uint16_t port, bool in6
-  ) {
-    struct sockaddr *addr_p = reinterpret_cast<struct sockaddr *>(&addr);
-    if (in6) {
-      auto addr_len = GetIpAddrLen(AF_INET6);
-      auto tmp = (struct sockaddr_in6 *)&addr;
-      tmp->sin6_len = GetSockAddrLen(AF_INET6);
-      tmp->sin6_family = AF_INET6;
-      tmp->sin6_port = Endian::HostToNet(port);
-      memcpy(&tmp->sin6_addr, addr_p, addr_len);
-    } else {
-      auto addr_len = GetIpAddrLen(AF_INET);
-      auto tmp = (struct sockaddr_in *)&addr;
-      tmp->sin_len = GetSockAddrLen(AF_INET);
-      tmp->sin_family = AF_INET;
-      tmp->sin_port = Endian::HostToNet(port);
-      memcpy(&tmp->sin_addr, addr_p, addr_len);
-    }
-    return 0;
   }
   static const void *GetSockAddrPtr(const struct sockaddr_storage &addr) {
     if (addr.ss_family == AF_INET) {
@@ -229,11 +212,17 @@ public:
 
   static bool SetSendBufferSize(int fd, size_t size) {
     if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) != 0) {
-      logger::error({
-        {"msg", "Failed to set socket send size"},
-        {"size", size}
-      });
+      logger::error({{"msg", "Failed to set socket send size"},{"size", size},{"errno", Errno()}});
       return false;
+    }
+    return true;
+  }
+
+  static bool SetSocketReuseAddr(int fd) {
+    int yes = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes)) != 0) {
+        logger::error({{"msg", "setsockopt(SO_REUSEADDR) failed"},{"errno", Errno()}});
+        return false;
     }
     return true;
   }
@@ -255,10 +244,7 @@ public:
   static Fd Connect(const sockaddr *sa, socklen_t salen, bool in6 = false) {
     int fd = socket(in6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-      logger::error({
-        {"msg", "socket() failed"},
-        {"errno", Errno()}
-      });
+      logger::error({{"msg", "socket() failed"},{"errno", Errno()}});
       return INVALID_FD;
     }
     
@@ -280,13 +266,10 @@ public:
   }
 
   static Fd Listen(int port, bool in6 = false) {
-    const int MAX_BACKLOG = 128;
+    constexpr int MAX_BACKLOG = 128;
     int fd = socket(in6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-      logger::error({
-        {"msg", "socket() failed"},
-        {"errno", Errno()}
-      });
+      logger::error({{"msg", "socket() failed"},{"errno", Errno()}});
       return INVALID_FD;
     }
     
@@ -299,9 +282,7 @@ public:
     int rc = setsockopt(fd, SOL_SOCKET, SO_RXQ_OVFL, &get_overflow,
                         sizeof(get_overflow));
     if (rc < 0) {
-      logger::warn({
-        {"msg", "Socket overflow detection not supported"}
-      });
+      logger::warn({{"msg", "Socket overflow detection not supported"}});
     }
 
     if (!SetReceiveBufferSize(fd, kDefaultSocketReceiveBuffer)) {
@@ -314,18 +295,26 @@ public:
       return INVALID_FD;
     }
 
-    struct sockaddr_storage sas;
-    if (!SetSockAddr(sas, port, in6)) {
+    if (!SetSocketReuseAddr(fd)) {
       Close(fd);
       return INVALID_FD;
     }
 
-    if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), sizeof(sas)) < 0) {
+    struct sockaddr_storage sas;
+    socklen_t salen = sizeof(sas);
+    if ((salen = SetListnerAddress(sas, port, in6)) < 0) {
+      Close(fd);
+      return INVALID_FD;
+    }
+
+    if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), salen) < 0) {
+      logger::error({{"msg", "bind() fails"},{"errno", Errno()}});
       Close(fd);
       return INVALID_FD;
     }
 
     if (listen(fd, MAX_BACKLOG) < 0) {
+      logger::error({{"msg", "listen() fails"},{"errno", Errno()}});
       Close(fd);
       return INVALID_FD;
     }
@@ -335,10 +324,7 @@ public:
 
   static bool SetReceiveBufferSize(int fd, size_t size) {
     if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) != 0) {
-      logger::error({
-        {"msg", "Failed to set socket recv size"},
-        {"size", size}
-      });
+      logger::error({{"msg", "Failed to set socket recv size"},{"size", size},{"errno", Errno()}});
       return false;
     }
     return true;

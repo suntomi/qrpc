@@ -25,7 +25,9 @@
 ### WebRtcTransport::OnStunDataReceived
 - これは上の流れですでにtransportが登録された後のようだ
 
-### 
+### mapLocalIceUsernameFragmentWebRtcTransportにtransportが追加される流れ
+- 現状Routerにリクエストが飛んだ時に作成されている。おそらくシグナリング時に接続先を新しく作成するような想定になっているのだろうと思われる.
+  - つまりportをシェアすることはできないということだろうか。
 - WebRTCTransport::ctor
 - IceServer::ctor
 - IceServer::OnIceServerLocalUsernameFragmentAdded

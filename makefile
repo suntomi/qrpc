@@ -9,7 +9,7 @@ else
 endif
 
 all:
-	bazel build :server $(BUILD_OPT)
+	bazel build :server $(BUILD_OPT) --cpu=darwin_arm64 --features=oso_prefix_is_pwd
 
 setup:
 	make -C $(CURDIR)/src/ext setup

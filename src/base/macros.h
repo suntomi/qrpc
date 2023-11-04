@@ -2,16 +2,6 @@
 
 #include <stddef.h>  // For size_t.
 
-// Distinguish mips32.
-#if defined(__mips__) && (_MIPS_SIM == _ABIO32)
-#define __mips32__
-#endif
-
-// Distinguish mips64.
-#if defined(__mips__) && (_MIPS_SIM == _ABI64)
-#define __mips64__
-#endif
-
 // Put this in the declarations for a class to be uncopyable.
 #define DISALLOW_COPY(TypeName) \
   TypeName(const TypeName&) = delete
@@ -53,5 +43,9 @@ template <typename T, size_t N> char (&ArraySizeHelper(T (&array)[N]))[N];
 #define SET_32(ptr,v)	(*((uint32_t *)(ptr)) = v)
 #define SET_64(ptr,v)	(*((uint64_t *)(ptr)) = v)
 
-/* wrap terrible C++11 raw string literal */
-#define RGX(x) std::regex(R"("x")")
+/* wrap terrible C++11 raw string literal syntax */
+#define RGX(pattern) std::regex(pattern)
+
+#include "hedley/hedley.h"
+#define LIKELY(expr) HEDLEY_LIKELY(expr)
+#define UNLIKELY(expr) HEDLEY_UNLIKELY(expr)

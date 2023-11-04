@@ -34,7 +34,8 @@ cc_binary(
     "examples/server/main.cpp",
     "src/qrpc.h", "src/qrpc.cpp",
     "src/base/**",
-    "src/ext/moodycamel/*.h"
+    "src/ext/moodycamel/*.h",
+    "src/ext/hedley/*.h",
   ]),
   copts = [
     "-std=c++17",

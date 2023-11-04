@@ -37,6 +37,7 @@ namespace base {
                 //try expand buffer
                 char *org = m_p;
                 m_p = (char *)realloc(m_p, limit * 2);
+                m_max = limit * 2;
                 m_buf = m_p + (m_buf - org);
                 for (int i = 0; i < m_ctx.n_hd; i++) {
                     m_ctx.hd[i] = m_p + (m_ctx.hd[i] - org);
@@ -341,8 +342,8 @@ namespace base {
     HttpFSM::url(char *b, int l, size_t *p_out)
     {
         const char *w = m_ctx.hd[0];
-        /* skip first spaces */
-        while (*w != ' ') {
+        /* skip first verb (GET/POST/etc...) */
+        while (!std::isspace(*w)) {
             w++;
             if ((w - m_ctx.hd[0]) > m_ctx.hl[0]) {
                 return nullptr;
@@ -350,10 +351,15 @@ namespace base {
             /* reach to end of string: format error */
             if (*w == '\0') { return nullptr; }
         }
-        w++;
-        if (*w == '/') { w++; }
+        // skip spaces between verb and path
+        while (std::isspace(*w)) {
+            w++;
+            if ((w - m_ctx.hd[0]) > m_ctx.hl[0]) {
+                return nullptr;
+            }
+        }
         char *wb = b;
-        while (*w != ' ') {
+        while (!std::isspace(*w)) {
             *wb++ = *w++;
             if ((wb - b) > l) {
                 return nullptr;

@@ -3,6 +3,7 @@
 #include "base/address.h"
 #include "base/loop.h"
 #include "base/io_processor.h"
+#include "base/macros.h"
 
 #include <functional>
 
@@ -50,21 +51,23 @@ namespace base {
             void OnEvent(Fd fd, const Event &e) override {
                 ASSERT(fd == fd_);
                 if (Loop::Readable(e)) {
-                    while (true) {
+                    while (UNLIKELY(!closed())) {
                         char buffer[4096];
                         size_t sz = sizeof(buffer);
                         if ((sz = Syscall::Read(fd, buffer, sz)) < 0) {
                             int err = Syscall::Errno();
                             if (Syscall::WriteMayBlocked(err, false)) {
-                                break;
+                                return;
                             }
                             Close(QRPC_CLOSE_REASON_SYSCALL, err, Syscall::StrError(err));
-                            return;
+                            break;
                         }
                         if (sz == 0 || (sz = OnRead(buffer, sz)) < 0) {
                             Close(sz == 0 ? QRPC_CLOSE_REASON_REMOTE : QRPC_CLOSE_REASON_LOCAL, sz);
+                            break;
                         }
                     }
+                    delete this;
                 }
             }
             void OnClose(Fd fd) override {
@@ -114,7 +117,6 @@ namespace base {
                 loop_.Del(fd);
                 Syscall::Close(fd);
             }
-            delete s;
         }
     protected:
         Loop &loop_;

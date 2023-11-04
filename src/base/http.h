@@ -173,7 +173,9 @@ namespace base {
             const char *val;
         };
     public:
-        HttpSession(SessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) {}
+        HttpSession(SessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) {
+            fsm_.reset(1024);
+        }
         const HttpFSM &req() const { return fsm_; }
         const HttpFSM &fsm() const { return fsm_; }
         HttpFSM &fsm() { return fsm_; }
@@ -182,13 +184,13 @@ namespace base {
             const char *ptrs[hsz + 2];
             char buffers[hsz + 1][1024];
             size_t sizes[hsz + 2];
-            snprintf(buffers[0], sizeof(buffers[0]), "HTTP/1.1 %d\r\n", rc);
+            sizes[0] = snprintf(buffers[0], sizeof(buffers[0]), "HTTP/1.1 %d\r\n", rc);
             ptrs[0] = buffers[0];
             for (size_t i = 1; i <= hsz; i++) {
                 ptrs[i] = buffers[i];
                 sizes[i] = snprintf(
-                    buffers[i], sizeof(buffers[i]), "%s: %s%s", 
-                    h[i].key, h[i].val, i == hsz ? "\r\n\r\n" : "\r\n"
+                    buffers[i], sizeof(buffers[i]), "%s: %s%s",
+                    h[i - 1].key, h[i - 1].val, i == hsz ? "\r\n\r\n" : "\r\n"
                 );
             }
             ptrs[hsz + 1] = body;
@@ -213,7 +215,7 @@ namespace base {
                 {.key = "Content-Type", .val = "text/plain"},
                 {.key = "Content-Length", .val = lenstr.c_str()},
             };
-            return Write(rc, h, 1, buffer, len);
+            return Write(rc, h, 2, buffer, len);
         }
         template<class... Args>
         int NotFound(const std::string &fmt, const Args... args) {
