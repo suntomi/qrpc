@@ -155,10 +155,11 @@ typedef enum {
 
 typedef enum {
   QRPC_CLOSE_REASON_NONE = 0,
-  QRPC_CLOSE_REASON_LOCAL = 1,   //application calls qrpc_conn_close
-  QRPC_CLOSE_REASON_REMOTE = 2,  //remote peer closed
-  QRPC_CLOSE_REASON_SYSCALL = 3, //some library function call fails
-  QRPC_CLOSE_REASON_RESOLVE = 4, //dns resolve fails
+  QRPC_CLOSE_REASON_LOCAL = 1,    //application calls qrpc_conn_close
+  QRPC_CLOSE_REASON_REMOTE = 2,   //remote peer closed
+  QRPC_CLOSE_REASON_SYSCALL = 3,  //some library function call fails
+  QRPC_CLOSE_REASON_RESOLVE = 4,  //dns resolve fails
+  QRPC_CLOSE_REASON_MIGRATED = 5, //session migrated to other session (eg. http => websocket)
 } qrpc_close_reason_code_t;
 
 typedef struct {

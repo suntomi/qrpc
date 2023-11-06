@@ -126,10 +126,10 @@ namespace base {
         int         version() const { return m_ctx.version; }
         int         hdrlen() const { return m_ctx.n_hd; }
         const char  *hdr(int idx) const { return (idx < hdrlen()) ? m_ctx.hd[idx] : nullptr; }
-        char        *hdrstr(const char *key, char *b, int l, int *outlen = NULL) const;
+        char        *hdrstr(const char *key, char *b, int l, int *outlen = nullptr) const;
         bool        hashdr(const char *key) {
             char tok[256];
-            return hdrstr(key, tok, sizeof(tok)) != NULL;
+            return hdrstr(key, tok, sizeof(tok)) != nullptr;
         }
         bool        hdrint(const char *key, int &out) const;
         bool        accept(const char *mime_type) const {
@@ -220,6 +220,14 @@ namespace base {
         template<class... Args>
         int NotFound(const std::string &fmt, const Args... args) {
             return Error(HRC_NOT_FOUND, fmt, args...);
+        }
+        template<class... Args>
+        int BadRequest(const std::string &fmt, const Args... args) {
+            return Error(HRC_BAD_REQUEST, fmt, args...);
+        }
+        template<class... Args>
+        int Unavailable(const std::string &fmt, const Args... args) {
+            return Error(HRC_SERVICE_UNAVAILABLE, fmt, args...);
         }
     private:
         HttpFSM fsm_;
@@ -411,18 +419,23 @@ namespace base {
             Session(f, fd, addr),
             m_state(state_server_handshake),
             m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {}
-        // for upgrading from http session
+        // for upgrading from http session (as server session)
         WebSocketSession(SessionFactory &f, Fd fd, const Address &addr, HttpFSM &fsm) : 
-            Session(f, fd, addr), m_state(state_established), m_ctrl_frame(), m_sm() {
+            Session(f, fd, addr), m_state(state_established),
+            m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {
             m_sm.move_from(fsm);
         }
         ~WebSocketSession() {}
+
+        inline bool is_client() const { return m_hostname.length() > 0; }
     public:
-        // reimplements IoProcessor (override Session's one)
         // implements Session
         int Send(const char *p, size_t sz) override {
             int r;
-            if ((r = WebSocketSession::write_frame(fd_, p, sz)) < 0) {
+            // https://datatracker.ietf.org/doc/html/rfc6455#section-5.3
+            // masking is only applied to client => server frame transmit
+            bool masked = is_client();
+            if ((r = WebSocketSession::write_frame(fd_, p, sz, opcode_binary_frame, masked)) < 0) {
                 if (r != QRPC_EAGAIN) {
                     Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
                 }
@@ -432,6 +445,7 @@ namespace base {
         void OnClose() override {
             WebSocketSession::write_frame(fd(), "", 0, opcode_connection_close, false);
         }
+        // implements IoProcessor (override Session's one)
         void OnEvent(Fd fd, const Event &e) override {
             int r;
             // this is invalid after Close is called
@@ -444,19 +458,21 @@ namespace base {
                 }
             }
             size_t sz = 4096;
-            while (true) {
+            while (LIKELY(!closed())) {
                 char buffer[sz];
                 if ((r = read_frame(fd, buffer, sz)) < 0) {
-                    if (r != QRPC_EAGAIN) {
-                        Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
+                    if (r == QRPC_EAGAIN) {
+                        return;
                     }
-                    return;
+                    Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
+                    break;
                 }
                 if (r == 0 || (r = OnRead(buffer, (size_t)r)) < 0) {
                     Close(r == 0 ? QRPC_CLOSE_REASON_REMOTE : QRPC_CLOSE_REASON_LOCAL, r);
-                    return;
+                    break;
                 }
             }
+            delete this;
         }
     public:
         inline void init_frame() { m_flen = 0; m_read = 0; m_mask_idx = 0; }
@@ -708,8 +724,7 @@ namespace base {
                         m_ctrl_frame.reset();
                         Close(QRPC_CLOSE_REASON_REMOTE, GET_16(m_ctrl_frame.m_buff), "websocket close frame received");
                     }
-                    return 0;/* return 0 byte to indicate connect close to caller */
-                }
+                } break;
                 case opcode_ping:
                 case opcode_pong: {
                     bool finished;
@@ -733,7 +748,7 @@ namespace base {
                                 opcode_pong,
                                 m_frame.masked()
                             );
-                            /* if pong fails, keep on. */
+                            /* even if pong fails, keep on. */
                         }
                         m_ctrl_frame.reset();
                     }
@@ -763,8 +778,6 @@ namespace base {
             char buff[sizeof(Frame)]; uint32_t rnd; uint8_t idx = 0;
             Frame *pf = reinterpret_cast<Frame *>(buff);
             size_t hl; Frame frm;
-            // temporary disable this. because I don't remember why I did that.
-            // masked &= (!is_server(fd)); //force set no masked
             pf->ext.h.set_controls(fin, masked, opc);
             ASSERT(fin == pf->ext.h.fin());
             if (l >= 0x7E) {
@@ -823,36 +836,38 @@ namespace base {
             /* get key from websocket header */
             char kbuf[256]; int kblen;
             if (!m_sm.hdrstr("Sec-Websocket-Key", kbuf, sizeof(kbuf), &kblen)) {
-                return NULL;
+                return nullptr;
             }
             uint8_t vbuf[256];	//it should be 16 byte
             if (sizeof(m_key_ptr) != base64::decode(kbuf, kblen, vbuf, sizeof(vbuf))) {
-                return NULL;
+                return nullptr;
             }
             Syscall::MemCopy(m_key_ptr, vbuf, sizeof(m_key_ptr));
             return generate_accept_key(accept_key, accept_key_len, kbuf);
         }
-        inline char *generate_accept_key_from_value(char *accept_key, size_t accept_key_len,
-            uint8_t *key_buf/* must be 16byte */) {
+        inline char *generate_accept_key_from_value(char *accept_key, size_t accept_key_len) {
+            // https://datatracker.ietf.org/doc/html/rfc6455#section-4.2.2 4 /key/
+            // The |Sec-WebSocket-Key| header field in the client's handshake
+            // includes a base64-encoded value that, if decoded, is 16 bytes in length
+            STATIC_ASSERT(sizeof(m_key_ptr) == 16);
             /* base64 encode */
-            char enc[base64::buffsize(16)];
-            base64::encode(key_buf, 16, enc, sizeof(enc));
+            char enc[base64::buffsize(sizeof(m_key_ptr))];
+            base64::encode(m_key_ptr, sizeof(m_key_ptr), enc, sizeof(enc));
             return generate_accept_key(accept_key, accept_key_len, enc);
         }
         static inline char *generate_accept_key(char *accept_key, size_t accept_key_len, const char *sec_key) {
             if (accept_key_len < base64::buffsize(sha1::kDigestSize)) {
-                ASSERT(false); return NULL;
+                ASSERT(false); return nullptr;
             }
             /* add salt */
             char work[256];
             /* this value is decided by RFC */
             char salt[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
             size_t l = str::Vprintf(work, sizeof(work), "%s%s", sec_key, salt);
-            /* encoded by SHA-1(160bit) */
-            uint8_t digest[sha1::kDigestSize];
-            sha1::digest(work, l, digest);
+            /* encoded by SHA-1(160bit), digest is internally managed and no need to free */
+            const uint8_t *digest = sha1::digest(work, l);
             /* base64 encode */
-            base64::encode(digest, sizeof(digest), accept_key, sizeof(accept_key));
+            base64::encode(digest, sha1::kDigestSize, accept_key, sizeof(accept_key));
             return accept_key;
         }
         int send_handshake_request(const char *host);
@@ -870,9 +885,9 @@ namespace base {
             case state_client_handshake_2: {
                 char calculated[base64::buffsize(sha1::kDigestSize)];
                 HS_CHECK(m_sm.rc() == HRC_SWITCHING_PROTOCOLS, "invalid response %d\n", m_sm.rc());
-                HS_CHECK(m_sm.hdrstr("Sec-WebSocket-Accept", tok, sizeof(tok)) != NULL,
+                HS_CHECK(m_sm.hdrstr("Sec-WebSocket-Accept", tok, sizeof(tok)) != nullptr,
                     "Sec-WebSocket-Accept header\n");
-                HS_CHECK(NULL != generate_accept_key_from_value(calculated, sizeof(calculated), m_key_ptr),
+                HS_CHECK(nullptr != generate_accept_key_from_value(calculated, sizeof(calculated)),
                     "cannot calculate accept key from client data\n");
                 HS_CHECK(str::CmpNocase(tok, calculated, sizeof(calculated)) == 0,
                     "Sec-WebSocket-Accept Invalid: [%s], should be [%s]\n", tok, calculated);
@@ -934,7 +949,19 @@ namespace base {
             }
         }
         inline void set_state(State s) { m_state = s; }
-        inline State get_state() const { return (State)(m_state); }
+        inline State get_state() const { return static_cast<State>(m_state); }
+    };
+    class AdhocWebSocketSession : public WebSocketSession {
+    public:
+        typedef std::function<int (WebSocketSession &, const char *, size_t)> RecvCallback;
+        AdhocWebSocketSession(SessionFactory &f, Fd fd, const Address &addr, HttpFSM &fsm, RecvCallback cb) :
+            WebSocketSession(f, fd, addr, fsm), cb_(cb) {}
+        ~AdhocWebSocketSession() {}
+        int OnRead(const char *p, size_t l) override {
+            return cb_(*this, p, l);
+        }
+    protected:
+        RecvCallback cb_;
     };
 
 
@@ -943,17 +970,15 @@ namespace base {
     public:
         // intend to being called from HttpServer::Callback;
         template <class WS>
-        WebSocketSession *UpgradeFrom(HttpSession &s) {
+        static inline WebSocketSession *Upgrade(HttpSession &s) {
             static_assert(std::is_base_of<WebSocketSession, WS>(), "S must be a descendant of WebSocketSession");
             // ws will be created with established state
             auto ws = new WS(s.factory(), s.fd(), s.addr(), s.fsm());
-            if (ws->send_handshake_response() < 0) {
-                // fail to upgrade
-                ASSERT(false);
-                delete ws;
-                return nullptr;
-            }
-            return ws;
+            return SetupUpgrade(ws, s);
+        }
+        static inline WebSocketSession *Upgrade(HttpSession &s, AdhocWebSocketSession::RecvCallback cb) {
+            auto ws = new AdhocWebSocketSession(s.factory(), s.fd(), s.addr(), s.fsm(), cb);
+            return SetupUpgrade(ws, s);
         }
         template <class WS>
         void Open(const std::string &host, int port) {
@@ -961,6 +986,25 @@ namespace base {
             Server<WebSocketSession>::Resolve(AF_INET, host, port, [this, host](Fd fd, const Address &addr) {
                 return new WS(*this, fd, addr, host);
             });
+        }
+    protected:
+        static inline WebSocketSession *SetupUpgrade(WebSocketSession *ws, HttpSession &s) {
+            int r;
+            if ((r = ws->send_handshake_response()) < 0) {
+                ASSERT(r != QRPC_ESYSCALL);
+                delete ws;
+                switch (r) {
+                case QRPC_EAGAIN:
+                case QRPC_ESYSCALL:
+                    s.Unavailable("write() fails");
+                    break;
+                case QRPC_EINVAL:
+                    s.BadRequest("header Sec-WebSocket-Key not found");
+                    break;
+                }
+                return nullptr;
+            }
+            return ws;
         }
     public:
         static inline int send_handshake_request(Fd fd,
@@ -1022,8 +1066,9 @@ namespace base {
         typedef HttpServer::Callback Handler;
         typedef HttpFSM Request;
         HttpRouter() : route_() {}
-        void Route(const std::regex &pattern, Handler h) {
+        HttpRouter &Route(const std::regex &pattern, Handler h) {
             route_.push_back(std::make_pair(pattern, h));
+            return *this;
         }
         Session *operator () (HttpSession &s) {
             char buff[256];

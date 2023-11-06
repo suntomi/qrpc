@@ -3,6 +3,10 @@
 #include <cstdint>
 #include <cstring>
 #include <random>
+#include "sha1/sha1.h"
+
+#include "base/syscall.h"
+
 namespace base {
   namespace random {
     std::mt19937 &prng();
@@ -21,136 +25,14 @@ namespace base {
 
   namespace sha1 {
     constexpr static int kDigestSize = 20;
-    class SHA1 {
-    public:
-      SHA1() { Init(); }
-
-      void Update(const uint8_t* data, size_t len) {
-        size_t i;
-
-        for (i = 0; i < len; ++i) {
-          buffer_[buffer_pos_++] = data[i];
-          if (buffer_pos_ == 64) {
-            Transform();
-          }
-        }
-      }
-
-      void Final(uint8_t* digest) {
-        uint64_t total_bits = count_ * 8;
-        buffer_[buffer_pos_++] = 0x80;
-
-        if (buffer_pos_ > 56) {
-          while (buffer_pos_ < 64) {
-            buffer_[buffer_pos_++] = 0;
-          }
-          Transform();
-          buffer_pos_ = 0;
-        }
-
-        while (buffer_pos_ < 56) {
-          buffer_[buffer_pos_++] = 0;
-        }
-
-        buffer_[56] = (total_bits >> 56) & 0xff;
-        buffer_[57] = (total_bits >> 48) & 0xff;
-        buffer_[58] = (total_bits >> 40) & 0xff;
-        buffer_[59] = (total_bits >> 32) & 0xff;
-        buffer_[60] = (total_bits >> 24) & 0xff;
-        buffer_[61] = (total_bits >> 16) & 0xff;
-        buffer_[62] = (total_bits >> 8) & 0xff;
-        buffer_[63] = total_bits & 0xff;
-
-        Transform();
-
-        for (int i = 0; i < 5; ++i) {
-          digest[i * 4] = (state_[i] >> 24) & 0xff;
-          digest[i * 4 + 1] = (state_[i] >> 16) & 0xff;
-          digest[i * 4 + 2] = (state_[i] >> 8) & 0xff;
-          digest[i * 4 + 3] = state_[i] & 0xff;
-        }
-      }
-
-    private:
-        void Init() {
-          state_[0] = 0x67452301;
-          state_[1] = 0xefcdab89;
-          state_[2] = 0x98badcfe;
-          state_[3] = 0x10325476;
-          state_[4] = 0xc3d2e1f0;
-
-          count_ = 0;
-          buffer_pos_ = 0;
-        }
-
-        void Transform() {
-          uint32_t a = state_[0];
-          uint32_t b = state_[1];
-          uint32_t c = state_[2];
-          uint32_t d = state_[3];
-          uint32_t e = state_[4];
-
-          uint32_t w[80];
-          for (int i = 0; i < 16; ++i) {
-            w[i] = (buffer_[i * 4] << 24) |
-                  (buffer_[i * 4 + 1] << 16) |
-                  (buffer_[i * 4 + 2] << 8) |
-                  (buffer_[i * 4 + 3]);
-          }
-          for (int i = 16; i < 80; ++i) {
-            w[i] = RotateLeft(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-          }
-
-          for (int i = 0; i < 80; ++i) {
-              uint32_t f, k;
-              if (i < 20) {
-                f = (b & c) | ((~b) & d);
-                k = 0x5a827999;
-              } else if (i < 40) {
-                f = b ^ c ^ d;
-                k = 0x6ed9eba1;
-              } else if (i < 60) {
-                f = (b & c) | (b & d) | (c & d);
-                k = 0x8f1bbcdc;
-              } else {
-                f = b ^ c ^ d;
-                k = 0xca62c1d6;
-              }
-
-              uint32_t temp = RotateLeft(a, 5) + f + e + k + w[i];
-              e = d;
-              d = c;
-              c = RotateLeft(b, 30);
-              b = a;
-              a = temp;
-          }
-
-          state_[0] += a;
-          state_[1] += b;
-          state_[2] += c;
-          state_[3] += d;
-          state_[4] += e;
-
-          buffer_pos_ = 0;
-          count_ += 64;
-        }
-
-        uint32_t RotateLeft(uint32_t value, int shift) {
-          return (value << shift) | (value >> (32 - shift));
-        }
-
-        uint32_t state_[5];
-        uint8_t buffer_[64];
-        uint64_t count_;
-        int buffer_pos_;
-    };
-    inline void digest(const uint8_t* data, size_t len, uint8_t* out) {
-      SHA1 sha1;
-      sha1.Update(data, len);
-      sha1.Final(out);
+    inline const uint8_t *digest(const uint8_t* data, size_t len) {
+      static thread_local SHA1 sha1;
+      sha1.reset();
+      sha1.update(data, len);
+      return sha1.final();
     }
-    inline void digest(const char *data, size_t len, uint8_t *out) {
-      digest(reinterpret_cast<const uint8_t*>(data), len, out);
+    inline const uint8_t *digest(const char *data, size_t len) {
+      return digest(reinterpret_cast<const uint8_t*>(data), len);
     }
   }
   namespace base64 {

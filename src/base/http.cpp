@@ -519,11 +519,16 @@ namespace base {
             auto newsession = factory_.server<HttpServer>().cb()(*this);
             if (newsession != nullptr) {
                 ASSERT(newsession->fd() == fd_);
-                factory_.loop().ModProcessor(fd_, newsession);
-                fsm_.set_state(HttpFSM::state_response_pending);
-                // connection does not closed here.
-                // callbacked module should cleanup connection after response is sent,
-                // by calling Close(...)
+                if (newsession == this) {
+                    fsm_.set_state(HttpFSM::state_response_pending);
+                    // session does not closed here (deferred).
+                    // callbacked module should cleanup connection after response is sent,
+                    // by calling Close(...)
+                } else {
+                    // fd is migrate to other session. eg WebSocket.
+                    // need to delete this
+                    MigrateTo(newsession);
+                }
             } else {
                 Close(QRPC_CLOSE_REASON_LOCAL);
                 // after here, cannot touch this object.
@@ -544,13 +549,17 @@ namespace base {
         char out[base64::buffsize(sizeof(m_key_ptr))], origin[256];
         base64::encode(m_key_ptr, sizeof(m_key_ptr), out, sizeof(out));
         str::Vprintf(origin, sizeof(origin), "http://%s", host);
-        return WebSocketServer::send_handshake_request(fd(), host, out, origin, NULL);
+        auto r = WebSocketServer::send_handshake_request(fd(), host, out, origin, NULL);
+        if (r < 0) { return Syscall::WriteMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
+        return r;
     }
     int WebSocketSession::send_handshake_response() {
         char buffer[base64::buffsize(sha1::kDigestSize)], *p;
         if (!(p = init_accept_key_from_header(buffer, sizeof(buffer)))) {
             return QRPC_EINVAL;
         }
-        return WebSocketServer::send_handshake_response(fd(), buffer);
+        auto r = WebSocketServer::send_handshake_response(fd(), buffer);
+        if (r < 0) { return Syscall::WriteMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
+        return r;
     }
 }

@@ -97,19 +97,22 @@ class AsyncResolver {
   }
   static inline int NtoP(const void *src, qrpc_size_t srclen, char *dst, qrpc_size_t dstlen) {
     const char *converted = nullptr;
-    if (srclen == Syscall::GetIpAddrLen(AF_INET)) {
-      converted = ares_inet_ntop(AF_INET, src, dst, dstlen);
-    } else if (srclen == Syscall::GetIpAddrLen(AF_INET6)) {
-      converted = ares_inet_ntop(AF_INET6, src, dst, dstlen);
+    const sockaddr *sa = reinterpret_cast<const sockaddr *>(src);
+    if (sa->sa_family == AF_INET) {
+      const sockaddr_in *sin = reinterpret_cast<const sockaddr_in *>(sa);
+      converted = ares_inet_ntop(AF_INET, &sin->sin_addr, dst, dstlen);
+    } else if (sa->sa_family == AF_INET6) {
+      const sockaddr_in6 *sin6 = reinterpret_cast<const sockaddr_in6 *>(sa);
+      converted = ares_inet_ntop(AF_INET6, &sin6->sin6_addr, dst, dstlen);
     } else {
-      TRACE("invalid srclen:%u", srclen);
+      logger::error({{"msg","unsupported af"},{"af", sa->sa_family}});
       ASSERT(false);
       return -1;
     }
     if (converted != nullptr) {
       return 0;
     } else {
-      TRACE("failure ntop: %d", Syscall::Errno());
+      logger::error({{"msg","ntop() fails"},{"errno",Syscall::Errno()}});
       return -1;
     }
   }
@@ -123,6 +126,9 @@ class AsyncResolver {
       return std::string("unknown ip address length:") + std::to_string(Syscall::GetIpAddrLen(addr.ss_family));
     }
     return std::string(buffer) + ":" + std::to_string(Syscall::GetSockAddrPort(addr));
+  }
+  static inline std::string ParseSockAddr(const sockaddr &addr) {
+    return ParseSockAddr(*(reinterpret_cast<const sockaddr_storage*>(&addr)));
   }
   static inline std::string ParseSockAddr(const sockaddr_in &in_addr) {
     return ParseSockAddr(*(reinterpret_cast<const sockaddr_storage*>(&in_addr)));

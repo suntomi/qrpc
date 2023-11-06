@@ -14,6 +14,9 @@ namespace base {
     const sockaddr *sa() const { return reinterpret_cast<const sockaddr *>(c_str()); }
     socklen_t salen() const { return size(); }
     int family() const { return sa()->sa_family; }
+    std::string host() const;
+    int port() const;
+    std::string str() const { return host() + ":" + std::to_string(port()); }
     void Reset(const sockaddr *a, socklen_t al) {
       assign(reinterpret_cast<const char *>(a), al);
     }

@@ -25,18 +25,23 @@ namespace base {
             inline SessionFactory &factory() { return factory_; }
             inline const Address &addr() const { return addr_; }
             inline bool closed() const { return close_reason_ != nullptr; }
-            inline void SetCloseReason(const CloseReason &reason) {
-                close_reason_.reset(new CloseReason(reason));
-                ASSERT(close_reason_ != nullptr);
-            }
             inline void Close(
                 qrpc_close_reason_code_t code, int64_t detail_code = 0, const std::string &msg = ""
             ) {
                 Close( { .code = code, .detail_code = detail_code, .msg = msg });
             }
+            inline void MigrateTo(Session *newsession) {
+                factory_.loop().ModProcessor(fd_, newsession);
+                // close this session without closing fd
+                SetCloseReason({ .code = QRPC_CLOSE_REASON_MIGRATED, .detail_code = 0, .msg = "" });
+            }
             // virtual functions to override
             virtual void Close(const CloseReason &reason) {
                 if (!closed()) {
+                    logger::info({
+                        {"msg", "close"},{"fd",fd()},{"addr", addr().str()},
+                        {"rc", reason.code},{"dc", reason.detail_code},{"rmsg", reason.msg}
+                    });
                     SetCloseReason(reason);
                     factory_.Close(this);
                 }
@@ -51,7 +56,7 @@ namespace base {
             void OnEvent(Fd fd, const Event &e) override {
                 ASSERT(fd == fd_);
                 if (Loop::Readable(e)) {
-                    while (UNLIKELY(!closed())) {
+                    while (LIKELY(!closed())) {
                         char buffer[4096];
                         size_t sz = sizeof(buffer);
                         if ((sz = Syscall::Read(fd, buffer, sz)) < 0) {
@@ -81,6 +86,11 @@ namespace base {
                     return r;
                 }
                 return QRPC_OK;
+            }
+        private:
+            inline void SetCloseReason(const CloseReason &reason) {
+                close_reason_.reset(new CloseReason(reason));
+                ASSERT(close_reason_ != nullptr);
             }
         protected:
             SessionFactory &factory_;
@@ -129,7 +139,17 @@ namespace base {
         Fd fd() const { return fd_; }
         bool Listen(int port) {
             port_ = port;
-            return ((fd_ = Syscall::Listen(port)) >= 0);
+            if ((fd_ = Syscall::Listen(port)) < 0) {
+                logger::error({{"msg","Syscall::Listen() fails"},{"port",port},{"errno",Syscall::Errno()}});
+                return fd_;
+            }
+            if (loop_.Add(fd_, this, Loop::EV_READ) < 0) {
+                logger::error({{"msg","Loop::Add fails"},{"fd",fd_}});
+                Syscall::Close(fd_);
+                fd_ = INVALID_FD;
+                return false;
+            }
+            return true;
         }
         void Accept() {
             while (true) {
@@ -137,12 +157,14 @@ namespace base {
                 socklen_t salen = sizeof(sa);
                 Fd afd = Syscall::Accept(fd_, sa, salen);
                 if (afd < 0) {
-                    if (Syscall::WriteMayBlocked(errno, false)) {
+                    if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
                         break;
                     }
                     return;
                 }
-                Create(afd, Address(sa, salen), factory_method_);
+                auto a = Address(sa, salen);
+                logger::info({{"msg", "accept"},{"afd",afd},{"fd",fd_},{"addr", a.str()}});
+                Create(afd, a, factory_method_);
             }
         }
         void Close() {

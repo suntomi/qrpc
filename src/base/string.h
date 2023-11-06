@@ -16,6 +16,11 @@ namespace str {
     }
     return s;
   }
+  static char *dptr(void *p) {
+    static thread_local char buff[32];
+    snprintf(buff, sizeof(buff), "%p", p);
+    return buff;
+  }
   static size_t Vprintf(char *buff, qrpc_size_t sz, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);

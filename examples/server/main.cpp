@@ -20,20 +20,21 @@ int main(int argc, char *argv[]) {
             {"sdp", "hoge"}
         };
         std::string body = j.dump();
-				std::string bodylen = std::to_string(body.length());
+	    std::string bodylen = std::to_string(body.length());
         HttpHeader h[] = {
             {.key = "Content-Type", .val = "application/json"},
             {.key = "Content-Length", .val = bodylen.c_str()}
         };
         s.Write(HRC_OK, h, 2, body.c_str(), body.length());
-				return nullptr;
+	    return nullptr;
+    }).Route(RGX("/ws"), [](HttpSession &s) {
+        return WebSocketServer::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
+            // echo server
+            return ws.Send(p, sz);
+        });
     });
-    if (!s.Listen(8080, r)) {
+    if (!s.Listen(8888, r)) {
         TRACE("fail to listen");
-        exit(1);
-    }
-    if (l.Add(s.fd(), &s, Loop::EV_READ | Loop::EV_WRITE) < 0) {
-        TRACE("fail to start server");
         exit(1);
     }
     while (true) {

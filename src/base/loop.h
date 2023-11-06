@@ -5,6 +5,7 @@
 #include "base/loop_impl.h"
 #include "base/io_processor.h"
 #include "base/resolver.h"
+#include "base/string.h"
 
 namespace base {
 class Loop : public LoopImpl, IoProcessor {
@@ -49,10 +50,14 @@ public:
     return LoopImpl::Mod(fd, flags);
   }
   inline void ModProcessor(Fd fd, IoProcessor *hnew) {
-    ASSERT(fd < max_nfd_ && processors_[fd] != nullptr);
+    ASSERT(fd < max_nfd_ && processors_[fd] != nullptr && hnew != nullptr);
     auto h = processors_[fd];
-    processors_[fd] = hnew;
-    h->OnClose(fd);
+    if (h != hnew) {
+      processors_[fd] = hnew;
+      h->OnClose(fd);
+    } else {
+      ASSERT(false);
+    }
   }
   inline int Del(Fd fd) {
     ASSERT(fd < max_nfd_ && processors_[fd] != nullptr);
@@ -61,6 +66,9 @@ public:
       auto h = processors_[fd];
       processors_[fd] = nullptr;
       h->OnClose(fd);
+      // logger::info({{"msg","Loop::Del"}, {"fd", fd}, {"h", str::dptr(h)}});
+    } else {
+      ASSERT(false);
     }
     return r;
   }
@@ -86,11 +94,6 @@ public:
       const auto &ev = list[i];
       Fd fd = LoopImpl::From(ev);
       auto h = processors_[fd];
-      if (LoopImpl::Closed(ev)) {
-        processors_[fd] = nullptr;
-        h->OnClose(fd);
-        continue;
-      }
       h->OnEvent(fd, ev);
     }
   }

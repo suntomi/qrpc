@@ -36,6 +36,7 @@ cc_binary(
     "src/base/**",
     "src/ext/moodycamel/*.h",
     "src/ext/hedley/*.h",
+    "src/ext/sha1/*.h"
   ]),
   copts = [
     "-std=c++17",
