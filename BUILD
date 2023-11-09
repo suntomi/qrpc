@@ -5,6 +5,8 @@ setup_targets()
 
 load("//tools/bazel/libs:selects.bzl", "selects")
 
+load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
+
 # this cannot work on OSX because wrapped version of libtool 
 # in bazel sandbox does not support --version option, which is necessary for meson.
 # I had to build mediasoup separately in makefile and use it as cc_import.
@@ -42,7 +44,9 @@ cc_binary(
   ]),
   copts = [
     "-std=c++17",
-  ] + selects.with_or({
+  ] 
+  + MS_CPPARGS 
+  + selects.with_or({
     (
       ":ios_x86_64", ":ios_armv7", ":ios_armv7s", ":ios_arm64", ":ios_sim_arm64",
       ":tvos_x86_64", ":tvos_arm64",
@@ -67,6 +71,8 @@ cc_binary(
     "src/ext/mediasoup/worker/subprojects/nlohmann_json-3.10.5/include",
     "src/ext/mediasoup/worker/subprojects/libuv-v1.44.2/include",
     "src/ext/mediasoup/worker/subprojects/libsrtp-2.5.0/include",
+    "src/ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
+    "src/ext/mediasoup/worker/subprojects/usrsctp-4e06feb01cadcd127d119486b98a4bd3d64aa1e7/usrsctplib",
   ],
   deps = [":mediasoup", "//src/ext/cares:ares"],
   linkstatic = True,
