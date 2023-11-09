@@ -163,6 +163,7 @@ typedef internal::Kqueue LoopImpl;
 
 #else //TODO: windows
 #error no suitable poller function
+// dummy implementation to shut vscode language server up
 class LoopImpl {
 public:
 	constexpr static uint32_t EV_READ = 0x01;

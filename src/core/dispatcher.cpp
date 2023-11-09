@@ -22,7 +22,7 @@ DispatcherBase::NqDispatcherBase(int port, const ServerConfig& config, Worker &w
 bool DispatcherCompat::ShutdownFinished(qrpc_time_t shutdown_start) const { 
   if (HasShutdownFinished()) {
     logger::info({
-      {"msg", "shutdown finished"},
+      {"ev", "shutdown finished"},
       {"reason", "all session closed"},
       {"worker_index", index_},
       {"port", port_},
@@ -30,7 +30,7 @@ bool DispatcherCompat::ShutdownFinished(qrpc_time_t shutdown_start) const {
     return true;
   } else if ((shutdown_start + config_.server().shutdown_timeout) < qrpc_time_now()) {
     logger::error({
-      {"msg", "shutdown finished"},
+      {"ev", "shutdown finished"},
       {"reason", "timeout"},
       {"worker_index", index_},
       {"port", port_},

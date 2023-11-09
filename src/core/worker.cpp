@@ -96,7 +96,7 @@ bool Worker::Listen(InvokeQueue **iq, Dispatcher **ds) {
       return false;
     }
     logger::info({
-      {"msg", "listen"},
+      {"ev", "listen"},
       {"thread_index", index_}, 
       {"fd", listen_fd},
     });
@@ -120,7 +120,7 @@ Fd Worker::CreateUDPSocketAndBind(const QuicSocketAddress& address) {
   Fd fd = Syscall::CreateUDPSocket(address.family(), &overflow_supported_);
   if (fd < 0) {
     logger::error({
-      {"msg", "CreateSocket() failed"},
+      {"ev", "CreateSocket() failed"},
       {"errno", errno}, 
       {"strerror", strerror(errno)}
     });
@@ -131,7 +131,7 @@ Fd Worker::CreateUDPSocketAndBind(const QuicSocketAddress& address) {
   int flag = 1, rc = setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &flag, sizeof(flag));
   if (rc < 0) {
     logger::error({
-      {"msg", "setsockopt(SO_REUSEPORT) failed"},
+      {"ev", "setsockopt(SO_REUSEPORT) failed"},
       {"errno", errno}, 
       {"strerror", strerror(errno)}
     });
@@ -148,7 +148,7 @@ Fd Worker::CreateUDPSocketAndBind(const QuicSocketAddress& address) {
   rc = bind(fd, reinterpret_cast<sockaddr*>(&addr), slen);
   if (rc < 0) {
     logger::error({
-      {"msg", "Bind failed"},
+      {"ev", "Bind failed"},
       {"errno", errno}, 
       {"strerror", strerror(errno)}
     });
@@ -156,7 +156,7 @@ Fd Worker::CreateUDPSocketAndBind(const QuicSocketAddress& address) {
     return -1;
   }
   logger::error({
-    {"msg", "Listening start"},
+    {"ev", "Listening start"},
     {"address", address.ToString()}
   });
   return fd; 

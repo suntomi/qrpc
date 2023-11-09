@@ -66,7 +66,7 @@ public:
       auto h = processors_[fd];
       processors_[fd] = nullptr;
       h->OnClose(fd);
-      // logger::info({{"msg","Loop::Del"}, {"fd", fd}, {"h", str::dptr(h)}});
+      // logger::info({{"ev","Loop::Del"}, {"fd", fd}, {"h", str::dptr(h)}});
     } else {
       ASSERT(false);
     }

@@ -34,6 +34,8 @@ cc_binary(
     "examples/server/main.cpp",
     "src/qrpc.h", "src/qrpc.cpp",
     "src/base/**",
+    "src/ext/mediasoup/include/*.hpp",
+    "src/ext/mediasoup/include/**/*.hpp",
     "src/ext/moodycamel/*.h",
     "src/ext/hedley/*.h",
     "src/ext/sha1/*.h"
@@ -64,6 +66,7 @@ cc_binary(
     "src/ext/mediasoup/worker/subprojects/abseil-cpp-20220623.0",
     "src/ext/mediasoup/worker/subprojects/nlohmann_json-3.10.5/include",
     "src/ext/mediasoup/worker/subprojects/libuv-v1.44.2/include",
+    "src/ext/mediasoup/worker/subprojects/libsrtp-2.5.0/include",
   ],
   deps = [":mediasoup", "//src/ext/cares:ares"],
   linkstatic = True,

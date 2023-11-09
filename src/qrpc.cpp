@@ -123,7 +123,7 @@ using json = nlohmann::json;
 //     auto status = ares_library_init(ARES_LIB_INIT_ALL);
 //     if (status != ARES_SUCCESS) {
 //       logger::fatal({
-//         {"msg", "fail to init ares"},
+//         {"ev", "fail to init ares"},
 //         {"status", status}
 //       });
 //     }    
@@ -595,7 +595,7 @@ QAPI_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf) {
 }
 QAPI_THREADSAFE void nq_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params) {
   json j = {
-    {"msg", msg}
+    {"ev", msg}
   };
   for (int i = 0; i < n_params; i++) {
     auto p = params[i];

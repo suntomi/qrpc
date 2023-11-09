@@ -66,7 +66,7 @@ bool AsyncResolver::Initialize(const Config &config) {
     const_cast<ares_options *>(config.options()), config.optmask);
   if(status != ARES_SUCCESS) {
     logger::error({
-      {"msg", "fail ares_init_options"},
+      {"ev", "fail ares_init_options"},
       {"error", ares_strerror(status)}
     });
     return false;

@@ -32,7 +32,7 @@ void* AlignedAlloc(size_t size, size_t alignment) {
   // with a normal allocation failure in Chrome.
   if (!ptr) {
     TRACE({
-        {"msg", "If you crashed here, your aligned allocation is incorrect"},
+        {"ev", "If you crashed here, your aligned allocation is incorrect"},
         {"size", size},
         {"alignment", alignment}
     });

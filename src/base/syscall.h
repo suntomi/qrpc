@@ -124,7 +124,7 @@ public:
       break;
     default:
       logger::fatal({
-        {"msg", "unsupported address family"},
+        {"ev", "unsupported address family"},
         {"address_family", address_family}
       });
       ASSERT(false);
@@ -141,7 +141,7 @@ public:
       break;
     default:
       logger::fatal({
-        {"msg", "unsupported address family"},
+        {"ev", "unsupported address family"},
         {"address_family", address_family}
       });
       ASSERT(false);
@@ -154,7 +154,7 @@ public:
       int saved_errno = errno;
       char buf[256];
       logger::fatal({
-        {"msg", "fcntl() to get flags fails"},
+        {"ev", "fcntl() to get flags fails"},
         {"fd", fd},
         {"errno", saved_errno},
         {"strerror", strerror_r(saved_errno, buf, sizeof(buf))}
@@ -169,7 +169,7 @@ public:
         char buf[256];
         // bad.
         logger::fatal({
-          {"msg", "fcntl() to set flags fails"},
+          {"ev", "fcntl() to set flags fails"},
           {"fd", fd},
           {"prev_flags", saved_flags},
           {"errno", saved_errno},
@@ -212,7 +212,7 @@ public:
 
   static bool SetSendBufferSize(int fd, size_t size) {
     if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) != 0) {
-      logger::error({{"msg", "Failed to set socket send size"},{"size", size},{"errno", Errno()}});
+      logger::error({{"ev", "Failed to set socket send size"},{"size", size},{"errno", Errno()}});
       return false;
     }
     return true;
@@ -221,7 +221,7 @@ public:
   static bool SetSocketReuseAddr(int fd) {
     int yes = 1;
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes)) != 0) {
-        logger::error({{"msg", "setsockopt(SO_REUSEADDR) failed"},{"errno", Errno()}});
+        logger::error({{"ev", "setsockopt(SO_REUSEADDR) failed"},{"errno", Errno()}});
         return false;
     }
     return true;
@@ -244,7 +244,7 @@ public:
   static Fd Connect(const sockaddr *sa, socklen_t salen, bool in6 = false) {
     int fd = socket(in6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-      logger::error({{"msg", "socket() failed"},{"errno", Errno()}});
+      logger::error({{"ev", "socket() failed"},{"errno", Errno()}});
       return INVALID_FD;
     }
     
@@ -269,7 +269,7 @@ public:
     constexpr int MAX_BACKLOG = 128;
     int fd = socket(in6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-      logger::error({{"msg", "socket() failed"},{"errno", Errno()}});
+      logger::error({{"ev", "socket() failed"},{"errno", Errno()}});
       return INVALID_FD;
     }
     
@@ -282,7 +282,7 @@ public:
     int rc = setsockopt(fd, SOL_SOCKET, SO_RXQ_OVFL, &get_overflow,
                         sizeof(get_overflow));
     if (rc < 0) {
-      logger::warn({{"msg", "Socket overflow detection not supported"}});
+      logger::warn({{"ev", "Socket overflow detection not supported"}});
     }
 
     if (!SetReceiveBufferSize(fd, kDefaultSocketReceiveBuffer)) {
@@ -308,13 +308,13 @@ public:
     }
 
     if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), salen) < 0) {
-      logger::error({{"msg", "bind() fails"},{"errno", Errno()}});
+      logger::error({{"ev", "bind() fails"},{"errno", Errno()}});
       Close(fd);
       return INVALID_FD;
     }
 
     if (listen(fd, MAX_BACKLOG) < 0) {
-      logger::error({{"msg", "listen() fails"},{"errno", Errno()}});
+      logger::error({{"ev", "listen() fails"},{"errno", Errno()}});
       Close(fd);
       return INVALID_FD;
     }
@@ -324,7 +324,7 @@ public:
 
   static bool SetReceiveBufferSize(int fd, size_t size) {
     if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) != 0) {
-      logger::error({{"msg", "Failed to set socket recv size"},{"size", size},{"errno", Errno()}});
+      logger::error({{"ev", "Failed to set socket recv size"},{"size", size},{"errno", Errno()}});
       return false;
     }
     return true;
@@ -333,7 +333,7 @@ public:
     int fd = socket(address_family, SOCK_DGRAM, 0);
     if (fd < 0) {
       logger::error({
-        {"msg", "socket() failed"},
+        {"ev", "socket() failed"},
         {"errno", Errno()}
       });
       return INVALID_FD;
@@ -349,7 +349,7 @@ public:
                         sizeof(get_overflow));
     if (rc < 0) {
       logger::warn({
-        {"msg", "Socket overflow detection not supported"}
+        {"ev", "Socket overflow detection not supported"}
       });
     } else {
       *overflow_supported = true;
@@ -368,7 +368,7 @@ public:
     rc = SetGetAddressInfo(fd, address_family);
     if (rc < 0) {
       logger::error({
-        {"msg", "IP detection not supported"},
+        {"ev", "IP detection not supported"},
         {"errno", Errno()}
       });
       Close(fd);
@@ -378,7 +378,7 @@ public:
     rc = SetGetSoftwareReceiveTimestamp(fd);
     if (rc < 0) {
       logger::warn({
-        {"msg", "SO_TIMESTAMPING not supported; using fallback"},
+        {"ev", "SO_TIMESTAMPING not supported; using fallback"},
         {"errno", Errno()}
       });
     }

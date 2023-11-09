@@ -105,14 +105,14 @@ class AsyncResolver {
       const sockaddr_in6 *sin6 = reinterpret_cast<const sockaddr_in6 *>(sa);
       converted = ares_inet_ntop(AF_INET6, &sin6->sin6_addr, dst, dstlen);
     } else {
-      logger::error({{"msg","unsupported af"},{"af", sa->sa_family}});
+      logger::error({{"ev","unsupported af"},{"af", sa->sa_family}});
       ASSERT(false);
       return -1;
     }
     if (converted != nullptr) {
       return 0;
     } else {
-      logger::error({{"msg","ntop() fails"},{"errno",Syscall::Errno()}});
+      logger::error({{"ev","ntop() fails"},{"errno",Syscall::Errno()}});
       return -1;
     }
   }

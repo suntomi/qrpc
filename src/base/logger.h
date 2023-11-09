@@ -67,7 +67,7 @@ namespace logger {
       json &mj = const_cast<json &>(j);
       if (j.is_string()) {
         mj = {
-          {"msg", j},
+          {"ev", j},
         };
       }
       //fill default properties
@@ -87,7 +87,7 @@ namespace logger {
       json &mj = const_cast<json &>(j);
       if (j.is_string()) {
         mj = {
-          {"msg", j},
+          {"ev", j},
         };
       }
       //fill default properties

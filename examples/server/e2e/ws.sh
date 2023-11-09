@@ -23,6 +23,7 @@ test() {
   for i in {0..15}; do
     len=$((2 << i))
     echo "send ${len} bytes payload..." >&2
+    # TODO: this only uses 64 characters. use all byte value patterns
     randstr=$(openssl rand -base64 ${len} | paste -d' ' -s - | tr -d ' ')
     command=${randstr:0:${len}}
     echo "$command"

@@ -1,0 +1,65 @@
+#pragma once
+#include "base/loop.h"
+#include "base/io_processor.h"
+#include "base/logger.h"
+
+#include <signal.h>
+#include <functional>
+
+#if defined(__ENABLE_EPOLL__)
+#include <sys/signalfd.h>
+typedef struct signalfd_siginfo Signal;
+#elif defined(__ENABLE_KQUEUE__)
+typedef base::Loop::Event Signal;
+#else
+#error "no event loop implementation"
+// dummy definition to shut vscode language server up
+typedef struct {} Signal;
+#endif
+
+#if !defined(SIGRTMAX)
+// some OS (eg. darwin) does not seems to define SIGRTMAX
+// we set SIGRTMAX to enough big value
+#define SIGRTMAX 256
+#endif
+
+namespace base {
+  class SignalHandler : public IoProcessor {
+  public:
+    typedef std::function<void(int, const Signal &)> Receiver;
+    SignalHandler() : fd_(-1), receivers_() {
+      for (int i = 0; i < SIGRTMAX; i++) { receivers_[i] = Nop(); }
+      sigemptyset(&mask_);
+    }
+    virtual ~SignalHandler() {}
+    inline Fd fd() const { return fd_; }
+    inline SignalHandler &Ignore(int sig) {
+      return Handle(sig, [](int sig, const Signal &s) {
+        logger::info({{"ev","signal ignored"},{"sig",sig}});
+      });
+    }
+    SignalHandler &Handle(int sig, const Receiver &r) {
+      receivers_[sig] = r;
+      int ret;
+      if ((ret = Register(sig)) < 0) {
+        logger::error({{"ev","register signal fails"},{"sig",sig},{"error",ret}});
+        ASSERT(false);
+        receivers_[sig] = Nop();
+      }
+      return *this;
+    }
+    int Register(int);
+    void OnEvent(Fd fd, const Event &e) override;
+		void OnClose(Fd) override {}
+		int OnOpen(Fd) override { return QRPC_OK; }
+  protected:
+    class Nop {
+    public:
+      void operator() (int, const Signal &) {} 
+    };
+  protected:
+    Fd fd_;
+    Receiver receivers_[SIGRTMAX];
+    sigset_t mask_; 
+  };
+}

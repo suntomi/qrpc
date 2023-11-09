@@ -1,4 +1,5 @@
 #include "base/loop.h"
+#include "base/sig.h"
 #include "base/logger.h"
 #include "base/http.h"
 #include "base/string.h"
@@ -7,10 +8,37 @@
 using json = nlohmann::json;
 using namespace base;
 
+int SetupSignalHandler(SignalHandler &sh, Loop &l) {
+    sh.Ignore(SIGPIPE)
+        .Handle(SIGINT, [](int sig, const Signal &s) {
+            logger::info("SIGINT");
+            exit(0);
+        })
+        .Handle(SIGTERM, [](int sig, const Signal &s) {
+            logger::info("SIGTERM");
+            exit(0);
+        })
+        .Handle(SIGCHLD, [](int sig, const Signal &s) {
+            logger::info("SIGCHLD");
+        })
+        .Handle(SIGUSR1, [](int sig, const Signal &s) {
+            logger::info("SIGUSR1");
+        })
+        .Handle(SIGUSR2, [](int sig, const Signal &s) {
+            logger::info("SIGUSR2");
+        });
+    return l.Add(sh.fd(), &sh, Loop::EV_READ);
+}
+
 int main(int argc, char *argv[]) {
     Loop l;
+    SignalHandler sh;
     if (l.Open(1024) < 0) {
-        TRACE("fail to init loop");
+        logger::error("fail to init loop");
+        exit(1);
+    }
+    if (SetupSignalHandler(sh, l) < 0) {
+        logger::error("fail to setup signal handler");
         exit(1);
     }
     HttpServer s(l);
@@ -34,7 +62,7 @@ int main(int argc, char *argv[]) {
         });
     });
     if (!s.Listen(8888, r)) {
-        TRACE("fail to listen");
+        logger::error("fail to listen");
         exit(1);
     }
     while (true) {

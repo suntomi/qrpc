@@ -245,7 +245,7 @@ inline SHA1::SHA1()
 {
 }
 
-
+// TODO: directly uses byte array
 inline void SHA1::update(const uint8_t *p, size_t sz)
 {
     std::istringstream is(reinterpret_cast<const char*>(p), sz);

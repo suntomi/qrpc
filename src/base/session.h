@@ -39,7 +39,7 @@ namespace base {
             virtual void Close(const CloseReason &reason) {
                 if (!closed()) {
                     logger::info({
-                        {"msg", "close"},{"fd",fd()},{"addr", addr().str()},
+                        {"ev", "close"},{"fd",fd()},{"addr", addr().str()},
                         {"rc", reason.code},{"dc", reason.detail_code},{"rmsg", reason.msg}
                     });
                     SetCloseReason(reason);
@@ -140,11 +140,11 @@ namespace base {
         bool Listen(int port) {
             port_ = port;
             if ((fd_ = Syscall::Listen(port)) < 0) {
-                logger::error({{"msg","Syscall::Listen() fails"},{"port",port},{"errno",Syscall::Errno()}});
+                logger::error({{"ev","Syscall::Listen() fails"},{"port",port},{"errno",Syscall::Errno()}});
                 return fd_;
             }
             if (loop_.Add(fd_, this, Loop::EV_READ) < 0) {
-                logger::error({{"msg","Loop::Add fails"},{"fd",fd_}});
+                logger::error({{"ev","Loop::Add fails"},{"fd",fd_}});
                 Syscall::Close(fd_);
                 fd_ = INVALID_FD;
                 return false;
@@ -163,7 +163,7 @@ namespace base {
                     return;
                 }
                 auto a = Address(sa, salen);
-                logger::info({{"msg", "accept"},{"afd",afd},{"fd",fd_},{"addr", a.str()}});
+                logger::info({{"ev", "accept"},{"afd",afd},{"fd",fd_},{"addr", a.str()}});
                 Create(afd, a, factory_method_);
             }
         }
