@@ -76,4 +76,97 @@ namespace base {
     loop().ares().Resolve(q);
     return true;
   }
+
+  void UdpListener::SetupPacket() {
+    for (int i = 0; i < batch_size_; i++) {
+      auto &h = read_packets_[i].msg_hdr;
+      h.msg_name = &read_buffers_[i].sa;
+      h.msg_namelen = sizeof(read_buffers_[i].sa);
+      h.msg_iov = &read_buffers_[i].iov;
+      h.msg_iov->iov_base = read_buffers_[i].buf;
+      h.msg_iov->iov_len = Syscall::kMaxIncomingPacketSize;
+      h.msg_iovlen = 1;
+      h.msg_control = read_buffers_[i].cbuf;
+      h.msg_controllen = Syscall::kDefaultUdpPacketControlBufferSize;
+      read_packets_[i].msg_len = 0;
+    }
+  }
+
+  void UdpListener::ProcessPackets(int size) {
+    int r;
+    for (int i = 0; i < size; i++) {
+      auto &h = read_packets_[i].msg_hdr;
+      auto a = Address(h.msg_name, h.msg_namelen);
+      auto exists = sessions_.find(a);
+      Session *s;
+      if (exists == sessions_.end()) {
+        // use same fd of Listener
+        s = Create(fd_, a, factory_method_);
+        if ((r = s->OnConnect()) < 0) {
+          s->Close(QRPC_CLOSE_REASON_LOCAL, r);
+          delete s;
+          continue;
+        }
+      } else {
+        s = exists->second;
+      }
+      ASSERT(s != nullptr);
+      if ((r = s->OnRead(
+        reinterpret_cast<const char *>(h.msg_iov->iov_base),
+        read_packets_[i].msg_len
+      )) < 0) {
+        s->Close(QRPC_CLOSE_REASON_LOCAL, r);
+        delete s;
+      }
+    }
+  #if defined(__QRPC_USE_RECVMMSG__)
+    mmsghdr mmsg[write_buffers_.Allocated()];
+    size_t count = 0;
+    for (auto kv : sessions_) {
+      auto s = reinterpret_cast<UdpSession *>(kv.second);
+      for (auto &iov : s->write_vecs()) {
+        auto &h = mmsg[count++].msg_hdr;
+        h.msg_name = const_cast<sockaddr *>(s->addr().sa());
+        h.msg_namelen = s->addr().salen();
+        h.msg_iov = &iov;
+        h.msg_iovlen = 1;
+        h.msg_control = nullptr;
+        h.msg_controllen = 0;
+        mmsg[count - 1].msg_len = 0;
+      }
+    }
+    if (Syscall::SendTo(fd_, mmsg, count) < 0) {
+      logger::die({{"ev", "Syscall::SendTo fails"}, {"errno", Syscall::Errno()}});
+    }
+    for (auto kv : sessions_) {
+      auto s = reinterpret_cast<UdpSession *>(kv.second);
+      s->Reset();
+    }
+  #endif
+  }
+
+  int UdpListener::Read() {
+    for (int i = 0; i < batch_size_; i++) {
+      auto &h = read_packets_[i].msg_hdr;
+      h.msg_namelen = sizeof(read_buffers_[i].sa);
+      h.msg_iov->iov_len = Syscall::kMaxIncomingPacketSize;
+      h.msg_controllen = Syscall::kDefaultUdpPacketControlBufferSize;
+      read_packets_[i].msg_len = 0;
+    }
+    #if defined(__QRPC_USE_RECVMMSG__)
+      int r = Syscall::RecvFrom(fd_, read_packets_.data(), batch_size_);
+      if (r < 0) {
+        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", Syscall::Errno()}});
+        return QRPC_ESYSCALL;
+      }
+      return r;
+    #else
+      int r = Syscall::RecvFrom(fd_, &read_packets_.data()->msg_hdr);
+      if (r < 0) {
+        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", Syscall::Errno()}});
+        return QRPC_ESYSCALL;
+      }
+      return 1;
+    #endif
+    }
 }

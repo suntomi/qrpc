@@ -44,7 +44,7 @@ namespace base {
         HRC_PROXY_AUTHENTICATION,       /* Proxy Authentication is Required */
         HRC_REQUEST_TIMEOUT,            /* Request timed out */
         HRC_CONFLICT,           /* Request is self-conflicting */
-        HRC_GONE,               /* Server has gone away */
+        HRC_GONE,               /* TcpServer has gone away */
         HRC_LENGTH_REQUIRED,            /* A content length or encoding is required */
         HRC_PRECONDITION,           /* Precondition failed */
         HRC_REQUEST_TOO_LARGE,      /* Request entity too large */
@@ -166,14 +166,14 @@ namespace base {
 
 
     /******* HttpServer *******/
-    class HttpSession : public Session {
+    class HttpSession : public TcpSession {
     public:
         struct Header {
             const char *key;
             const char *val;
         };
     public:
-        HttpSession(SessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) {
+        HttpSession(SessionFactory &f, Fd fd, const Address &addr) : TcpSession(f, fd, addr) {
             fsm_.reset(1024);
         }
         const HttpFSM &req() const { return fsm_; }
@@ -198,7 +198,7 @@ namespace base {
             return Syscall::Writev(fd_, ptrs, sizes, hsz + 2);
         }
         // implements Session
-        int OnRead(const char *, size_t sz) override;
+        int OnRead(const char *p, size_t sz) override;
         int Send(const char *p, size_t sz) override {
             DIE("Send does not supported. use HttpSession::Write instead");
             return QRPC_ENOTSUPPORT;
@@ -235,16 +235,16 @@ namespace base {
 
 
     /******* HttpServer *******/
-    class HttpServer : public Server<HttpSession> {
+    class HttpServer : public TcpServer<HttpSession> {
     public:
-        typedef std::function<Session *(HttpSession&)> Callback;
+        typedef std::function<TcpSession *(HttpSession&)> Callback;
     public:
-        HttpServer(Loop &l) : Server<HttpSession>(l) {}
+        HttpServer(Loop &l) : TcpServer<HttpSession>(l) {}
         ~HttpServer() {}
         Callback &cb() { return callback_; }
         bool Listen(int port, Callback cb) {
             callback_ = cb;
-            return Server<HttpSession>::Listen(port);
+            return TcpServer<HttpSession>::Listen(port);
         }
     protected:
         Callback callback_;
@@ -253,7 +253,7 @@ namespace base {
 
 
     /******* WebSocketSession *******/
-    class WebSocketSession : public Session {
+    class WebSocketSession : public TcpSession {
         /* web socket frame struct */
         /*---------------------------------------------------------------------------
             0                   1                   2                   3
@@ -412,16 +412,16 @@ namespace base {
     public:
         // create client/server session from begining
         WebSocketSession(SessionFactory &f, Fd fd, const Address &addr, const std::string &hostname) : 
-            Session(f, fd, addr),
+            TcpSession(f, fd, addr),
             m_state(state_client_handshake),
             m_sm_body_read(0), m_hostname(hostname), m_ctrl_frame(), m_sm() {}
         WebSocketSession(SessionFactory &f, Fd fd, const Address &addr) : 
-            Session(f, fd, addr),
+            TcpSession(f, fd, addr),
             m_state(state_server_handshake),
             m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {}
         // for upgrading from http session (as server session)
         WebSocketSession(SessionFactory &f, Fd fd, const Address &addr, HttpFSM &fsm) : 
-            Session(f, fd, addr), m_state(state_established),
+            TcpSession(f, fd, addr), m_state(state_established),
             m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {
             m_sm.move_from(fsm);
         }
@@ -442,7 +442,7 @@ namespace base {
             }
             return r;
         }
-        void OnClose() override {
+        void OnShutdown() override {
             WebSocketSession::write_frame(fd(), "", 0, opcode_connection_close, false);
         }
         // implements IoProcessor (override Session's one)
@@ -966,7 +966,7 @@ namespace base {
 
 
     /******* WebSocketServer *******/
-    class WebSocketServer : public Server<WebSocketSession> {
+    class WebSocketServer : public TcpServer<WebSocketSession> {
     public:
         // intend to being called from HttpServer::Callback;
         template <class WS>
@@ -983,7 +983,7 @@ namespace base {
         template <class WS>
         void Open(const std::string &host, int port) {
             static_assert(std::is_base_of<WebSocketSession, WS>(), "S must be a descendant of WebSocketSession");
-            Server<WebSocketSession>::Resolve(AF_INET, host, port, [this, host](Fd fd, const Address &addr) {
+            TcpServer<WebSocketSession>::Resolve(AF_INET, host, port, [this, host](Fd fd, const Address &addr) {
                 return new WS(*this, fd, addr, host);
             });
         }
@@ -1070,7 +1070,7 @@ namespace base {
             route_.push_back(std::make_pair(pattern, h));
             return *this;
         }
-        Session *operator () (HttpSession &s) {
+        TcpSession *operator () (HttpSession &s) {
             char buff[256];
             const char *path = s.fsm().url(buff, sizeof(buff));
             for (auto &it : route_) {

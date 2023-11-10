@@ -11,8 +11,22 @@
 #include "RTC/DtlsTransport.hpp"
 #include "RTC/SrtpSession.hpp"
 
+#include <mutex>
+
 namespace base {
+std::once_flag once_init, once_fin;
+
 int WebRTCServer::Init() {
+  std::call_once(once_init, GlobalInit);
+  return QRPC_OK;
+}
+
+int WebRTCServer::Fin() {
+  std::call_once(once_fin, GlobalFin);
+  return QRPC_OK;
+}
+
+int WebRTCServer::GlobalInit() {
 	try
 	{
 		// Initialize static stuff.
@@ -26,11 +40,12 @@ int WebRTCServer::Init() {
 
 		return QRPC_OK;
 	} catch (const MediaSoupError& error) {
-		logger::error({{"ev","mediasoup setup failure"},{"reason",error.what()}});
+		logger::die({{"ev","mediasoup setup failure"},{"reason",error.what()}});
+    // no return
 		return QRPC_EDEPS;
 	}
 }
-void WebRTCServer::Fin() {
+void WebRTCServer::GlobalFin() {
 	try
 	{
     // Free static stuff.

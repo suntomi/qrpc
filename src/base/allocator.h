@@ -59,8 +59,10 @@ class Allocator {
       }
     }
   }
-  inline void *Alloc(std::size_t sz) {
-    ASSERT(sz == sizeof(E));
+  inline size_t Allocated() const {
+    return (chunk_size_ * chunks_.size()) - pool_.size();
+  }
+  inline void *Alloc() {
     Block *block;
     if (pool_.size() <= 0) {
       GrowChunk();

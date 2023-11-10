@@ -37,6 +37,22 @@ constexpr Fd INVALID_FD = -1;
 
 class Syscall {
 public:
+  // buffer size for cmsghdr. much simpler than old chromium's kCmsgSpaceForReadPacket
+  static inline constexpr size_t kDefaultUdpPacketControlBufferSize = 512;
+
+  // The maximum packet size of any QUIC packet over IPv6, based on ethernet's max
+  // size, minus the IP and UDP headers. IPv6 has a 40 byte header, UDP adds an
+  // additional 8 bytes.  This is a total overhead of 48 bytes.  Ethernet's
+  // max packet size is 1500 bytes,  1500 - 48 = 1452.
+  static inline constexpr size_t kMaxV6PacketSize = 1452;
+  // The maximum packet size of any QUIC packet over IPv4.
+  // 1500(Ethernet) - 20(IPv4 header) - 8(UDP header) = 1472.
+  static inline constexpr size_t kMaxV4PacketSize = 1472;
+  // The maximum incoming packet size allowed.
+  static inline constexpr size_t kMaxIncomingPacketSize = kMaxV4PacketSize;
+  // The maximum outgoing packet size allowed.
+  static inline constexpr size_t kMaxOutgoingPacketSize = kMaxV6PacketSize;
+
   static inline int Close(Fd fd) { return ::close(fd); }
   static inline int Errno() { return errno; }
   static inline std::string StrError(int err = -1) {
@@ -68,7 +84,7 @@ public:
       return false;
     }
   }
-  static int SetListnerAddress(
+  static int SetListenerAddress(
     struct sockaddr_storage &addr, uint16_t port, bool in6
   ) {
     if (in6) {
@@ -302,7 +318,7 @@ public:
 
     struct sockaddr_storage sas;
     socklen_t salen = sizeof(sas);
-    if ((salen = SetListnerAddress(sas, port, in6)) < 0) {
+    if ((salen = SetListenerAddress(sas, port, in6)) < 0) {
       Close(fd);
       return INVALID_FD;
     }
@@ -405,6 +421,21 @@ public:
   static int Read(Fd fd, void *p, qrpc_size_t sz) {
     return read(fd, p, sz);
   }
+#if defined(D__QRPC_USE_RECVMMSG__)
+  static inline int RecvFrom(int fd, struct mmsghdr *msgvec, unsigned int vlen, int flags = 0) {
+    return recvmmsg(fd, msgvec, vlen, flags, nullptr);
+  }
+  static inline int SendTo(int fd, struct mmsghdr *msg, unsigned int vlen, int flags = 0) {
+    return sendmsg(fd, msg, flags);
+  }
+#else
+  static inline int SendTo(int fd, struct msghdr *msg, int flags = 0) {
+    return sendmsg(fd, msg, flags);
+  }
+  static inline int RecvFrom(int fd, struct msghdr *msg, int flags = 0) {
+    return recvmsg(fd, msg, flags);
+  }
+#endif
   static int Write(Fd fd, const void *p, qrpc_size_t sz) {
     return write(fd, p, sz);
   }

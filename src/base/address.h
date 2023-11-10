@@ -4,10 +4,13 @@
 #include <string>
 
 namespace base {
-  class Address : std::string {
+  class Address : public std::string {
   public:
     Address(const sockaddr_storage &sa, socklen_t salen) : std::string(
       reinterpret_cast<const char *>(&sa), salen
+    ) {}
+    Address(const void *p, socklen_t salen) : std::string(
+      reinterpret_cast<const char *>(p), salen
     ) {}
     Address(const Address &a) : std::string(a) {}
     Address() : std::string() {}

@@ -60,7 +60,7 @@ cc_binary(
       "-D__ENABLE_IOCP__",
     ],
     (":android", "//conditions:default"): [
-      "-D__ENABLE_EPOLL__",
+      "-D__ENABLE_EPOLL__", "-D__QRPC_USE_RECVMMSG__"
     ],
   }),
   includes = [
