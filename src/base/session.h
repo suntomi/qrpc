@@ -163,7 +163,7 @@ namespace base {
                     return;
                 }
                 auto a = Address(sa, salen);
-                logger::info({{"ev", "accept"},{"afd",afd},{"fd",fd_},{"addr", a.str()}});
+                logger::info({{"ev", "accept"},{"proto","tcp"},{"afd",afd},{"fd",fd_},{"addr", a.str()}});
                 Create(afd, a, factory_method_);
             }
         }
@@ -189,7 +189,7 @@ namespace base {
         }
         // implements SessionFactory
         Session *Create(Fd fd, const Address &a, FactoryMethod &m) override {
-            auto *s = reinterpret_cast<TcpSession*>(Create(fd, a, m));
+            auto *s = reinterpret_cast<TcpSession*>(m(fd, a));
             sessions_[a] = s;
             if (loop_.Add(s->fd(), s, Loop::EV_READ | Loop::EV_WRITE) < 0) {
                 Close(s);

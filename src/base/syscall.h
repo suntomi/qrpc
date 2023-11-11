@@ -244,7 +244,7 @@ public:
     return QRPC_OK;
   }
 
-  static int EnableRecevingSoftwareReceiveTimestamp(int fd) {
+  static int EnableReceivingTimestamp(int fd) {
 #if defined(SO_TIMESTAMPING) && defined(SOF_TIMESTAMPING_RX_SOFTWARE)
     int timestamping = SOF_TIMESTAMPING_RX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
     return setsockopt(fd, SOL_SOCKET, SO_TIMESTAMPING, &timestamping,
@@ -434,9 +434,9 @@ public:
       return INVALID_FD;
     }
 
-    rc = EnableRecevingSoftwareReceiveTimestamp(fd);
+    rc = EnableReceivingTimestamp(fd);
     if (rc < 0) {
-      logger::warn({{"ev", "SO_TIMESTAMPING not supported; using fallback"},{"errno", Errno()}});
+      logger::warn({{"ev", "SO_TIMESTAMPING not supported"},{"errno", Errno()}});
     }
 
     return fd;

@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
     }
     AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
-        logger::info({{"ev","recv packet", {"pl", std::string(p, sz)}}});
+        logger::info({{"ev","recv packet"}, {"pl", std::string(p, sz)}});
         return s.Send(p, sz);
     });
     if (!us.Listen(9999)) {

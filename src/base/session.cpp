@@ -102,6 +102,7 @@ namespace base {
       if (exists == sessions_.end()) {
         // use same fd of Listener
         s = Create(fd_, a, factory_method_);
+        logger::info({{"ev", "accept"},{"proto","udp"},{"fd",fd_},{"addr", a.str()}});
         if ((r = s->OnConnect()) < 0) {
           s->Close(QRPC_CLOSE_REASON_LOCAL, r);
           delete s;
@@ -156,16 +157,25 @@ namespace base {
     #if defined(__QRPC_USE_RECVMMSG__)
       int r = Syscall::RecvFrom(fd_, read_packets_.data(), batch_size_);
       if (r < 0) {
-        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", Syscall::Errno()}});
+        int eno = Syscall::Errno();
+        if (Syscall::WriteMayBlocked(eno, false)) {
+          return QRPC_OK;
+        }
+        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
         return QRPC_ESYSCALL;
       }
       return r;
     #else
       int r = Syscall::RecvFrom(fd_, &read_packets_.data()->msg_hdr);
       if (r < 0) {
-        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", Syscall::Errno()}});
+        int eno = Syscall::Errno();
+        if (Syscall::WriteMayBlocked(eno, false)) {
+          return QRPC_OK;
+        }
+        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});
         return QRPC_ESYSCALL;
       }
+      read_packets_.data()->msg_len = r;
       return 1;
     #endif
     }
