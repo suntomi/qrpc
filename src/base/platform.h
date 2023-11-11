@@ -14,12 +14,6 @@
   #endif  // defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
 #elif defined(__linux__)
   #define OS_LINUX 1
-  // include a system header to pull in features.h for glibc/uclibc macros.
-  #include <unistd.h>
-  #if defined(__GLIBC__) && !defined(__UCLIBC__)
-    // we really are using glibc, not uClibc pretending to be glibc
-    #define LIBC_GLIBC 1
-  #endif
 #elif defined(_WIN32)
   #define OS_WIN 1
 #else
@@ -40,14 +34,10 @@
   #define OS_POSIX 1
 #endif
 
-// Use tcmalloc
-#if (defined(OS_WIN) || defined(OS_LINUX) || defined(OS_ANDROID)) && \
-    !defined(NO_TCMALLOC)
-#define USE_TCMALLOC 1
-#endif
-
 // Compiler detection.
-#if defined(__GNUC__)
+#if defined(__clang__)
+#define COMPILER_CLANG 1
+#elif defined(__GNUC__)
 #define COMPILER_GCC 1
 #elif defined(_MSC_VER)
 #define COMPILER_MSVC 1
@@ -128,30 +118,4 @@
   #endif
 #else
   #error Please add support for your architecture in platform.h
-#endif
-
-// Type detection for wchar_t.
-#if defined(OS_WIN)
-  #define WCHAR_T_IS_UTF16
-#elif defined(OS_POSIX) && defined(COMPILER_GCC) && defined(__WCHAR_MAX__) && \
-    (__WCHAR_MAX__ == 0x7fffffff || __WCHAR_MAX__ == 0xffffffff)
-  #define WCHAR_T_IS_UTF32
-#elif defined(OS_POSIX) && defined(COMPILER_GCC) && defined(__WCHAR_MAX__) && \
-    (__WCHAR_MAX__ == 0x7fff || __WCHAR_MAX__ == 0xffff)
-  // On Posix, we'll detect short wchar_t, but projects aren't guaranteed to
-  // compile in this mode (in particular, Chrome doesn't). This is intended for
-  // other projects using base who manage their own dependencies and make sure
-  // short wchar works for them.
-  #define WCHAR_T_IS_UTF16
-#else
-  #error Please add support for your compiler in platform.h
-#endif
-
-#if defined(OS_ANDROID)
-  // The compiler thinks std::string::const_iterator and "const char*" are
-  // equivalent types.
-  #define STD_STRING_ITERATOR_IS_CHAR_POINTER
-  // The compiler thinks base::string16::const_iterator and "char16*" are
-  // equivalent types.
-  #define BASE_STRING16_ITERATOR_IS_CHAR16_POINTER
 #endif

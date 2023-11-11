@@ -197,7 +197,8 @@ public:
     return true;
   }
   static const size_t kDefaultSocketReceiveBuffer = 1024 * 1024;
-  static int SetGetAddressInfo(int fd, int address_family) {
+  static const size_t kDefaultSocketSendBuffer = 1024 * 1024;
+  static int EnableReceivingSelfIp(Fd fd, int address_family) {
 #if defined(OS_MACOSX)
     if (address_family == AF_INET6) {
       //for osx, IP_PKTINFO for ipv6 did not work. (at least at Sierra)
@@ -216,7 +217,34 @@ public:
     return rc;
   }
 
-  static int SetGetSoftwareReceiveTimestamp(int fd) {
+  static int EnableRecevingECN(Fd fd, int address_family, bool ipv6_only = false) {
+    unsigned int set = 1;
+    switch (address_family) {
+      case AF_INET:
+        if (setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &set, sizeof(set)) != 0) {
+        logger::error({{"ev","Failed to request to receive ECN on ipv4 socket"},
+          {"fd",fd},{"errno",Errno()}});
+          return QRPC_ESYSCALL;
+        }
+        break;
+      case AF_INET6:
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &set, sizeof(set)) != 0) {
+          logger::error({{"ev","Failed to request to receive ECN on ipv6 socket"},
+            {"fd",fd},{"errno",Errno()}});
+          return QRPC_ESYSCALL;
+        }
+        if (!ipv6_only &&
+            setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &set, sizeof(set)) != 0) {
+          logger::error({{"ev","Failed to request to receive ECN on ipv46 socket"},
+            {"fd",fd},{"errno",Errno()}});
+          return QRPC_ESYSCALL;
+        }
+        break;
+    }
+    return QRPC_OK;
+  }
+
+  static int EnableRecevingSoftwareReceiveTimestamp(int fd) {
 #if defined(SO_TIMESTAMPING) && defined(SOF_TIMESTAMPING_RX_SOFTWARE)
     int timestamping = SOF_TIMESTAMPING_RX_SOFTWARE | SOF_TIMESTAMPING_SOFTWARE;
     return setsockopt(fd, SOL_SOCKET, SO_TIMESTAMPING, &timestamping,
@@ -255,6 +283,21 @@ public:
     }
     a.Reset(sa, salen);
     return afd;
+  }
+
+  static int Bind(Fd fd, int port, bool in6 = false) {
+    struct sockaddr_storage sas;
+    socklen_t salen = sizeof(sas);
+    if ((salen = SetListenerAddress(sas, port, in6)) < 0) {
+      logger::error({{"ev", "fail to create listner address"},{"errno", Errno()},
+        {"port", port},{"in6", in6}});
+      return QRPC_EINVAL;
+    }
+    if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), salen) < 0) {
+      logger::error({{"ev", "bind() fails"},{"errno", Errno()}});
+      return QRPC_ESYSCALL;
+    }
+    return QRPC_OK;
   }
 
   static Fd Connect(const sockaddr *sa, socklen_t salen, bool in6 = false) {
@@ -316,15 +359,7 @@ public:
       return INVALID_FD;
     }
 
-    struct sockaddr_storage sas;
-    socklen_t salen = sizeof(sas);
-    if ((salen = SetListenerAddress(sas, port, in6)) < 0) {
-      Close(fd);
-      return INVALID_FD;
-    }
-
-    if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), salen) < 0) {
-      logger::error({{"ev", "bind() fails"},{"errno", Errno()}});
+    if (Bind(fd, port, in6) != QRPC_OK) {
       Close(fd);
       return INVALID_FD;
     }
@@ -345,7 +380,11 @@ public:
     }
     return true;
   }
-  static int CreateUDPSocket(int address_family, bool* overflow_supported) {
+  static int CreateUDPSocket(
+    int address_family, bool* overflow_supported,
+    int send_buffer_size = kDefaultSocketSendBuffer,
+    int recv_buffer_size = kDefaultSocketReceiveBuffer
+  ) {
     int fd = socket(address_family, SOCK_DGRAM, 0);
     if (fd < 0) {
       logger::error({
@@ -371,32 +410,33 @@ public:
       *overflow_supported = true;
     }
 
-    if (!SetReceiveBufferSize(fd, kDefaultSocketReceiveBuffer)) {
+    if (!SetReceiveBufferSize(fd, recv_buffer_size)) {
       Close(fd);
       return INVALID_FD;
     }
 
-    if (!SetSendBufferSize(fd, kDefaultSocketReceiveBuffer)) {
+    if (!SetSendBufferSize(fd, send_buffer_size)) {
       Close(fd);
       return INVALID_FD;
     }
 
-    rc = SetGetAddressInfo(fd, address_family);
+    rc = EnableReceivingSelfIp(fd, address_family);
     if (rc < 0) {
-      logger::error({
-        {"ev", "IP detection not supported"},
-        {"errno", Errno()}
-      });
+      logger::error({{"ev", "IP detection not supported"},{"errno", Errno()}});
       Close(fd);
       return INVALID_FD;
     }
 
-    rc = SetGetSoftwareReceiveTimestamp(fd);
+    rc = EnableRecevingECN(fd, address_family);
     if (rc < 0) {
-      logger::warn({
-        {"ev", "SO_TIMESTAMPING not supported; using fallback"},
-        {"errno", Errno()}
-      });
+      logger::info({{"ev", "IP detection not supported"},{"errno", Errno()}});
+      Close(fd);
+      return INVALID_FD;
+    }
+
+    rc = EnableRecevingSoftwareReceiveTimestamp(fd);
+    if (rc < 0) {
+      logger::warn({{"ev", "SO_TIMESTAMPING not supported; using fallback"},{"errno", Errno()}});
     }
 
     return fd;
@@ -421,7 +461,7 @@ public:
   static int Read(Fd fd, void *p, qrpc_size_t sz) {
     return read(fd, p, sz);
   }
-#if defined(D__QRPC_USE_RECVMMSG__)
+#if defined(__QRPC_USE_RECVMMSG__)
   static inline int RecvFrom(int fd, struct mmsghdr *msgvec, unsigned int vlen, int flags = 0) {
     return recvmmsg(fd, msgvec, vlen, flags, nullptr);
   }

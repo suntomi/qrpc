@@ -65,6 +65,15 @@ int main(int argc, char *argv[]) {
         logger::error("fail to listen");
         exit(1);
     }
+    AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
+        // echo udp
+        logger::info({{"ev","recv packet", {"pl", std::string(p, sz)}}});
+        return s.Send(p, sz);
+    });
+    if (!us.Listen(9999)) {
+        logger::error("fail to listen");
+        exit(1);
+    }
     while (true) {
         l.Poll();
     }

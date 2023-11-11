@@ -333,6 +333,20 @@ namespace base {
         Fd fd() const { return fd_; }
         bool Listen(int port) {
             // create udp socket
+            if ((fd_ = Syscall::CreateUDPSocket(AF_INET, &overflow_supported_)) < 0) {
+                return false;
+            }
+            if (Syscall::Bind(fd_, port) != QRPC_OK) {
+                Syscall::Close(fd_);
+                fd_ = INVALID_FD;
+                return false;
+            }
+            if (loop_.Add(fd_, this, Loop::EV_READ) < 0) {
+                logger::error({{"ev","Loop::Add fails"},{"fd",fd_}});
+                Syscall::Close(fd_);
+                fd_ = INVALID_FD;
+                return false;
+            }            
             return true;
         }
         void Close() {
@@ -368,11 +382,32 @@ namespace base {
     protected:
         Fd fd_;
         int batch_size_;
+        bool overflow_supported_;
         FactoryMethod factory_method_;
         std::vector<mmsghdr> read_packets_;
         std::vector<ReadPacketBuffer> read_buffers_;
         Allocator<WritePacketBuffer> write_buffers_;
     };
+    class AdhocUdpServer : public UdpListener {
+    public:
+        class AdhocUdpSession : public UdpSession {
+        public:
+            AdhocUdpSession(AdhocUdpServer &f, Fd fd, const Address &addr) : 
+                UdpSession(f, fd, addr) {}
+            int OnRead(const char *p, size_t sz) override {
+                return factory().to<AdhocUdpServer>().handler()(*this, p, sz);
+            }
+        };
+    public:
+        typedef std::function<int (AdhocUdpSession &, const char *, size_t)> Handler;
+        AdhocUdpServer(Loop &l, Handler h) : UdpListener(l, [this](Fd fd, const Address &a) {
+            return new AdhocUdpSession(*this, fd, a);
+        }), handler_(h) {}
+        inline Handler &handler() { return handler_; }
+    private:
+       Handler handler_;
+    };
+    typedef AdhocUdpServer::AdhocUdpSession AdhocUdpSession;
     template <class S>
     class UdpServer : public UdpListener {
     public:
