@@ -102,11 +102,21 @@ namespace base {
       if (exists == sessions_.end()) {
         // use same fd of Listener
         s = Create(fd_, a, factory_method_);
-        logger::info({{"ev", "accept"},{"proto","udp"},{"fd",fd_},{"addr", a.str()}});
+        ASSERT(s != nullptr);
+        logger::info({{"ev", "accept"},{"proto","udp"},{"fd",fd_},{"addr",a.str()}});
         if ((r = s->OnConnect()) < 0) {
           s->Close(QRPC_CLOSE_REASON_LOCAL, r);
           delete s;
           continue;
+        }
+        if (timeout() > 0) {
+          ASSERT(alarm_processor_ != nullptr);
+          auto h = [s]() { return reinterpret_cast<UdpSession *>(s)->CheckTimeout(); };
+          if (alarm_processor_->Set(h, qrpc_time_now() + timeout()) < 0) {
+            s->Close(QRPC_CLOSE_REASON_LOCAL, QRPC_EALLOC, "fail to register alarm");
+            delete s;
+            continue;
+          }
         }
       } else {
         s = exists->second;

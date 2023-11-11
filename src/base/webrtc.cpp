@@ -14,7 +14,7 @@
 #include <mutex>
 
 namespace base {
-std::once_flag once_init, once_fin;
+static std::once_flag once_init, once_fin;
 
 int WebRTCServer::Init() {
   std::call_once(once_init, GlobalInit);

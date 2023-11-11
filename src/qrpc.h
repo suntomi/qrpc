@@ -606,6 +606,8 @@ QAPI_INLINE double qrpc_time_to_usec(qrpc_time_t n) { return ((n) / 1000); }
 
 QAPI_INLINE double qrpc_time_to_nsec(qrpc_time_t n) { return (n); }
 
+QAPI_INLINE uint32_t *qrpc_time_to_spec(qrpc_time_t n);
+
 QAPI_THREADSAFE qrpc_time_t qrpc_time_now();
 
 QAPI_THREADSAFE qrpc_unix_time_t qrpc_time_unix();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/address.h"
+#include "base/alarm.h"
 #include "base/allocator.h"
 #include "base/loop.h"
 #include "base/io_processor.h"
@@ -24,6 +25,7 @@ namespace base {
             ~Session() {}
             inline Fd fd() const { return fd_; }
             inline SessionFactory &factory() { return factory_; }
+            inline const SessionFactory &factory() const { return factory_; }
             inline const Address &addr() const { return addr_; }
             inline bool closed() const { return close_reason_ != nullptr; }
             inline void Close(
@@ -66,7 +68,7 @@ namespace base {
         virtual ~SessionFactory() {}
         Loop &loop() { return loop_; }
         template <class F> F &to() { return static_cast<F&>(*this); }
-        template <class F> const F &to() const { return static_cast<F&>(*this); }
+        template <class F> const F &to() const { return static_cast<const F&>(*this); }
         Session *Open(const Address &a, FactoryMethod m) {
             Fd fd = Syscall::Connect(a.sa(), a.salen());
             return Create(fd, a, m);
@@ -236,17 +238,36 @@ namespace base {
             char buf[Syscall::kMaxOutgoingPacketSize];
             char padd[4];
         };
+        struct Config {
+            AlarmProcessor *alarm_processor;
+            qrpc_time_t session_timeout_sec;
+        };
     public:
         class UdpSession : public Session {
         public:
             UdpSession(SessionFactory &f, Fd fd, const Address &addr) : 
-                Session(f, fd, addr) { AllocIovec(); }
+                Session(f, fd, addr), last_active_(qrpc_time_now()) { AllocIovec(); }
             ~UdpSession() {}
-            UdpListener &listener() { return static_cast<UdpListener&>(factory()); }
+            UdpListener &listener() { return factory().to<UdpListener>(); }
+            const UdpListener &listener() const { return factory().to<UdpListener>(); }
+            bool timeout() const {
+                auto to = listener().timeout();
+                if (to <= 0) { return false; }
+                return qrpc_time_now() - last_active_ > to;
+            }
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
             // implements Session
             int Send(const char *data, size_t sz) override {
                 return Write(data, sz, addr());
+            }
+            // called from AlarmProcessor
+            qrpc_time_t CheckTimeout() {
+                if (timeout()) {
+                    Close(QRPC_CLOSE_REASON_LOCAL, 0, "session timeout");
+                    delete this;
+                    return 0; // stop alarm
+                }
+                return qrpc_time_now() + listener().timeout();
             }
         protected:
             bool AllocIovec() {
@@ -316,21 +337,26 @@ namespace base {
             }
         private:
             std::vector<struct iovec> write_vecs_;
+            qrpc_time_t last_active_;
         };
     public:
-        UdpListener(Loop &l, FactoryMethod m) : 
+        UdpListener(Loop &l, FactoryMethod m, Config *config = nullptr) :
             SessionFactory(l, m), fd_(INVALID_FD), 
             #if defined(__QRPC_USE_RECVMMSG__)
                 batch_size_(256),
             #else
                 batch_size_(1),
             #endif
+            alarm_processor_(config != nullptr ? config->alarm_processor : nullptr), 
+            timeout_(qrpc_time_sec(config != nullptr ? config->session_timeout_sec : 120)), 
             factory_method_(m),
             read_packets_(batch_size_), read_buffers_(batch_size_),
             write_buffers_(batch_size_) {
             SetupPacket();
         }
         Fd fd() const { return fd_; }
+        qrpc_time_t timeout() const { return timeout_; }
+        AlarmProcessor *alarm_processor() { return alarm_processor_; }
         bool Listen(int port) {
             // create udp socket
             if ((fd_ = Syscall::CreateUDPSocket(AF_INET, &overflow_supported_)) < 0) {
@@ -381,7 +407,9 @@ namespace base {
         }
     protected:
         Fd fd_;
+        AlarmProcessor *alarm_processor_;
         int batch_size_;
+        qrpc_time_t timeout_;
         bool overflow_supported_;
         FactoryMethod factory_method_;
         std::vector<mmsghdr> read_packets_;
@@ -400,9 +428,10 @@ namespace base {
         };
     public:
         typedef std::function<int (AdhocUdpSession &, const char *, size_t)> Handler;
-        AdhocUdpServer(Loop &l, Handler h) : UdpListener(l, [this](Fd fd, const Address &a) {
-            return new AdhocUdpSession(*this, fd, a);
-        }), handler_(h) {}
+        AdhocUdpServer(Loop &l, Handler h, Config *config = nullptr) :
+            UdpListener(l, [this](Fd fd, const Address &a) {
+                return new AdhocUdpSession(*this, fd, a);
+            }, config), handler_(h) {}
         inline Handler &handler() { return handler_; }
     private:
        Handler handler_;
@@ -411,11 +440,11 @@ namespace base {
     template <class S>
     class UdpServer : public UdpListener {
     public:
-        UdpServer(Loop &l, FactoryMethod m) : UdpListener(l, m) {}
-        UdpServer(Loop &l) : UdpListener(l, [this](Fd fd, const Address &a) {
+        UdpServer(Loop &l, FactoryMethod m, Config *c = nullptr) : UdpListener(l, m, c) {}
+        UdpServer(Loop &l, Config *c = nullptr) : UdpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<Session, S>(), "S must be a descendant of Session");
             return new S(*this, fd, a);
-        }) {}
+        }, c) {}
     };
     // external typedef
     typedef SessionFactory::Session Session;

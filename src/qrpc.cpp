@@ -543,25 +543,31 @@ using json = nlohmann::json;
 
 
 
-// // --------------------------
-// //
-// // time API
-// //
-// // --------------------------
-// QAPI_THREADSAFE qrpc_time_t qrpc_time_now() {
-//   return clock::now();
-// }
-// QAPI_THREADSAFE qrpc_unix_time_t qrpc_time_unix() {
-//   long s, us;
-//   clock::now(s, us);
-//   return s;
-// }
-// QAPI_THREADSAFE qrpc_time_t qrpc_time_sleep(qrpc_time_t d) {
-//   return clock::sleep(d);
-// }
-// QAPI_THREADSAFE qrpc_time_t qrpc_time_pause(qrpc_time_t d) {
-//   return clock::pause(d);
-// }
+// --------------------------
+//
+// time API
+//
+// --------------------------
+QAPI_THREADSAFE qrpc_time_t qrpc_time_now() {
+  return base::clock::now();
+}
+QAPI_THREADSAFE qrpc_unix_time_t qrpc_time_unix() {
+  long s, us;
+  base::clock::now(s, us);
+  return s;
+}
+QAPI_THREADSAFE qrpc_time_t qrpc_time_sleep(qrpc_time_t d) {
+  return base::clock::sleep(d);
+}
+QAPI_THREADSAFE qrpc_time_t qrpc_time_pause(qrpc_time_t d) {
+  return base::clock::pause(d);
+}
+QAPI_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n) {
+  static thread_local uint32_t spec[2];
+  spec[0] = n / 1000 / 1000 / 1000;
+  spec[1] = n % (1000 * 1000 * 1000);
+  return spec;
+}
 
 
 

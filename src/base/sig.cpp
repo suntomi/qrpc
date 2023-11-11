@@ -13,7 +13,7 @@ namespace base {
     }
     // ignore signals that handled by signalfd
     if (sigprocmask(SIG_BLOCK, &mask_, NULL) != 0) {
-      logger::error({{"ev","sigprocmask() fails"},{"mask",mask_},{"errno",Syscall::Errno()}});
+      logger::error({{"ev","sigprocmask(BLOCK) fails"},{"mask",mask_},{"errno",Syscall::Errno()}});
       return QRPC_ESYSCALL;
     }
   #if defined(__ENABLE_EPOLL__)
@@ -25,7 +25,7 @@ namespace base {
     if (fd_ < 0) {
       fd_ = ::kqueue();
       if (fd_ < 0) {
-        logger::error({{"ev","kqueue() fails"},{"rv",fd_},{"errno",Syscall::Errno()}});
+        logger::error({{"ev","signal: kqueue() fails"},{"rv",fd_},{"errno",Syscall::Errno()}});
         return QRPC_ESYSCALL;
       }
     }
@@ -60,27 +60,36 @@ namespace base {
         }
         // invoke receiver
         receivers_[s.ssi_signo](s.ssi_signo, s);
-      }
   #elif defined(__ENABLE_KQUEUE__)
-      // poll kqueue fd
-      Event ev[SIGRTMAX];
-      int r;
-      Loop::Timeout to;
-      Loop::ToTimeout(1000, to);
-      if ((r = ::kevent(fd_, nullptr, 0, ev, SIGRTMAX, &to)) < 0) {
-        if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+        // poll kqueue fd
+        Event ev[SIGRTMAX];
+        int r;
+        Loop::Timeout to;
+        Loop::ToTimeout(1000, to);
+        if ((r = ::kevent(fd_, nullptr, 0, ev, SIGRTMAX, &to)) < 0) {
+          if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+            break;
+          }
+          logger::error({{"ev","kevent() fails"},{"rv",r},{"errno",Syscall::Errno()}});
+          ASSERT(false);
           break;
         }
-        logger::error({{"ev","kevent() fails"},{"rv",r},{"errno",Syscall::Errno()}});
-        ASSERT(false);
-        break;
-      }
-      for (int i = 0; i < r; i++) {
-        // invoke receiver
-        receivers_[ev[i].ident](ev[i].ident, ev[i]);
-      }
+        for (int i = 0; i < r; i++) {
+          // invoke receiver
+          receivers_[ev[i].ident](ev[i].ident, ev[i]);
+        }
   #endif
+      }
     }
   }
-}
+  void SignalHandler::OnClose(Fd) {
+    // un-ignore signals that handled by signalfd
+    if (sigprocmask(SIG_UNBLOCK, &mask_, NULL) != 0) {
+      logger::error({{"ev","sigprocmask(UNBLOCK) fails"},{"mask",mask_},{"errno",Syscall::Errno()}});
+    }
+    if (fd_ != INVALID_FD) {
+      Syscall::Close(fd_);
+      fd_ = -1;
+    }
+  }
 }

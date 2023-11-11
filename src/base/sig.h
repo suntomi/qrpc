@@ -12,7 +12,6 @@ typedef struct signalfd_siginfo Signal;
 #elif defined(__ENABLE_KQUEUE__)
 typedef base::Loop::Event Signal;
 #else
-#error "no event loop implementation"
 // dummy definition to shut vscode language server up
 typedef struct {} Signal;
 #endif
@@ -27,11 +26,12 @@ namespace base {
   class SignalHandler : public IoProcessor {
   public:
     typedef std::function<void(int, const Signal &)> Receiver;
+    // TODO: make it singleton
     SignalHandler() : fd_(-1), receivers_() {
       for (int i = 0; i < SIGRTMAX; i++) { receivers_[i] = Nop(); }
       sigemptyset(&mask_);
     }
-    virtual ~SignalHandler() {}
+    virtual ~SignalHandler() { if (fd_ >= 0) { Syscall::Close(fd_); fd_ = -1; } }
     inline Fd fd() const { return fd_; }
     inline SignalHandler &Ignore(int sig) {
       return Handle(sig, [](int sig, const Signal &s) {
@@ -48,9 +48,16 @@ namespace base {
       }
       return *this;
     }
+    bool Start(Loop &l) {
+      if (l.Add(fd_, this, Loop::EV_READ) < 0) {
+        logger::error({{"ev","sig: Loop::Add() fails"},{"fd",fd_}});
+        return false;
+      }
+      return true;
+    }
     int Register(int);
     void OnEvent(Fd fd, const Event &e) override;
-		void OnClose(Fd) override {}
+		void OnClose(Fd) override;
 		int OnOpen(Fd) override { return QRPC_OK; }
   protected:
     class Nop {
