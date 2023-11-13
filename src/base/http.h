@@ -230,6 +230,10 @@ namespace base {
         int Unavailable(const std::string &fmt, const Args... args) {
             return Error(HRC_SERVICE_UNAVAILABLE, fmt, args...);
         }
+        template<class... Args>
+        int ServerError(const std::string &fmt, const Args... args) {
+            return Error(HRC_SERVER_ERROR, fmt, args...);
+        }
     private:
         HttpFSM fsm_;
     };
