@@ -7,6 +7,9 @@
 #endif
 
 namespace base {
+  #if defined(__ENABLE_KQUEUE__)
+  IdFactory<uint64_t> Timer::id_factory_;
+  #endif
   int Timer::Init(Loop &l) {
   #if defined(__ENABLE_EPOLL__)
     if ((fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK)) < 0) {
@@ -24,7 +27,7 @@ namespace base {
       logger::error({{"ev","timerfd_settime fails"},{"errno",Syscall::Errno()}});
       return QRPC_ESYSCALL;
     }
-  #elif defined(__ENABLE_KEQUEUE__)
+  #elif defined(__ENABLE_KQUEUE__)
     if (fd_ < 0) {
       fd_ = ::kqueue();
       if (fd_ < 0) {
@@ -35,13 +38,13 @@ namespace base {
     struct kevent change;
     EV_SET(&change, id_factory_.New(), 
       EVFILT_TIMER, EV_ADD | EV_ENABLE, NOTE_NSECONDS, qrpc_time_to_nsec(granularity_), this);
-    if (::kevent(fd_, ev, cnt, nullptr, 0, nullptr) != 0) {
+    if (::kevent(fd_, &change, 1, nullptr, 0, nullptr) != 0) {
       logger::error({{"ev","timer: kevent() fails"},{"errno",Syscall::Errno()}});
       return QRPC_ESYSCALL;
     }
   #endif
     if (l.Add(fd_, this, Loop::EV_READ) < 0) {
-      logger::error({{"ev","timer: Loop::Add() fails"},{"errno",Syscall::Errno()}});
+      logger::error({{"ev","timer: Loop::Add() fails"},{"fd",fd_},{"errno",Syscall::Errno()}});
       return QRPC_ESYSCALL;
     }
     return QRPC_OK;    
@@ -57,7 +60,45 @@ namespace base {
     return QRPC_OK;
   }
   // implement IoProcessor
-  void Timer::OnEvent(Fd, const Event &) {
+  void Timer::OnEvent(Fd fd, const Event &ev) {
+    ASSERT(fd == fd_);
+    if (Loop::Readable(ev)) {
+      while (true) {
+        uint64_t expires;
+      #if defined(__ENABLE_EPOLL__)
+        if (Syscall::Read(fd_, &expires, sizeof(expires)) < 0) {
+          if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+            break;
+          }
+          logger::error({{"ev","read timerfd fails"},{"errno",Syscall::Errno()}});
+          ASSERT(false);
+          break;
+        }
+      #elif defined(__ENABLE_KQUEUE__)
+        // poll kqueue fd
+        Event ev[1];
+        int r;
+        Loop::Timeout to;
+        Loop::ToTimeout(1000, to);
+        if ((r = ::kevent(fd_, nullptr, 0, ev, 1, &to)) < 0) {
+          if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+            break;
+          }
+          logger::error({{"ev","kevent() fails"},{"rv",r},{"errno",Syscall::Errno()}});
+          ASSERT(false);
+          break;
+        } else if (r == 0) {
+          break;
+        }
+        expires = ev[0].data;
+        // now not used
+        (void) expires;
+      #endif
+      }
+    }
+    Poll();
+  }
+  void Timer::Poll() {
     qrpc_time_t now = qrpc_time_now();
     for (auto it = handlers_.begin(); it != handlers_.end(); ) {
       auto &ent = *it;

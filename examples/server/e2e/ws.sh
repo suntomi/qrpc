@@ -29,7 +29,7 @@ test() {
     echo "$command"
     read -r response
     if [ "$command" != "$response" ]; then
-      path=${CWD}/error-${len}.txt
+      path=${CWD}/ws-error-${len}.txt
       echo "${command}" > ${path}
       echo "${response}" > ${path}
       echo "Unexpected response: see ${path}" >&2

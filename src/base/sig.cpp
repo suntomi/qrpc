@@ -73,6 +73,8 @@ namespace base {
           logger::error({{"ev","kevent() fails"},{"rv",r},{"errno",Syscall::Errno()}});
           ASSERT(false);
           break;
+        } else if (r == 0) {
+          break;
         }
         for (int i = 0; i < r; i++) {
           // invoke receiver

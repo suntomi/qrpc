@@ -169,7 +169,7 @@ namespace base {
       if (r < 0) {
         int eno = Syscall::Errno();
         if (Syscall::WriteMayBlocked(eno, false)) {
-          return QRPC_OK;
+          return QRPC_EAGAIN;
         }
         logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
         return QRPC_ESYSCALL;
@@ -180,7 +180,7 @@ namespace base {
       if (r < 0) {
         int eno = Syscall::Errno();
         if (Syscall::WriteMayBlocked(eno, false)) {
-          return QRPC_OK;
+          return QRPC_EAGAIN;
         }
         logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});
         return QRPC_ESYSCALL;

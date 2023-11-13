@@ -50,7 +50,7 @@ namespace base {
     }
     bool Start(Loop &l) {
       if (l.Add(fd_, this, Loop::EV_READ) < 0) {
-        logger::error({{"ev","sig: Loop::Add() fails"},{"fd",fd_}});
+        logger::error({{"ev","sig: Loop::Add() fails"},{"fd",fd_},{"errno",Syscall::Errno()}});
         return false;
       }
       return true;

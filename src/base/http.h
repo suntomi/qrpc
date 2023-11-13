@@ -176,6 +176,7 @@ namespace base {
         HttpSession(SessionFactory &f, Fd fd, const Address &addr) : TcpSession(f, fd, addr) {
             fsm_.reset(1024);
         }
+        ~HttpSession() override {}
         const HttpFSM &req() const { return fsm_; }
         const HttpFSM &fsm() const { return fsm_; }
         HttpFSM &fsm() { return fsm_; }
@@ -425,7 +426,7 @@ namespace base {
             m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {
             m_sm.move_from(fsm);
         }
-        ~WebSocketSession() {}
+        ~WebSocketSession() override {}
 
         inline bool is_client() const { return m_hostname.length() > 0; }
     public:

@@ -1,6 +1,7 @@
 #pragma once
 #include "base/alarm.h"
 #include "base/io_processor.h"
+#include "base/id_factory.h"
 #include "base/logger.h"
 #include "base/session.h"
 #include "base/syscall.h"
@@ -18,6 +19,7 @@ namespace base {
     void Fin();
     inline Fd fd() const { return fd_; }
     int Start(const Handler &h, qrpc_time_t at);
+    void Poll();
     // implement IoProcessor
     void OnEvent(Fd, const Event &) override;
 		void OnClose(Fd) override { Fin(); }
@@ -30,5 +32,8 @@ namespace base {
     Fd fd_;
     qrpc_time_t granularity_;
     std::multimap<qrpc_time_t, Handler> handlers_;
+    #if defined(__ENABLE_KQUEUE__)
+    static IdFactory<uint64_t> id_factory_;
+    #endif
   };
 }

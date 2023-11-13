@@ -22,7 +22,7 @@ namespace base {
         public:
             Session(SessionFactory &f, Fd fd, const Address &addr) : 
                 factory_(f), fd_(fd), addr_(addr), close_reason_() {}
-            ~Session() {}
+            virtual ~Session() {}
             inline Fd fd() const { return fd_; }
             inline SessionFactory &factory() { return factory_; }
             inline const SessionFactory &factory() const { return factory_; }
@@ -94,7 +94,7 @@ namespace base {
         public:
             TcpSession(SessionFactory &f, Fd fd, const Address &addr) : 
                 Session(f, fd, addr) {}
-            ~TcpSession() {}
+            ~TcpSession() override {}
             inline void MigrateTo(TcpSession *newsession) {
                 factory().loop().ModProcessor(fd_, newsession);
                 // close this session without closing fd
@@ -247,13 +247,20 @@ namespace base {
         public:
             UdpSession(SessionFactory &f, Fd fd, const Address &addr) : 
                 Session(f, fd, addr), last_active_(qrpc_time_now()) { AllocIovec(); }
-            ~UdpSession() {}
+            ~UdpSession() override {}
             UdpListener &listener() { return factory().to<UdpListener>(); }
             const UdpListener &listener() const { return factory().to<UdpListener>(); }
-            bool timeout() const {
+            bool timeout(qrpc_time_t &next_check) const {
                 auto to = listener().timeout();
-                if (to <= 0) { return false; }
-                return qrpc_time_now() - last_active_ > to;
+                ASSERT(to > 0);
+                auto now = qrpc_time_now();
+                auto diff = now - last_active_;
+                if (diff > to) {
+                    return true;
+                } else {
+                    next_check = now + to - diff;
+                    return false;
+                }
             }
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
             // implements Session
@@ -262,12 +269,13 @@ namespace base {
             }
             // called from AlarmProcessor
             qrpc_time_t CheckTimeout() {
-                if (timeout()) {
+                qrpc_time_t next_check;
+                if (timeout(next_check)) {
                     Close(QRPC_CLOSE_REASON_LOCAL, 0, "session timeout");
                     delete this;
                     return 0; // stop alarm
                 }
-                return qrpc_time_now() + listener().timeout();
+                return next_check;
             }
         protected:
             bool AllocIovec() {
@@ -422,6 +430,7 @@ namespace base {
         public:
             AdhocUdpSession(AdhocUdpServer &f, Fd fd, const Address &addr) : 
                 UdpSession(f, fd, addr) {}
+            ~AdhocUdpSession() override {}
             int OnRead(const char *p, size_t sz) override {
                 return factory().to<AdhocUdpServer>().handler()(*this, p, sz);
             }

@@ -387,10 +387,7 @@ public:
   ) {
     int fd = socket(address_family, SOCK_DGRAM, 0);
     if (fd < 0) {
-      logger::error({
-        {"ev", "socket() failed"},
-        {"errno", Errno()}
-      });
+      logger::error({{"ev", "socket() failed"},{"errno", Errno()}});
       return INVALID_FD;
     }
     
@@ -403,9 +400,7 @@ public:
     int rc = setsockopt(fd, SOL_SOCKET, SO_RXQ_OVFL, &get_overflow,
                         sizeof(get_overflow));
     if (rc < 0) {
-      logger::warn({
-        {"ev", "Socket overflow detection not supported"}
-      });
+      logger::warn({{"ev", "Socket overflow detection not supported"}});
     } else {
       *overflow_supported = true;
     }
@@ -429,7 +424,7 @@ public:
 
     rc = EnableRecevingECN(fd, address_family);
     if (rc < 0) {
-      logger::info({{"ev", "IP detection not supported"},{"errno", Errno()}});
+      logger::info({{"ev", "congestion notification not supported"},{"errno", Errno()}});
       Close(fd);
       return INVALID_FD;
     }

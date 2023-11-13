@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
     UdpListener::Config c = { .alarm_processor = &t, .session_timeout_sec = 5};
     AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
-        logger::info({{"ev","recv packet"}, {"pl", std::string(p, sz)}});
+        logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
     }, &c);
     if (!us.Listen(9999)) {
