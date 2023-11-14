@@ -52,11 +52,15 @@ namespace base {
                        public RTC::DtlsTransport::Listener,
                        public RTC::SctpAssociation::Listener {
     public:
-      Connection(WebRTCServer &sv) : sv_(sv), last_active_(0),
-        ice_server_(nullptr), 
+      Connection(WebRTCServer &sv, RTC::DtlsTransport::Role dtls_role) :
+        sv_(sv), last_active_(0), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr),
-        srtp_send_(nullptr), srtp_recv_(nullptr) {}
+        srtp_send_(nullptr), srtp_recv_(nullptr), sctp_connected_(false) {}
       ~Connection() {}
+    public:
+      bool connected() const;
+    public:
+      int RunDtlsTransport();
     public:
       // entry point of all incoming packets
       int OnPacketReceived(Session *session, const uint8_t *p, size_t sz);
@@ -123,9 +127,11 @@ namespace base {
       qrpc_time_t last_active_;
       WebRTCServer &sv_;
       IceServer *ice_server_; // ICE
+      RTC::DtlsTransport::Role dtls_role_;
       RTC::DtlsTransport *dtls_transport_; // DTLS
       RTC::SctpAssociation *sctp_association_; // SCTP
       RTC::SrtpSession *srtp_send_, *srtp_recv_; // SRTP
+      bool sctp_connected_;
     };
     struct Config {
       enum Protocol {

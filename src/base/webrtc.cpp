@@ -130,6 +130,74 @@ int WebRTCServer::UdpSession::OnRead(const char *p, size_t sz) {
 
 
 /* WebRTCServer::Connection */
+bool WebRTCServer::Connection::connected() const {
+  return (
+    (
+      ice_server_->GetState() == IceServer::IceState::CONNECTED ||
+      ice_server_->GetState() == IceServer::IceState::COMPLETED
+    ) && dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED
+  );
+}
+int WebRTCServer::Connection::RunDtlsTransport() {
+  TRACK();
+
+  // Do nothing if we have the same local DTLS role as the DTLS transport.
+  // NOTE: local role in DTLS transport can be NONE, but not ours.
+  if (dtls_transport_->GetLocalRole() == dtls_role_) {
+    return QRPC_OK;
+  }
+  // Check our local DTLS role.
+  switch (dtls_role_) {
+    // If still 'auto' then transition to 'server' if ICE is 'connected' or
+    // 'completed'.
+    case RTC::DtlsTransport::Role::AUTO: {
+      if (
+        ice_server_->GetState() == IceServer::IceState::CONNECTED ||
+        ice_server_->GetState() == IceServer::IceState::COMPLETED
+      ) {
+        logger::info(
+          {{"proto","dtls"},{"ev","transition from DTLS local role 'auto' to 'server' and running DTLS transport"}}
+        );
+        dtls_role_ = RTC::DtlsTransport::Role::SERVER;
+        dtls_transport_->Run(RTC::DtlsTransport::Role::SERVER);
+      }
+      break;
+    }
+    // 'client' is only set if a 'connect' request was previously called with
+    // remote DTLS role 'server'.
+    //
+    // If 'client' then wait for ICE to be 'completed' (got USE-CANDIDATE).
+    //
+    // NOTE: This is the theory, however let's be more flexible as told here:
+    //   https://bugs.chromium.org/p/webrtc/issues/detail?id=3661
+    case RTC::DtlsTransport::Role::CLIENT: {
+      if (
+        ice_server_->GetState() == IceServer::IceState::CONNECTED ||
+        ice_server_->GetState() == IceServer::IceState::COMPLETED
+      ) {
+        logger::debug({{"proto","dtls"},{"ev","running DTLS transport in local role 'client'"}});
+        dtls_transport_->Run(RTC::DtlsTransport::Role::CLIENT);
+      }
+      break;
+    }
+
+    // If 'server' then run the DTLS transport if ICE is 'connected' (not yet
+    // USE-CANDIDATE) or 'completed'.
+    case RTC::DtlsTransport::Role::SERVER: {
+      if (
+        ice_server_->GetState() == IceServer::IceState::CONNECTED ||
+        ice_server_->GetState() == IceServer::IceState::COMPLETED
+      ) {
+        logger::debug({{"proto","dtls"},{"ev","running DTLS transport in local role 'server'"}});
+        dtls_transport_->Run(RTC::DtlsTransport::Role::SERVER);
+      }
+      break;
+    }
+
+    default: logger::die({{"ev","invalid local DTLS role"},{"role",dtls_role_}});
+  }
+  return QRPC_OK;
+}
 int WebRTCServer::Connection::OnPacketReceived(Session *session, const uint8_t *p, size_t sz) {
   // Check if it's STUN.
   if (RTC::StunPacket::IsStun(p, sz)) {
@@ -145,6 +213,7 @@ int WebRTCServer::Connection::OnPacketReceived(Session *session, const uint8_t *
       {"ev","ignoring received packet of unknown type"},
       {"payload",str::HexDump(p, std::min((size_t)16, sz))}
     });
+    return QRPC_OK;
   }
 }
 int WebRTCServer::Connection::OnStunDataReceived(Session *session, const uint8_t *p, size_t sz) {
@@ -270,10 +339,17 @@ int WebRTCServer::Connection::OnRtpDataReceived(Session *session, const uint8_t 
 void WebRTCServer::Connection::OnIceServerSendStunPacket(
   const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) {
   TRACK();
+  session->Send(reinterpret_cast<const char *>(packet->GetData()), packet->GetSize());
+  // may need to implement equivalent
+  // RTC::Transport::DataSent(packet->GetSize());
 }
 void WebRTCServer::Connection::OnIceServerLocalUsernameFragmentAdded(
   const IceServer *iceServer, const std::string& usernameFragment) {
   logger::info({{"ev","OnIceServerLocalUsernameFragmentAdded"},{"uflag",usernameFragment}});
+  // mediasoup seems to add Connection itself to WebRTCServer's map here.
+  // and OnIceServerLocalUsernameFragmentAdded is called from WebRtcTransport::ctor
+  // thus, if mediasoup creates WebRtcTransport, it will be added to the map automatically
+  // but it is too implicit. I rather prefer to add it manualy, in NewConnection
 }
 void WebRTCServer::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
@@ -283,17 +359,30 @@ void WebRTCServer::Connection::OnIceServerLocalUsernameFragmentRemoved(
 }
 void WebRTCServer::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
+  // used for synching server's session/address map. 
+  // use OnIceServerTupleAdded to search mediasoup's example
 }
 void WebRTCServer::Connection::OnIceServerSessionRemoved(
   const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
+  // used for synching server's session/address map. 
+  // use OnIceServerTupleRemoved to search mediasoup's example
 }
 void WebRTCServer::Connection::OnIceServerSelectedSession(
   const IceServer *iceServer, Session *session) {
   TRACK();
+  // just notify the app
+  // use OnIceServerSelectedTuple to search mediasoup's example
 }
 void WebRTCServer::Connection::OnIceServerConnected(const IceServer *iceServer) {
   TRACK();
+  // If ready, run the DTLS handler.
+  RunDtlsTransport();
+
+  // If DTLS was already connected, notify the parent class.
+  if (dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED) {
+    // TODO:
+  }
 }
 void WebRTCServer::Connection::OnIceServerCompleted(const IceServer *iceServer) {
   TRACK();
@@ -315,43 +404,93 @@ void WebRTCServer::Connection::OnDtlsTransportConnected(
   size_t srtpRemoteKeyLen,
   std::string& remoteCert) {
   TRACK();
+  // Close it if it was already set and update it.
+  if (srtp_send_ != nullptr) {
+    delete srtp_send_;
+    srtp_send_ = nullptr;
+  }
+  if (srtp_recv_ != nullptr) {
+    delete srtp_recv_;
+    srtp_recv_ = nullptr;
+  }
+  try {
+    srtp_send_ = new RTC::SrtpSession(
+      RTC::SrtpSession::Type::OUTBOUND, srtpCryptoSuite, srtpLocalKey, srtpLocalKeyLen);
+  } catch (const MediaSoupError& error) {
+    logger::error({{"ev","error creating SRTP sending session"},{"reason",error.what()}});
+  }
+  try {
+    srtp_recv_ = new RTC::SrtpSession(
+      RTC::SrtpSession::Type::INBOUND, srtpCryptoSuite, srtpRemoteKey, srtpRemoteKeyLen);
+    // may need to implement equivalent
+    // RTC::Transport::Connected();
+  } catch (const MediaSoupError& error) {
+    logger::error({{"ev","error creating SRTP receiving session"},{"reason",error.what()}});
+    delete srtp_send_;
+    srtp_send_ = nullptr;
+  }  
 }
 // The DTLS connection has been closed as the result of an error (such as a
 // DTLS alert or a failure to validate the remote fingerprint).
 void WebRTCServer::Connection::OnDtlsTransportFailed(const RTC::DtlsTransport* dtlsTransport) {
-  TRACK();
+  logger::info({{"ev","tls failed"}});
+  // TODO: callback
 }
 // The DTLS connection has been closed due to receipt of a close_notify alert.
 void WebRTCServer::Connection::OnDtlsTransportClosed(const RTC::DtlsTransport* dtlsTransport) {
-  TRACK();
+  logger::info({{"ev","tls cloed"}});
+  // Tell the parent class.
+  // RTC::Transport::Disconnected();
+  // above notifies TransportCongestionControlClient and TransportCongestionControlServer
+  // may need to implement equivalent for performance
 }
 // Need to send DTLS data to the peer.
 void WebRTCServer::Connection::OnDtlsTransportSendData(
   const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) {
   TRACK();
+  auto *session = ice_server_->GetSelectedSession();
+  if (session == nullptr) {
+    logger::warn({{"proto","dtls"},{"ev","no selected tuple set, cannot send DTLS packet"}});
+    return;
+  }
+  session->Send(reinterpret_cast<const char *>(data), len);
+  // may need to implement equivalent
+  // RTC::Transport::DataSent(len);
 }
 // DTLS application data received.
 void WebRTCServer::Connection::OnDtlsTransportApplicationDataReceived(
-  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) {
+  const RTC::DtlsTransport*, const uint8_t* data, size_t len) {
   TRACK();
+  sctp_association_->ProcessSctpData(data, len);
 }
 
 // implements RTC::SctpAssociation::Listener
 void WebRTCServer::Connection::OnSctpAssociationConnecting(RTC::SctpAssociation* sctpAssociation) {
   TRACK();
+  // only notify
 }
 void WebRTCServer::Connection::OnSctpAssociationConnected(RTC::SctpAssociation* sctpAssociation) {
   TRACK();
+  sctp_connected_ = true;
 }
 void WebRTCServer::Connection::OnSctpAssociationFailed(RTC::SctpAssociation* sctpAssociation) {
   TRACK();
+  sctp_connected_ = false;
+  // TODO: notify app
 }
 void WebRTCServer::Connection::OnSctpAssociationClosed(RTC::SctpAssociation* sctpAssociation) {
   TRACK();
+  sctp_connected_ = false;
+  // TODO: notify app
 }
 void WebRTCServer::Connection::OnSctpAssociationSendData(
   RTC::SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) {
   TRACK();
+  if (!connected()) {
+		logger::warn({{"proto","sctp"},{"ev","DTLS not connected, cannot send SCTP data"}});
+    return;
+  }	  
+  dtls_transport_->SendApplicationData(data, len);
 }
 void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
   RTC::SctpAssociation* sctpAssociation,
@@ -360,6 +499,7 @@ void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
   const uint8_t* msg,
   size_t len) {
   TRACK();
+  // TODO: callback app
 }
 void WebRTCServer::Connection::OnSctpAssociationBufferedAmount(
   RTC::SctpAssociation* sctpAssociation, uint32_t len) {
