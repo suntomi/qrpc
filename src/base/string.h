@@ -6,7 +6,7 @@
 
 namespace base {
 namespace str {
-  inline std::string HexDump(uint8_t *p, size_t len) {
+  inline std::string HexDump(const uint8_t *p, size_t len) {
     constexpr char hex[] = "0123456789abcdef";
     std::string s;
     for (size_t i = 0; i < len; i++) {

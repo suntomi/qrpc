@@ -6,38 +6,46 @@
 #include "RTC/IceCandidate.hpp"
 #include "RTC/DtlsTransport.hpp"
 #include "RTC/SctpAssociation.hpp"
+#include "RTC/SrtpSession.hpp"
 
 namespace base {
   class WebRTCServer {
   public:
-    class IceUserName : public std::string {};
+    class IceUFlag : public std::string {};
   public: // sessions
+    class Connection;
     class TcpSession : public TcpListener::TcpSession {
     public:
       TcpSession(SessionFactory &f, Fd fd, const Address &addr) : 
-        TcpListener::TcpSession(f, fd, addr) {}
-        int OnRead(const char *p, size_t sz) override {
-          return QRPC_OK;
-        }
+        TcpListener::TcpSession(f, fd, addr), connection_(nullptr) {}
+        int OnRead(const char *p, size_t sz) override;
+    private:
+      Connection *connection_;
     };
     class UdpSession : public UdpListener::UdpSession {
     public:
       UdpSession(SessionFactory &f, Fd fd, const Address &addr) : 
-        UdpListener::UdpSession(f, fd, addr) {}
-      int OnRead(const char *p, size_t sz) override {
-          return QRPC_OK;        
-      }
+        UdpListener::UdpSession(f, fd, addr), connection_(nullptr) {}
+      int OnRead(const char *p, size_t sz) override;
+    private:
+      Connection *connection_;
     };
   public: // servers
     typedef TcpServer<TcpSession> BaseTcpServer;
     typedef UdpServer<UdpSession> BaseUdpServer;
     class TcpPort : public BaseTcpServer {
     public:
-        TcpPort(Loop &l) : BaseTcpServer(l) {}
+      TcpPort(WebRTCServer &ws) : BaseTcpServer(ws.loop()), webrtc_server_(ws) {}
+      WebRTCServer &webrtc_server() { return webrtc_server_; }
+    private:
+      WebRTCServer &webrtc_server_;
     };
     class UdpPort : public BaseUdpServer {
     public:
-        UdpPort(Loop &l) : BaseUdpServer(l) {}
+      UdpPort(WebRTCServer &ws) : BaseUdpServer(ws.loop()), webrtc_server_(ws) {}
+      WebRTCServer &webrtc_server() { return webrtc_server_; }
+    private:
+      WebRTCServer &webrtc_server_;
     };
   public: // connections
     class Connection : public IceServer::Listener,
@@ -45,8 +53,18 @@ namespace base {
                        public RTC::SctpAssociation::Listener {
     public:
       Connection(WebRTCServer &sv) : sv_(sv), last_active_(0),
-        ice_server_(nullptr), dtls_transport_(nullptr), sctp_association_(nullptr) {}
+        ice_server_(nullptr), 
+        dtls_transport_(nullptr), sctp_association_(nullptr),
+        srtp_send_(nullptr), srtp_recv_(nullptr) {}
       ~Connection() {}
+    public:
+      // entry point of all incoming packets
+      int OnPacketReceived(Session *session, const uint8_t *p, size_t sz);
+      // protocol handlers
+      int OnStunDataReceived(Session *session, const uint8_t *p, size_t sz);
+      int OnDtlsDataReceived(Session *session, const uint8_t *p, size_t sz);
+      int OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz);
+      int OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz);      
     public:
       // implements IceServer::Listener
 			void OnIceServerSendStunPacket(
@@ -107,6 +125,7 @@ namespace base {
       IceServer *ice_server_; // ICE
       RTC::DtlsTransport *dtls_transport_; // DTLS
       RTC::SctpAssociation *sctp_association_; // SCTP
+      RTC::SrtpSession *srtp_send_, *srtp_recv_; // SRTP
     };
     struct Config {
       enum Protocol {
@@ -124,16 +143,26 @@ namespace base {
       Loop &l, AlarmProcessor *alarm_processor, std::vector<Config> configs
     ) : loop_(l), configs_(configs), alarm_processor_(alarm_processor),
         tcp_ports_(), udp_ports_(), connections_() {}
+    ~WebRTCServer() {}
+  public:
+    Loop &loop() { return loop_; }
+  public:
     int Init();
     void Fin();
     int NewConnection(const std::string &client_sdp, std::string &server_sdp);
+    Connection *FindFromStunRequest(const uint8_t *p, size_t sz);
+    void RemoveUFlag(IceUFlag &uflag) {
+      if (connections_.erase(uflag) == 0) {
+        logger::warn({{"ev","fail to remove uflag"},{"uflag",uflag}});
+      }
+    }
   protected:
     Loop &loop_;
     std::vector<Config> configs_;
     AlarmProcessor *alarm_processor_;
     std::vector<TcpPort> tcp_ports_;
     std::vector<UdpPort> udp_ports_;
-    std::map<IceUserName, Connection> connections_;
+    std::map<IceUFlag, Connection> connections_;
   private:
     static int GlobalInit();
     static void GlobalFin();
