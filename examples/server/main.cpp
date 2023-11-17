@@ -35,7 +35,7 @@ bool SetupSignalHandler(SignalHandler &sh, Loop &l) {
 int main(int argc, char *argv[]) {
     Loop l;
     SignalHandler sh;
-    Ticker t(qrpc_time_sec(1)); // 1 sec
+    Ticker t(qrpc_time_msec(10)); // 10ms
     if (l.Open(1024) < 0) {
         logger::error("fail to init loop");
         exit(1);

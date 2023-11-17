@@ -4,10 +4,11 @@
   #if !defined(NDEBUG)
     #include <assert.h>
     #define ASSERT(cond) assert((cond))
-    #define MASSERT(cond, msg) assert((cond) && (msg))
+    #define MASSERT(cond, ...) { if(!(cond)){ base::logger::log(base::logger::level::fatal, __VA_ARGS__); assert((cond)); } }
     #define DIE(msg) assert((msg) == nullptr)
   #else
     #define ASSERT(cond)
+    #define MASSERT(cond, ...)
     #define DIE(msg)
   #endif
 #endif

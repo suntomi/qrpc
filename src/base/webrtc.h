@@ -1,11 +1,13 @@
 #pragma once
 
+#include "base/id_factory.h"
 #include "base/session.h"
+#include "base/stream.h"
 #include "base/webrtc/ice.h"
+#include "base/webrtc/sctp.h"
 
 #include "RTC/IceCandidate.hpp"
 #include "RTC/DtlsTransport.hpp"
-#include "RTC/SctpAssociation.hpp"
 #include "RTC/SrtpSession.hpp"
 
 namespace base {
@@ -50,7 +52,8 @@ namespace base {
   public: // connections
     class Connection : public IceServer::Listener,
                        public RTC::DtlsTransport::Listener,
-                       public RTC::SctpAssociation::Listener {
+                       public SctpAssociation::Listener,
+                       public Stream::Processor {
     public:
       Connection(WebRTCServer &sv, RTC::DtlsTransport::Role dtls_role) :
         sv_(sv), last_active_(0), ice_server_(nullptr), dtls_role_(dtls_role),
@@ -61,6 +64,7 @@ namespace base {
       bool connected() const;
     public:
       int RunDtlsTransport();
+      Stream *NewStream(Stream::Config &c, Stream::Handler &h);
     public:
       // entry point of all incoming packets
       int OnPacketReceived(Session *session, const uint8_t *p, size_t sz);
@@ -70,6 +74,10 @@ namespace base {
       int OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz);
       int OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz);      
     public:
+      // implements Stream::Processor
+      int Send(Stream *s, const char *p, size_t sz, bool binary) override;
+      void Close(Stream *s) override;
+
       // implements IceServer::Listener
 			void OnIceServerSendStunPacket(
 			  const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) override;
@@ -108,30 +116,40 @@ namespace base {
 			void OnDtlsTransportApplicationDataReceived(
 			  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;  
 
-      // implements RTC::SctpAssociation::Listener
-			void OnSctpAssociationConnecting(RTC::SctpAssociation* sctpAssociation) override;
-			void OnSctpAssociationConnected(RTC::SctpAssociation* sctpAssociation)  override;
-			void OnSctpAssociationFailed(RTC::SctpAssociation* sctpAssociation)     override;
-			void OnSctpAssociationClosed(RTC::SctpAssociation* sctpAssociation)     override;
+      // implements SctpAssociation::Listener
+			void OnSctpAssociationConnecting(SctpAssociation* sctpAssociation) override;
+			void OnSctpAssociationConnected(SctpAssociation* sctpAssociation)  override;
+			void OnSctpAssociationFailed(SctpAssociation* sctpAssociation)     override;
+			void OnSctpAssociationClosed(SctpAssociation* sctpAssociation)     override;
 			void OnSctpAssociationSendData(
-			  RTC::SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) override;
+			  SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) override;
 			void OnSctpAssociationMessageReceived(
-			  RTC::SctpAssociation* sctpAssociation,
+			  SctpAssociation* sctpAssociation,
 			  uint16_t streamId,
 			  uint32_t ppid,
 			  const uint8_t* msg,
 			  size_t len) override;
 			void OnSctpAssociationBufferedAmount(
-			  RTC::SctpAssociation* sctpAssociation, uint32_t len) override;    
+			  SctpAssociation* sctpAssociation, uint32_t len) override;    
     protected:
       qrpc_time_t last_active_;
       WebRTCServer &sv_;
       IceServer *ice_server_; // ICE
       RTC::DtlsTransport::Role dtls_role_;
       RTC::DtlsTransport *dtls_transport_; // DTLS
-      RTC::SctpAssociation *sctp_association_; // SCTP
+      SctpAssociation *sctp_association_; // SCTP
       RTC::SrtpSession *srtp_send_, *srtp_recv_; // SRTP
       bool sctp_connected_;
+      std::map<Stream::Id, Stream> streams_;
+      IdFactory<Stream::Id> stream_id_factory_;
+    };
+    enum PPID {
+      STRING = 51,
+      BINARY_PARTIAL = 52, //deprecated
+      BINARY = 53,
+      STRING_PARTIAL = 54, //deprecated
+      STRING_EMPTY = 56,
+      BINARY_EMPTY = 57,
     };
     struct Config {
       enum Protocol {
@@ -170,7 +188,8 @@ namespace base {
     std::vector<UdpPort> udp_ports_;
     std::map<IceUFlag, Connection> connections_;
   private:
-    static int GlobalInit();
+    static int GlobalInit(AlarmProcessor *a);
     static void GlobalFin();
   };
+  typedef WebRTCServer::Connection Connection;
 } //namespace base
