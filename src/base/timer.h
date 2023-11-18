@@ -11,29 +11,38 @@ namespace base {
   class Timer : public IoProcessor, public AlarmProcessor {
   public:
     typedef std::function<qrpc_time_t ()> Handler;
+    typedef AlarmProcessor::Id Id;
     static inline constexpr qrpc_time_t STOP = 0LL;
+    struct Entry {
+      Entry(uint64_t id, const Handler &h) : id(id), handler(h) {}
+      Handler handler;
+      Id id;
+    };
   public:
-    Timer(qrpc_time_t granularity) : fd_(INVALID_FD), granularity_(granularity) {}
+    Timer(qrpc_time_t granularity) :
+      fd_(INVALID_FD), granularity_(granularity),
+      handlers_(), schedule_times_(), id_factory_() {}
     virtual ~Timer() {}
     int Init(Loop &l);
     void Fin();
     inline Fd fd() const { return fd_; }
-    int Start(const Handler &h, qrpc_time_t at);
+    Id Start(const Handler &h, qrpc_time_t at);
+    bool Stop(Id id);
     void Poll();
     // implement IoProcessor
     void OnEvent(Fd, const Event &) override;
 		void OnClose(Fd) override { Fin(); }
     int OnOpen(Fd) override { return QRPC_OK; }
     // implement AlarmProcessor
-    int Set(const Handler &h, qrpc_time_t at) override {
+    Id Set(const Handler &h, qrpc_time_t at) override {
       return Start(h, at);
     }
+    bool Cancel(Id id) override { return Stop(id); }
   private:
     Fd fd_;
     qrpc_time_t granularity_;
-    std::multimap<qrpc_time_t, Handler> handlers_;
-    #if defined(__ENABLE_KQUEUE__)
-    static IdFactory<uint64_t> id_factory_;
-    #endif
+    std::multimap<qrpc_time_t, Entry> handlers_;
+    std::map<uint64_t, qrpc_time_t> schedule_times_;
+    IdFactory<Id> id_factory_;
   };
 }

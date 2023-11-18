@@ -163,7 +163,7 @@ namespace logger {
 
 #if !defined(TRACK)
   #if !defined(NDEBUG)
-    #define TRACK(...) { json j; ::base::logger::trace(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, j); }
+    #define TRACK(...) { ::base::logger::trace(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, "track"); }
   #else
     #define TRACK(...) // fprintf(stderr, __VA_ARGS__)
   #endif
