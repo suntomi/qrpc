@@ -21,6 +21,22 @@ namespace base {
     inline uint64_t gen64() {
       return gen<uint64_t>(0, UINT64_MAX);
     }
+    inline std::string bytes(size_t len) {
+      // generate random bytes from std::mt19937
+      std::string ret(len, 0);
+      for (size_t i = 0; i < len; ++i) {
+        ret[i] = gen<uint8_t>(0, UINT8_MAX);
+      }
+      return ret;
+    }
+    inline std::string str(size_t len) {
+      // generate random string (visible characters) from std::mt19937
+      std::string ret(len, 0);
+      for (size_t i = 0; i < len; ++i) {
+        ret[i] = gen((uint8_t)'!', (uint8_t)'~');
+      }
+      return ret;
+    }
   }
 
   namespace sha1 {
@@ -36,54 +52,54 @@ namespace base {
     }
   }
   namespace base64 {
-      static const char kBase64Chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static const char kBase64Chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-      inline int buffsize(int len) {
-        return (len + 2) / 3 * 4 + 1;
+    inline int buffsize(int len) {
+      return (len + 2) / 3 * 4 + 1;
+    }
+
+    inline int encode(const uint8_t* src, int len, char* dst, int dstlen) {
+      int i;
+      uint8_t a, b, c;
+      char* p = dst;
+
+      for (i = 0; i < len; i += 3) {
+        a = src[i];
+        b = (i + 1 < len) ? src[i + 1] : 0;
+        c = (i + 2 < len) ? src[i + 2] : 0;
+
+        *p++ = kBase64Chars[a >> 2];
+        *p++ = kBase64Chars[((a & 0x03) << 4) | (b >> 4)];
+        *p++ = (i + 1 < len) ? kBase64Chars[((b & 0x0f) << 2) | (c >> 6)] : '=';
+        *p++ = (i + 2 < len) ? kBase64Chars[c & 0x3f] : '=';
       }
 
-      inline int encode(const uint8_t* src, int len, char* dst, int dstlen) {
-        int i;
-        uint8_t a, b, c;
-        char* p = dst;
+      *p = '\0';
 
-        for (i = 0; i < len; i += 3) {
-          a = src[i];
-          b = (i + 1 < len) ? src[i + 1] : 0;
-          c = (i + 2 < len) ? src[i + 2] : 0;
+      return p - dst;
+    }
 
-          *p++ = kBase64Chars[a >> 2];
-          *p++ = kBase64Chars[((a & 0x03) << 4) | (b >> 4)];
-          *p++ = (i + 1 < len) ? kBase64Chars[((b & 0x0f) << 2) | (c >> 6)] : '=';
-          *p++ = (i + 2 < len) ? kBase64Chars[c & 0x3f] : '=';
+    inline int decode(const char* src, int len, uint8_t* dst, int dstlen) {
+      int i;
+      uint8_t a, b, c, d;
+      uint8_t* p = dst;
+
+      for (i = 0; i < len; i += 4) {
+        a = (src[i] == '=') ? 0 : strchr(kBase64Chars, src[i]) - kBase64Chars;
+        b = (src[i + 1] == '=') ? 0 : strchr(kBase64Chars, src[i + 1]) - kBase64Chars;
+        c = (src[i + 2] == '=') ? 0 : strchr(kBase64Chars, src[i + 2]) - kBase64Chars;
+        d = (src[i + 3] == '=') ? 0 : strchr(kBase64Chars, src[i + 3]) - kBase64Chars;
+
+        *p++ = (a << 2) | (b >> 4);
+        if (i + 2 < len && src[i + 2] != '=') {
+            *p++ = ((b & 0x0f) << 4) | (c >> 2);
         }
-
-        *p = '\0';
-
-        return p - dst;
-      }
-
-      inline int decode(const char* src, int len, uint8_t* dst, int dstlen) {
-        int i;
-        uint8_t a, b, c, d;
-        uint8_t* p = dst;
-
-        for (i = 0; i < len; i += 4) {
-          a = (src[i] == '=') ? 0 : strchr(kBase64Chars, src[i]) - kBase64Chars;
-          b = (src[i + 1] == '=') ? 0 : strchr(kBase64Chars, src[i + 1]) - kBase64Chars;
-          c = (src[i + 2] == '=') ? 0 : strchr(kBase64Chars, src[i + 2]) - kBase64Chars;
-          d = (src[i + 3] == '=') ? 0 : strchr(kBase64Chars, src[i + 3]) - kBase64Chars;
-
-          *p++ = (a << 2) | (b >> 4);
-          if (i + 2 < len && src[i + 2] != '=') {
-              *p++ = ((b & 0x0f) << 4) | (c >> 2);
-          }
-          if (i + 3 < len && src[i + 3] != '=') {
-              *p++ = ((c & 0x03) << 6) | d;
-          }
+        if (i + 3 < len && src[i + 3] != '=') {
+            *p++ = ((c & 0x03) << 6) | d;
         }
-
-        return p - dst;
       }
+
+      return p - dst;
+    }
   }    
 }

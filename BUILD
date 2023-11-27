@@ -34,13 +34,16 @@ cc_binary(
   name = "server",
   srcs = glob([
     "examples/server/main.cpp",
-    "src/qrpc.h", "src/qrpc.cpp",
+    "src/qrpc.cpp",
     "src/base/**",
+    "src/ext/libsdptransform/src/*.cpp",
+    "src/qrpc.h", 
     "src/ext/mediasoup/include/*.hpp",
     "src/ext/mediasoup/include/**/*.hpp",
     "src/ext/moodycamel/*.h",
     "src/ext/hedley/*.h",
-    "src/ext/sha1/*.h"
+    "src/ext/sha1/*.h",
+    "src/ext/libsdptransform/include/*.hpp",
   ]),
   copts = [
     "-std=c++17",
@@ -73,6 +76,7 @@ cc_binary(
     "src/ext/mediasoup/worker/subprojects/libsrtp-2.5.0/include",
     "src/ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
     "src/ext/mediasoup/worker/subprojects/usrsctp-4e06feb01cadcd127d119486b98a4bd3d64aa1e7/usrsctplib",
+    "src/ext/libsdptransform/include",
   ],
   deps = [":mediasoup", "//src/ext/cares:ares"],
   linkstatic = True,

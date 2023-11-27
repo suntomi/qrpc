@@ -31,12 +31,11 @@ void* AlignedAlloc(size_t size, size_t alignment) {
   // crash if we encounter a failed allocation; maintaining consistent behavior
   // with a normal allocation failure in Chrome.
   if (!ptr) {
-    TRACE({
+    logger::die({
         {"ev", "If you crashed here, your aligned allocation is incorrect"},
         {"size", size},
         {"alignment", alignment}
     });
-    ASSERT(false);
   }
   // Sanity check alignment just to be safe.
   ASSERT((reinterpret_cast<uintptr_t>(ptr) & (alignment - 1)) == 0U);

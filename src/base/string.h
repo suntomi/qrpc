@@ -28,6 +28,12 @@ namespace str {
     va_end(ap);
     return r;
   }
+  template<class... Args>
+  static std::string Format(const char *fmt, const Args... args) {
+    static thread_local char buff[1024];
+    Vprintf(buff, sizeof(buff), fmt, args...);
+    return std::string(buff);
+  }
   inline int CmpNocase(const std::string &a, const std::string &b, size_t n) {
     return strncasecmp(a.c_str(), b.c_str(), n);
   }

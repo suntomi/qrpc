@@ -138,9 +138,11 @@ namespace base {
         };        
     public:
         TcpListener(Loop &l, FactoryMethod m) : 
-            SessionFactory(l, m), fd_(INVALID_FD) {}
+            SessionFactory(l, m), fd_(INVALID_FD), port_(0) {}
         Fd fd() const { return fd_; }
+        int port() const { return port_; }
         bool Listen(int port) {
+            port_ = port;
             if ((fd_ = Syscall::Listen(port)) < 0) {
                 logger::error({{"ev","Syscall::Listen() fails"},{"port",port},{"errno",Syscall::Errno()}});
                 return fd_;
@@ -209,6 +211,7 @@ namespace base {
         }        
     protected:
         Fd fd_;
+        int port_;
     };
     template <class S>
     class TcpServer : public TcpListener {
@@ -240,7 +243,7 @@ namespace base {
         };
         struct Config {
             AlarmProcessor *alarm_processor;
-            qrpc_time_t session_timeout_sec;
+            qrpc_time_t session_timeout;
         };
     public:
         class UdpSession : public Session {
@@ -348,24 +351,39 @@ namespace base {
             qrpc_time_t last_active_;
         };
     public:
-        UdpListener(Loop &l, FactoryMethod m, Config *config = nullptr) :
-            SessionFactory(l, m), fd_(INVALID_FD), 
+        UdpListener(Loop &l, FactoryMethod m, const Config *config = nullptr) :
+            SessionFactory(l, m), fd_(INVALID_FD), port_(0),
             #if defined(__QRPC_USE_RECVMMSG__)
                 batch_size_(256),
             #else
                 batch_size_(1),
             #endif
             alarm_processor_(config != nullptr ? config->alarm_processor : nullptr), 
-            timeout_(qrpc_time_sec(config != nullptr ? config->session_timeout_sec : 120)), 
+            timeout_(config != nullptr ? config->session_timeout : qrpc_time_sec(120)), 
             factory_method_(m),
             read_packets_(batch_size_), read_buffers_(batch_size_),
             write_buffers_(batch_size_) {
             SetupPacket();
         }
+        UdpListener(UdpListener &&rhs) : 
+            SessionFactory(rhs.loop(), rhs.factory_method_), fd_(rhs.fd_), port_(rhs.port_),
+            batch_size_(rhs.batch_size_), alarm_processor_(rhs.alarm_processor_), 
+            timeout_(rhs.timeout_), factory_method_(rhs.factory_method_),
+            read_packets_(std::move(rhs.read_packets_)), read_buffers_(std::move(rhs.read_buffers_)),
+            write_buffers_(std::move(rhs.write_buffers_)) {
+            rhs.fd_ = INVALID_FD;
+            rhs.port_ = 0;
+            rhs.batch_size_ = 0;
+            rhs.alarm_processor_ = nullptr;
+            rhs.timeout_ = 0;
+            rhs.factory_method_ = nullptr;
+        }
         Fd fd() const { return fd_; }
+        int port() const { return port_; }
         qrpc_time_t timeout() const { return timeout_; }
         AlarmProcessor *alarm_processor() { return alarm_processor_; }
         bool Listen(int port) {
+            port_ = port;
             // create udp socket
             if ((fd_ = Syscall::CreateUDPSocket(AF_INET, &overflow_supported_)) < 0) {
                 return false;
@@ -415,6 +433,7 @@ namespace base {
         }
     protected:
         Fd fd_;
+        int port_;
         AlarmProcessor *alarm_processor_;
         int batch_size_;
         qrpc_time_t timeout_;
@@ -449,8 +468,8 @@ namespace base {
     template <class S>
     class UdpServer : public UdpListener {
     public:
-        UdpServer(Loop &l, FactoryMethod m, Config *c = nullptr) : UdpListener(l, m, c) {}
-        UdpServer(Loop &l, Config *c = nullptr) : UdpListener(l, [this](Fd fd, const Address &a) {
+        UdpServer(Loop &l, FactoryMethod m, const Config *c = nullptr) : UdpListener(l, m, c) {}
+        UdpServer(Loop &l, const Config *c = nullptr) : UdpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<Session, S>(), "S must be a descendant of Session");
             return new S(*this, fd, a);
         }, c) {}

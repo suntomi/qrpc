@@ -12,7 +12,7 @@
 namespace base {
   /* Static. */
 
-  static constexpr size_t CheckerInterval{ 10u }; // In ms.
+  // static constexpr size_t CheckerInterval{ 10u }; // In ms.
   static std::mutex GlobalSyncMutex;
   static size_t GlobalInstances{ 0u };
 

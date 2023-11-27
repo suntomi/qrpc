@@ -20,7 +20,7 @@ namespace base {
     public:
       TcpSession(SessionFactory &f, Fd fd, const Address &addr) : 
         TcpListener::TcpSession(f, fd, addr), connection_(nullptr) {}
-        int OnRead(const char *p, size_t sz) override;
+      int OnRead(const char *p, size_t sz) override;
     private:
       Connection *connection_;
     };
@@ -44,7 +44,7 @@ namespace base {
     };
     class UdpPort : public BaseUdpServer {
     public:
-      UdpPort(WebRTCServer &ws) : BaseUdpServer(ws.loop()), webrtc_server_(ws) {}
+      UdpPort(WebRTCServer &ws) : BaseUdpServer(ws.loop(), &ws.udp_listener_config()), webrtc_server_(ws) {}
       WebRTCServer &webrtc_server() { return webrtc_server_; }
     private:
       WebRTCServer &webrtc_server_;
@@ -62,7 +62,11 @@ namespace base {
       ~Connection() {}
     public:
       bool connected() const;
+      WebRTCServer &server() { return sv_; }
+      const WebRTCServer &server() const { return sv_; }
+      const IceServer *ice_server() const { return ice_server_.get(); }
     public:
+      int Init(std::string &uflag, std::string &pwd);
       int RunDtlsTransport();
       Stream *NewStream(Stream::Config &c, Stream::Handler &h);
     public:
@@ -134,11 +138,11 @@ namespace base {
     protected:
       qrpc_time_t last_active_;
       WebRTCServer &sv_;
-      IceServer *ice_server_; // ICE
+      std::unique_ptr<IceServer> ice_server_; // ICE
       RTC::DtlsTransport::Role dtls_role_;
-      RTC::DtlsTransport *dtls_transport_; // DTLS
-      SctpAssociation *sctp_association_; // SCTP
-      RTC::SrtpSession *srtp_send_, *srtp_recv_; // SRTP
+      std::unique_ptr<RTC::DtlsTransport> dtls_transport_; // DTLS
+      std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
+      std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
       bool sctp_connected_;
       std::map<Stream::Id, Stream> streams_;
       IdFactory<Stream::Id> stream_id_factory_;
@@ -151,7 +155,7 @@ namespace base {
       STRING_EMPTY = 56,
       BINARY_EMPTY = 57,
     };
-    struct Config {
+    struct Port {
       enum Protocol {
         NONE = 0,
         UDP = 1,
@@ -162,14 +166,33 @@ namespace base {
       int port;
       uint32_t priority;
     };
+    struct Config {
+      std::vector<Port> ports;
+      std::string ca, cert, key;
+      size_t max_outgoing_stream_size, initial_incoming_stream_size;
+      size_t sctp_send_buffer_size;
+      qrpc_time_t udp_session_timeout;
+
+      // derived from above config values
+      std::string fingerprint;
+    public:
+      int Derive();
+    };
   public:
     WebRTCServer(
-      Loop &l, AlarmProcessor *alarm_processor, std::vector<Config> configs
-    ) : loop_(l), configs_(configs), alarm_processor_(alarm_processor),
-        tcp_ports_(), udp_ports_(), connections_() {}
+      Loop &l, AlarmProcessor *alarm_processor, Config &&config
+    ) : loop_(l), config_(config), alarm_processor_(alarm_processor),
+        tcp_ports_(), udp_ports_(), connections_() { config_.Derive(); }
     ~WebRTCServer() {}
   public:
     Loop &loop() { return loop_; }
+    const Config &config() const { return config_; }
+    uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
+    uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
+    const std::string &fingerprint() const { return config_.fingerprint; }
+    const UdpPort::Config udp_listener_config() const {
+      return { .alarm_processor = alarm_processor_, .session_timeout = config_.udp_session_timeout };
+    }
   public:
     int Init();
     void Fin();
@@ -182,11 +205,11 @@ namespace base {
     }
   protected:
     Loop &loop_;
-    std::vector<Config> configs_;
+    Config config_;
     AlarmProcessor *alarm_processor_;
     std::vector<TcpPort> tcp_ports_;
     std::vector<UdpPort> udp_ports_;
-    std::map<IceUFlag, Connection> connections_;
+    std::map<IceUFlag, Connection*> connections_;
   private:
     static int GlobalInit(AlarmProcessor *a);
     static void GlobalFin();

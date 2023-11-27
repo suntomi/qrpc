@@ -7,3 +7,6 @@
 [submodule "src/ext/moodycamel"]
 	path = src/ext/moodycamel
 	url = https://github.com/cameron314/concurrentqueue.git
+[submodule "src/ext/libsdptransform"]
+	path = src/ext/libsdptransform
+	url = https://github.com/ibc/libsdptransform.git

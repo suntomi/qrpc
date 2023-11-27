@@ -1,6 +1,8 @@
 #include "base/defs.h"
+#include "base/crypto.h"
 #include "base/webrtc.h"
 #include "base/webrtc/sctp.h"
+#include "base/webrtc/sdp.h"
 
 #include "common.hpp"
 #include "MediaSoupErrors.hpp"
@@ -24,12 +26,53 @@ int WebRTCServer::Init() {
   if ((r = GlobalInit(alarm_processor_)) < 0) {
     return r;
   }
+  // setup TCP/UDP ports
+  for (auto port : config_.ports) {
+    switch (port.protocol) {
+      case Port::Protocol::UDP: {
+        auto &p = udp_ports_.emplace_back(*this);
+      if (!p.Listen(port.port)) {
+          logger::error({{"ev","fail to listen"},{"port",port.port}});
+          return r;
+        }
+      } break;
+      case Port::Protocol::TCP: {
+        auto &p = tcp_ports_.emplace_back(*this);
+        if (!p.Listen(port.port)) {
+          logger::error({{"ev","fail to listen"},{"port",port.port}});
+          return r;
+        }
+      } break;
+      default:
+        logger::error({{"ev","unsupported protocol"},{"proto",port.protocol}});
+        return QRPC_ENOTSUPPORT;
+    }
+  }
   return QRPC_OK;
 }
 void WebRTCServer::Fin() {
   GlobalFin();
+  // cleanup TCP/UDP ports
 }
 int WebRTCServer::NewConnection(const std::string &client_sdp, std::string &server_sdp) {
+  auto c = new Connection(*this, RTC::DtlsTransport::Role::SERVER);
+  if (c == nullptr) {
+    logger::error({{"ev","fail to allocate connection"}});
+    return QRPC_EALLOC;
+  }
+  int r;
+  std::string uflag, pwd;
+  if ((r = c->Init(uflag, pwd)) < 0) {
+    logger::error({{"ev","fail to init connection"},{"rc",r}});
+    delete c;
+    return QRPC_EINVAL;
+  }
+  SDP sdp(client_sdp);
+  if (!sdp.Answer(*c, server_sdp)) {
+    logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
+    delete c;
+    return QRPC_EINVAL;
+  }
   return QRPC_OK;
 }
 static inline WebRTCServer::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* packet) {
@@ -68,7 +111,7 @@ WebRTCServer::Connection *WebRTCServer::FindFromStunRequest(const uint8_t *p, si
     });
     return nullptr;
   }
-  return &it->second;
+  return it->second;
 }
 
 int WebRTCServer::GlobalInit(AlarmProcessor *a) {
@@ -106,6 +149,40 @@ void WebRTCServer::GlobalFin() {
 	}
 }
 
+// WebRTCServer::Config
+class DummyDtlsTransportListener : public RTC::DtlsTransport::Listener {
+  void OnDtlsTransportConnecting(const RTC::DtlsTransport*) override {}
+  void OnDtlsTransportConnected(
+    const RTC::DtlsTransport*,
+    RTC::SrtpSession::CryptoSuite,
+    uint8_t*,
+    size_t,
+    uint8_t*,
+    size_t,
+    std::string&) override {}
+  void OnDtlsTransportFailed(const RTC::DtlsTransport*) override {}
+  void OnDtlsTransportClosed(const RTC::DtlsTransport*) override {}
+  void OnDtlsTransportSendData(
+    const RTC::DtlsTransport*, const uint8_t*, size_t) override {}
+  void OnDtlsTransportApplicationDataReceived(
+    const RTC::DtlsTransport*, const uint8_t*, size_t) override {}
+};
+int WebRTCServer::Config::Derive() {
+  // create dummy DtlsTransport.
+  // GetLocalFingerprints is instance method even through DtlsTransport::localFingerprints is static variable
+  std::unique_ptr<RTC::DtlsTransport> dtls(new RTC::DtlsTransport(
+    new DummyDtlsTransportListener()
+  ));
+  for (auto fp : dtls->GetLocalFingerprints()) {
+    if (fp.algorithm == RTC::DtlsTransport::FingerprintAlgorithm::SHA256) {
+      fingerprint = fp.value;
+      return QRPC_OK;
+    }
+  }
+  logger::die({{"ev","no SHA256 fingerprint found"}}); // should not happen
+  return QRPC_EDEPS;
+}
+
 // WebRTCServer::UdpSession/TcpSession
 int WebRTCServer::TcpSession::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
@@ -139,6 +216,41 @@ bool WebRTCServer::Connection::connected() const {
       ice_server_->GetState() == IceServer::IceState::COMPLETED
     ) && dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED
   );
+}
+int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
+  if (ice_server_ != nullptr) {
+    logger::warn({{"ev","already init"}});
+    return QRPC_OK;
+  }
+  uflag = random::str(32);
+  pwd = random::str(32);
+  // create ICE server
+  ice_server_.reset(new IceServer(this, uflag, pwd));
+  if (ice_server_ == nullptr) {
+    logger::die({{"ev","fail to create ICE server"}});
+    return QRPC_EALLOC;
+  }
+  // create DTLS transport
+  dtls_transport_.reset(new RTC::DtlsTransport(this));
+  if (dtls_transport_ == nullptr) {
+    logger::die({{"ev","fail to create DTLS transport"}});
+    return QRPC_EALLOC;
+  }
+  // create SCTP association
+  sctp_association_.reset(
+    new SctpAssociation(
+      this, 
+      server().config().max_outgoing_stream_size,
+      server().config().initial_incoming_stream_size,
+      server().config().sctp_send_buffer_size,
+      server().config().sctp_send_buffer_size,
+      true)
+  );
+  if (sctp_association_ == nullptr) {
+    logger::die({{"ev","fail to create SCTP association"}});
+    return QRPC_EALLOC;
+  }
+  return QRPC_OK;
 }
 Stream *WebRTCServer::Connection::NewStream(Stream::Config &c, Stream::Handler &h) {
   if (c.streamId == 0) {
@@ -452,29 +564,21 @@ void WebRTCServer::Connection::OnDtlsTransportConnected(
   std::string& remoteCert) {
   TRACK();
   // Close it if it was already set and update it.
-  if (srtp_send_ != nullptr) {
-    delete srtp_send_;
-    srtp_send_ = nullptr;
-  }
-  if (srtp_recv_ != nullptr) {
-    delete srtp_recv_;
-    srtp_recv_ = nullptr;
-  }
+  // old pointer will be deleted by unique_ptr.reset()
   try {
-    srtp_send_ = new RTC::SrtpSession(
-      RTC::SrtpSession::Type::OUTBOUND, srtpCryptoSuite, srtpLocalKey, srtpLocalKeyLen);
+    srtp_send_.reset(new RTC::SrtpSession(
+      RTC::SrtpSession::Type::OUTBOUND, srtpCryptoSuite, srtpLocalKey, srtpLocalKeyLen));
   } catch (const MediaSoupError& error) {
     logger::error({{"ev","error creating SRTP sending session"},{"reason",error.what()}});
   }
   try {
-    srtp_recv_ = new RTC::SrtpSession(
-      RTC::SrtpSession::Type::INBOUND, srtpCryptoSuite, srtpRemoteKey, srtpRemoteKeyLen);
+    srtp_recv_.reset(new RTC::SrtpSession(
+      RTC::SrtpSession::Type::INBOUND, srtpCryptoSuite, srtpRemoteKey, srtpRemoteKeyLen));
     // may need to implement equivalent
     // RTC::Transport::Connected();
   } catch (const MediaSoupError& error) {
     logger::error({{"ev","error creating SRTP receiving session"},{"reason",error.what()}});
-    delete srtp_send_;
-    srtp_send_ = nullptr;
+    srtp_send_.reset();
   }  
 }
 // The DTLS connection has been closed as the result of an error (such as a

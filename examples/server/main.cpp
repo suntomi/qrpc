@@ -5,6 +5,7 @@
 #include "base/http.h"
 #include "base/webrtc.h"
 #include "base/string.h"
+#include "base/webrtc/sdp.h"
 #include "nlohmann/json.hpp"
 
 using json = nlohmann::json;
@@ -48,10 +49,20 @@ int main(int argc, char *argv[]) {
         logger::error("fail to start timer");
         exit(1);
     }
+    if (!SDP::Test()) {
+        logger::info("fail sdp test");
+        exit(0);
+    }
     HttpServer s(l);
-    WebRTCServer w(l, &t, {
-        {.protocol = WebRTCServer::Config::UDP, .ip = "", .port = 9999, .priority = 1},
-        {.protocol = WebRTCServer::Config::TCP, .ip = "", .port = 9999, .priority = 100}
+    WebRTCServer w(l, &t, WebRTCServer::Config {
+        .ports = {
+            {.protocol = WebRTCServer::Port::UDP, .ip = "", .port = 11111, .priority = 1},
+            {.protocol = WebRTCServer::Port::TCP, .ip = "", .port = 11111, .priority = 100}
+        },
+        .ca = "", .cert = "", .key = "",
+        .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
+        .sctp_send_buffer_size = 256 * 1024,
+        .udp_session_timeout = qrpc_time_sec(30),
     });
     if (w.Init() < 0) {
         logger::error("fail to init webrtc");
@@ -96,7 +107,7 @@ int main(int argc, char *argv[]) {
         logger::error("fail to listen");
         exit(1);
     }
-    UdpListener::Config c = { .alarm_processor = &t, .session_timeout_sec = 5};
+    UdpListener::Config c = { .alarm_processor = &t, .session_timeout = qrpc_time_sec(5)};
     AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
