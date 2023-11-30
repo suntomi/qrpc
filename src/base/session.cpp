@@ -61,9 +61,9 @@ namespace base {
         }
       }
       CloseReason detail = CreateAresCloseReason(status);
-      std::shared_ptr<Session> s = factory_method_(INVALID_FD, Address());
+      Session *s = factory_method_(INVALID_FD, Address());
       s->Close(detail);
-      // s is freed inside Close call.
+      delete s;
     }
   };
 
@@ -97,7 +97,9 @@ namespace base {
       auto &h = read_packets_[i].msg_hdr;
       auto a = Address(h.msg_name, h.msg_namelen);
       auto exists = sessions_.find(a);
-      std::shared_ptr<Session> s;
+      // this also acts as anchor that prevents deletion of session pointer
+      // in Session::Close call
+      Session *s;
       if (exists == sessions_.end()) {
         // use same fd of Listener
         s = Create(fd_, a, factory_method_);
@@ -105,12 +107,14 @@ namespace base {
         logger::info({{"ev", "accept"},{"proto","udp"},{"fd",fd_},{"addr",a.str()}});
         if ((r = s->OnConnect()) < 0) {
           s->Close(QRPC_CLOSE_REASON_LOCAL, r);
+          delete s;
           continue;
         }
         if (timeout() > 0) {
-          auto h = [s]() { return reinterpret_cast<UdpSession *>(s.get())->CheckTimeout(); };
+          auto h = [s]() { return dynamic_cast<UdpSession *>(s)->CheckTimeout(); };
           if (alarm_processor_.Set(h, qrpc_time_now() + timeout()) < 0) {
             s->Close(QRPC_CLOSE_REASON_LOCAL, QRPC_EALLOC, "fail to register alarm");
+            delete s;
             continue;
           }
         }
@@ -129,7 +133,7 @@ namespace base {
     mmsghdr mmsg[write_buffers_.Allocated()];
     size_t count = 0;
     for (auto kv : sessions_) {
-      auto s = reinterpret_cast<UdpSession *>(kv.second);
+      auto s = dynamic_cast<UdpSession *>(kv.second);
       for (auto &iov : s->write_vecs()) {
         auto &h = mmsg[count++].msg_hdr;
         h.msg_name = const_cast<sockaddr *>(s->addr().sa());
@@ -145,7 +149,7 @@ namespace base {
       logger::die({{"ev", "Syscall::SendTo fails"}, {"errno", Syscall::Errno()}});
     }
     for (auto kv : sessions_) {
-      auto s = reinterpret_cast<UdpSession *>(kv.second);
+      auto s = dynamic_cast<UdpSession *>(kv.second);
       s->Reset();
     }
   #endif

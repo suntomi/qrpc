@@ -64,7 +64,7 @@ inline static int onRecvSctpData(
 		const uint32_t ppid     = ntohl(rcv.rcv_ppid);
 		const uint16_t ssn      = rcv.rcv_ssn;
 
-		base::logger::log(
+		base::logger::logf(
       base::logger::level::debug,
 		  "sctp data chunk received [length:%zu, streamId:%" PRIu16 ", SSN:%" PRIu16 ", TSN:%" PRIu32
 		  ", PPID:%" PRIu32 ", context:%" PRIu32 ", flags:%d]",

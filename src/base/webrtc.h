@@ -188,7 +188,7 @@ namespace base {
     WebRTCServer(
       Loop &l, AlarmProcessor &alarm_processor, Config &&config
     ) : loop_(l), config_(config), alarm_processor_(alarm_processor),
-        tcp_ports_(), udp_ports_(), connections_() { config_.Derive(alarm_processor); }
+        tcp_ports_(), udp_ports_(), connections_() {}
     ~WebRTCServer() {}
   public:
     Loop &loop() { return loop_; }
@@ -206,6 +206,7 @@ namespace base {
     int NewConnection(const std::string &client_sdp, std::string &server_sdp);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
     void RemoveUFlag(IceUFlag &uflag) {
+      // raw pointer in map might be freed
       if (connections_.erase(uflag) == 0) {
         logger::warn({{"ev","fail to remove uflag"},{"uflag",uflag}});
       }

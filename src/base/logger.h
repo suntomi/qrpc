@@ -99,7 +99,7 @@ namespace logger {
   }
 
   template<class... Args>
-  inline void trace(
+  inline void tracef(
     level::def lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
     const std::string &fmt, const Args... args
   ) {
@@ -116,7 +116,7 @@ namespace logger {
   }
 
   template<class... Args>
-  inline void log(
+  inline void logf(
     level::def lv, const std::string &fmt, const Args... args
   ) {
       char buffer[1024];
@@ -139,15 +139,15 @@ namespace logger {
 }
 
 #if !defined(NDEBUG)
-  #define QRPC_LOG(level__, ...) { ::base::logger::log(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+  #define QRPC_LOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
 #else
-  #define QRPC_LOG(level__, ...) { ::base::logger::log(::base::logger::level::level__, __VA_ARGS__); }
+  #define QRPC_LOG(level__, ...) { ::base::logger::logf(::base::logger::level::level__, __VA_ARGS__); }
 #endif
 #if defined(VERBOSE)
   #if !defined(NDEBUG)
-    #define QRPC_VLOG(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
+    #define QRPC_VLOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
   #else
-    #define QRPC_VLOG(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __VA_ARGS__); } 
+    #define QRPC_VLOG(level__, ...) { ::base::logger::logf(::base::logger::level::level__, __VA_ARGS__); } 
   #endif
 #else
   #define QRPC_VLOG(level__, ...)
@@ -155,7 +155,7 @@ namespace logger {
 
 #if !defined(TRACE)
   #if !defined(NDEBUG)
-    #define TRACE(...) { ::base::logger::trace(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+    #define TRACE(...) { ::base::logger::tracef(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
   #else
     #define TRACE(...) // fprintf(stderr, __VA_ARGS__)
   #endif
@@ -163,7 +163,7 @@ namespace logger {
 
 #if !defined(TRACK)
   #if !defined(NDEBUG)
-    #define TRACK(...) { ::base::logger::trace(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, "track"); }
+    #define TRACK(...) { ::base::logger::tracef(::base::logger::level::debug, __FILE__, __LINE__, __func__, 0, "track"); }
   #else
     #define TRACK(...) // fprintf(stderr, __VA_ARGS__)
   #endif

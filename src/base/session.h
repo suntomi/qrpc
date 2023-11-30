@@ -61,7 +61,7 @@ namespace base {
             Address addr_;
             std::unique_ptr<CloseReason> close_reason_;
         };
-        typedef std::function<std::shared_ptr<Session> (Fd, const Address &)> FactoryMethod;
+        typedef std::function<Session *(Fd, const Address &)> FactoryMethod;
     public:
         SessionFactory(Loop &l, FactoryMethod &m) : 
             sessions_(), loop_(l), factory_method_(m) {}
@@ -69,13 +69,13 @@ namespace base {
         Loop &loop() { return loop_; }
         template <class F> F &to() { return static_cast<F&>(*this); }
         template <class F> const F &to() const { return static_cast<const F&>(*this); }
-        std::shared_ptr<Session> Open(const Address &a, FactoryMethod m) {
+        Session *Open(const Address &a, FactoryMethod m) {
             Fd fd = Syscall::Connect(a.sa(), a.salen());
             return Create(fd, a, m);
         }
         bool Resolve(int family_pref, const std::string &host, int port, FactoryMethod m);
     protected:
-        virtual std::shared_ptr<Session> Create(int fd, const Address &a, FactoryMethod &m) {
+        virtual Session *Create(int fd, const Address &a, FactoryMethod &m) {
             auto s = m(fd, a);
             sessions_[a] = s;
             return s;
@@ -84,7 +84,8 @@ namespace base {
             sessions_.erase(s.addr());
         }
     protected:
-        std::map<Address, std::shared_ptr<Session>> sessions_;
+        // deletion timing of Session* is severe, so we want to have full control of it.
+        std::map<Address, Session*> sessions_;
         FactoryMethod factory_method_;
         Loop &loop_;
     };
@@ -198,10 +199,10 @@ namespace base {
             return QRPC_OK;
         }
         // implements SessionFactory
-        std::shared_ptr<Session> Create(Fd fd, const Address &a, FactoryMethod &m) override {
+       Session *Create(Fd fd, const Address &a, FactoryMethod &m) override {
             auto s = m(fd, a);
             sessions_[a] = s;
-            if (loop_.Add(s->fd(), reinterpret_cast<TcpSession *>(s.get()), Loop::EV_READ | Loop::EV_WRITE) < 0) {
+            if (loop_.Add(s->fd(), dynamic_cast<TcpSession *>(s), Loop::EV_READ | Loop::EV_WRITE) < 0) {
                 Close(*s);
                 return nullptr;
             }
@@ -214,7 +215,7 @@ namespace base {
                 loop_.Del(fd);
                 Syscall::Close(fd);
             }
-        }        
+        }
     protected:
         Fd fd_;
         int port_;
@@ -225,7 +226,7 @@ namespace base {
         TcpServer(Loop &l, FactoryMethod m) : TcpListener(l, m) {}
         TcpServer(Loop &l) : TcpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<TcpSession, S>(), "S must be a descendant of TcpSession");
-            return std::shared_ptr<Session>(new S(*this, fd, a));
+            return new S(*this, fd, a);
         }) {}
     };
     class UdpListener : public SessionFactory, public IoProcessor {
@@ -293,6 +294,7 @@ namespace base {
             bool AllocIovec() {
                 auto b = listener().write_buffers_.Alloc();
                 if (b == nullptr) {
+                    logger::error({{"ev","write_buffers_.Alloc fails"}});
                     ASSERT(false);
                     return false;
                 }
@@ -468,7 +470,7 @@ namespace base {
         typedef std::function<int (AdhocUdpSession &, const char *, size_t)> Handler;
         AdhocUdpServer(Loop &l, Handler h, const Config config = Config::Default()) :
             UdpListener(l, [this](Fd fd, const Address &a) {
-                return std::shared_ptr<Session>(new AdhocUdpSession(*this, fd, a));
+                return new AdhocUdpSession(*this, fd, a);
             }, config), handler_(h) {}
         inline Handler &handler() { return handler_; }
     private:
@@ -481,7 +483,7 @@ namespace base {
         UdpServer(Loop &l, FactoryMethod m, const Config c = Config::Default()) : UdpListener(l, m, c) {}
         UdpServer(Loop &l, const Config c = Config::Default()) : UdpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<Session, S>(), "S must be a descendant of Session");
-            return std::shared_ptr<Session>(new S(*this, fd, a));
+            return new S(*this, fd, a);
         }, c) {}
     };
     // external typedef

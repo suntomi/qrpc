@@ -479,7 +479,6 @@ namespace base {
                     break;
                 }
             }
-            delete this;
         }
     public:
         inline void init_frame() { m_flen = 0; m_read = 0; m_mask_idx = 0; }

@@ -9,6 +9,8 @@
 
 namespace base {
 class Loop : public LoopImpl, IoProcessor {
+  // because objects that behave as IoProcessor are allocated both on heap and stack,
+  // using smart pointer like shared_ptr is not easy.
   IoProcessor **processors_;
   int max_nfd_;
   AsyncResolver ares_;

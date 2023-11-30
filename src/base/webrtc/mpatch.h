@@ -15,28 +15,28 @@
 #if defined(MS_ERROR)
 #undef MS_ERROR
 #endif
-#define MS_ERROR(desc, ...) \
+#define MS_ERROR(...) \
 	do \
 	{ \
-		QRPC_LOG(error, desc, __VA_ARGS__); \
+		QRPC_LOG(error, __VA_ARGS__); \
 	} \
 	while (false)
 #if defined(MS_DEBUG_TAG)
 #undef MS_DEBUG_TAG
 #endif
-#define MS_DEBUG_TAG(tag, desc, ...) \
+#define MS_DEBUG_TAG(tag, ...) \
 	do \
 	{ \
-		QRPC_LOG(debug, desc, __VA_ARGS__); \
+		QRPC_LOG(debug, __VA_ARGS__); \
 	} \
 	while (false)
 #if defined(MS_WARN_TAG)
 #undef MS_WARN_TAG
 #endif
-#define MS_WARN_TAG(tag, desc, ...) \
+#define MS_WARN_TAG(tag, ...) \
   do \
   { \
-    QRPC_LOG(warn, desc, __VA_ARGS__); \
+    QRPC_LOG(warn, __VA_ARGS__); \
   } \
   while (false)
 #if defined(MS_TRACE)

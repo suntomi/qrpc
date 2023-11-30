@@ -2,7 +2,6 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "base/webrtc/dtls.h"
-#include "base/webrtc/mpatch.h"
 #include "MediaSoupErrors.hpp"
 #include "Settings.hpp"
 #include "Utils.hpp"
@@ -11,6 +10,9 @@
 #include <uv.h>
 #include <cstdio>  // std::snprintf(), std::fopen()
 #include <cstring> // std::memcpy(), std::strcmp()
+
+// need to put last for overriding MS_XXX macro (because Logger.hpp also undef MS_XXX macro)
+#include "base/webrtc/mpatch.h"
 
 #define LOG_OPENSSL_ERROR(desc)                                                                    \
 	do                                                                                               \

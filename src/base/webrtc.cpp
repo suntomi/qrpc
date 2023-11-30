@@ -26,6 +26,9 @@ int WebRTCServer::Init() {
   if ((r = GlobalInit(alarm_processor_)) < 0) {
     return r;
   }
+  if ((r = config_.Derive(alarm_processor_)) < 0) {
+    return r;
+  }
   // setup TCP/UDP ports
   for (auto port : config_.ports) {
     switch (port.protocol) {
@@ -167,12 +170,7 @@ class DummyDtlsTransportListener : public DtlsTransport::Listener {
     const DtlsTransport*, const uint8_t*, size_t) override {}
 };
 int WebRTCServer::Config::Derive(AlarmProcessor &ap) {
-  // create dummy DtlsTransport.
-  // GetLocalFingerprints is instance method even through DtlsTransport::localFingerprints is static variable
-  std::unique_ptr<DtlsTransport> dtls(new DtlsTransport(
-    new DummyDtlsTransportListener(), ap
-  ));
-  for (auto fp : dtls->GetLocalFingerprints()) {
+  for (auto fp : DtlsTransport::GetLocalFingerprints()) {
     if (fp.algorithm == DtlsTransport::FingerprintAlgorithm::SHA256) {
       fingerprint = fp.value;
       return QRPC_OK;
@@ -230,9 +228,10 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
     return QRPC_EALLOC;
   }
   // create DTLS transport
-  dtls_transport_.reset(new DtlsTransport(this, server().alarm_processor()));
-  if (dtls_transport_ == nullptr) {
-    logger::die({{"ev","fail to create DTLS transport"}});
+  try {
+    dtls_transport_.reset(new DtlsTransport(this, server().alarm_processor()));
+  } catch (const MediaSoupError &error) {
+    logger::die({{"ev","fail to create DTLS transport"},{"reason",error.what()}});
     return QRPC_EALLOC;
   }
   // create SCTP association

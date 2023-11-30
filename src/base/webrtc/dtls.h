@@ -156,7 +156,7 @@ namespace base
 	public:
 		void Dump() const;
 		void Run(Role localRole);
-		std::vector<Fingerprint>& GetLocalFingerprints() const
+		static inline std::vector<Fingerprint>& GetLocalFingerprints()
 		{
 			return DtlsTransport::localFingerprints;
 		}
