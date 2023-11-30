@@ -55,7 +55,7 @@ void WebRTCServer::Fin() {
   // cleanup TCP/UDP ports
 }
 int WebRTCServer::NewConnection(const std::string &client_sdp, std::string &server_sdp) {
-  auto c = new Connection(*this, RTC::DtlsTransport::Role::SERVER);
+  auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::SERVER));
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return QRPC_EALLOC;
@@ -64,15 +64,14 @@ int WebRTCServer::NewConnection(const std::string &client_sdp, std::string &serv
   std::string uflag, pwd;
   if ((r = c->Init(uflag, pwd)) < 0) {
     logger::error({{"ev","fail to init connection"},{"rc",r}});
-    delete c;
     return QRPC_EINVAL;
   }
   SDP sdp(client_sdp);
   if (!sdp.Answer(*c, server_sdp)) {
     logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
-    delete c;
     return QRPC_EINVAL;
   }
+  connections_.emplace(std::move(uflag), c);
   return QRPC_OK;
 }
 static inline WebRTCServer::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* packet) {
@@ -93,7 +92,7 @@ static inline WebRTCServer::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* packe
 
 		return WebRTCServer::IceUFlag{username.substr(0, colonPos)};
 }
-WebRTCServer::Connection *WebRTCServer::FindFromStunRequest(const uint8_t *p, size_t sz) {
+std::shared_ptr<WebRTCServer::Connection> WebRTCServer::FindFromStunRequest(const uint8_t *p, size_t sz) {
   RTC::StunPacket* packet = RTC::StunPacket::Parse(p, sz);
   if (packet == nullptr) {
     QRPC_LOG(warn, "ignoring wrong STUN packet received");
@@ -114,16 +113,16 @@ WebRTCServer::Connection *WebRTCServer::FindFromStunRequest(const uint8_t *p, si
   return it->second;
 }
 
-int WebRTCServer::GlobalInit(AlarmProcessor *a) {
+int WebRTCServer::GlobalInit(AlarmProcessor &a) {
 	try
 	{
 		// Initialize static stuff.
 		DepOpenSSL::ClassInit();
 		DepLibSRTP::ClassInit();
-		DepUsrSCTP::ClassInit(*a);
+		DepUsrSCTP::ClassInit(a);
 		DepLibWebRTC::ClassInit();
 		Utils::Crypto::ClassInit();
-		RTC::DtlsTransport::ClassInit();
+		DtlsTransport::ClassInit();
 		RTC::SrtpSession::ClassInit();
 
 		return QRPC_OK;
@@ -140,7 +139,7 @@ void WebRTCServer::GlobalFin() {
 		DepLibSRTP::ClassDestroy();
 		Utils::Crypto::ClassDestroy();
 		DepLibWebRTC::ClassDestroy();
-		RTC::DtlsTransport::ClassDestroy();
+		DtlsTransport::ClassDestroy();
 		DepUsrSCTP::ClassDestroy();
 		DepLibUV::ClassDestroy();
   }
@@ -150,31 +149,31 @@ void WebRTCServer::GlobalFin() {
 }
 
 // WebRTCServer::Config
-class DummyDtlsTransportListener : public RTC::DtlsTransport::Listener {
-  void OnDtlsTransportConnecting(const RTC::DtlsTransport*) override {}
+class DummyDtlsTransportListener : public DtlsTransport::Listener {
+  void OnDtlsTransportConnecting(const DtlsTransport*) override {}
   void OnDtlsTransportConnected(
-    const RTC::DtlsTransport*,
+    const DtlsTransport*,
     RTC::SrtpSession::CryptoSuite,
     uint8_t*,
     size_t,
     uint8_t*,
     size_t,
     std::string&) override {}
-  void OnDtlsTransportFailed(const RTC::DtlsTransport*) override {}
-  void OnDtlsTransportClosed(const RTC::DtlsTransport*) override {}
+  void OnDtlsTransportFailed(const DtlsTransport*) override {}
+  void OnDtlsTransportClosed(const DtlsTransport*) override {}
   void OnDtlsTransportSendData(
-    const RTC::DtlsTransport*, const uint8_t*, size_t) override {}
+    const DtlsTransport*, const uint8_t*, size_t) override {}
   void OnDtlsTransportApplicationDataReceived(
-    const RTC::DtlsTransport*, const uint8_t*, size_t) override {}
+    const DtlsTransport*, const uint8_t*, size_t) override {}
 };
-int WebRTCServer::Config::Derive() {
+int WebRTCServer::Config::Derive(AlarmProcessor &ap) {
   // create dummy DtlsTransport.
   // GetLocalFingerprints is instance method even through DtlsTransport::localFingerprints is static variable
-  std::unique_ptr<RTC::DtlsTransport> dtls(new RTC::DtlsTransport(
-    new DummyDtlsTransportListener()
+  std::unique_ptr<DtlsTransport> dtls(new DtlsTransport(
+    new DummyDtlsTransportListener(), ap
   ));
   for (auto fp : dtls->GetLocalFingerprints()) {
-    if (fp.algorithm == RTC::DtlsTransport::FingerprintAlgorithm::SHA256) {
+    if (fp.algorithm == DtlsTransport::FingerprintAlgorithm::SHA256) {
       fingerprint = fp.value;
       return QRPC_OK;
     }
@@ -214,7 +213,7 @@ bool WebRTCServer::Connection::connected() const {
     (
       ice_server_->GetState() == IceServer::IceState::CONNECTED ||
       ice_server_->GetState() == IceServer::IceState::COMPLETED
-    ) && dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED
+    ) && dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED
   );
 }
 int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
@@ -231,7 +230,7 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
     return QRPC_EALLOC;
   }
   // create DTLS transport
-  dtls_transport_.reset(new RTC::DtlsTransport(this));
+  dtls_transport_.reset(new DtlsTransport(this, server().alarm_processor()));
   if (dtls_transport_ == nullptr) {
     logger::die({{"ev","fail to create DTLS transport"}});
     return QRPC_EALLOC;
@@ -296,7 +295,7 @@ int WebRTCServer::Connection::RunDtlsTransport() {
   switch (dtls_role_) {
     // If still 'auto' then transition to 'server' if ICE is 'connected' or
     // 'completed'.
-    case RTC::DtlsTransport::Role::AUTO: {
+    case DtlsTransport::Role::AUTO: {
       if (
         ice_server_->GetState() == IceServer::IceState::CONNECTED ||
         ice_server_->GetState() == IceServer::IceState::COMPLETED
@@ -304,8 +303,8 @@ int WebRTCServer::Connection::RunDtlsTransport() {
         logger::info(
           {{"proto","dtls"},{"ev","transition from DTLS local role 'auto' to 'server' and running DTLS transport"}}
         );
-        dtls_role_ = RTC::DtlsTransport::Role::SERVER;
-        dtls_transport_->Run(RTC::DtlsTransport::Role::SERVER);
+        dtls_role_ = DtlsTransport::Role::SERVER;
+        dtls_transport_->Run(DtlsTransport::Role::SERVER);
       }
       break;
     }
@@ -316,26 +315,26 @@ int WebRTCServer::Connection::RunDtlsTransport() {
     //
     // NOTE: This is the theory, however let's be more flexible as told here:
     //   https://bugs.chromium.org/p/webrtc/issues/detail?id=3661
-    case RTC::DtlsTransport::Role::CLIENT: {
+    case DtlsTransport::Role::CLIENT: {
       if (
         ice_server_->GetState() == IceServer::IceState::CONNECTED ||
         ice_server_->GetState() == IceServer::IceState::COMPLETED
       ) {
         logger::debug({{"proto","dtls"},{"ev","running DTLS transport in local role 'client'"}});
-        dtls_transport_->Run(RTC::DtlsTransport::Role::CLIENT);
+        dtls_transport_->Run(DtlsTransport::Role::CLIENT);
       }
       break;
     }
 
     // If 'server' then run the DTLS transport if ICE is 'connected' (not yet
     // USE-CANDIDATE) or 'completed'.
-    case RTC::DtlsTransport::Role::SERVER: {
+    case DtlsTransport::Role::SERVER: {
       if (
         ice_server_->GetState() == IceServer::IceState::CONNECTED ||
         ice_server_->GetState() == IceServer::IceState::COMPLETED
       ) {
         logger::debug({{"proto","dtls"},{"ev","running DTLS transport in local role 'server'"}});
-        dtls_transport_->Run(RTC::DtlsTransport::Role::SERVER);
+        dtls_transport_->Run(DtlsTransport::Role::SERVER);
       }
       break;
     }
@@ -348,7 +347,7 @@ int WebRTCServer::Connection::OnPacketReceived(Session *session, const uint8_t *
   // Check if it's STUN.
   if (RTC::StunPacket::IsStun(p, sz)) {
     return OnStunDataReceived(session, p, sz);
-  } else if (RTC::DtlsTransport::IsDtls(p, sz)) { // Check if it's DTLS.
+  } else if (DtlsTransport::IsDtls(p, sz)) { // Check if it's DTLS.
     return OnDtlsDataReceived(session, p, sz);
   } else if (RTC::RTCP::Packet::IsRtcp(p, sz)) { // Check if it's RTCP.
     return OnRtcpDataReceived(session, p, sz);
@@ -383,8 +382,8 @@ int WebRTCServer::Connection::OnDtlsDataReceived(Session *session, const uint8_t
   ice_server_->MayForceSelectedSession(session);
   // Check that DTLS status is 'connecting' or 'connected'.
   if (
-    dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTING ||
-    dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED) {
+    dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTING ||
+    dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED) {
     logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"}});
     dtls_transport_->ProcessDtlsData(p, sz);
   } else {
@@ -399,7 +398,7 @@ int WebRTCServer::Connection::OnDtlsDataReceived(Session *session, const uint8_t
 int WebRTCServer::Connection::OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure DTLS is connected.
-  if (dtls_transport_->GetState() != RTC::DtlsTransport::DtlsState::CONNECTED) {
+  if (dtls_transport_->GetState() != DtlsTransport::DtlsState::CONNECTED) {
     logger::debug({{"ev","ignoring RTCP packet while DTLS not connected"},{"proto","dtls,rtcp"}});
     return QRPC_OK;
   }
@@ -435,7 +434,7 @@ int WebRTCServer::Connection::OnRtcpDataReceived(Session *session, const uint8_t
 int WebRTCServer::Connection::OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure DTLS is connected.
-  if (dtls_transport_->GetState() != RTC::DtlsTransport::DtlsState::CONNECTED) {
+  if (dtls_transport_->GetState() != DtlsTransport::DtlsState::CONNECTED) {
     logger::debug({{"ev","ignoring RTCP packet while DTLS not connected"},{"proto","dtls,rtcp"}});
     return QRPC_OK;
   }
@@ -539,7 +538,7 @@ void WebRTCServer::Connection::OnIceServerConnected(const IceServer *iceServer) 
   RunDtlsTransport();
 
   // If DTLS was already connected, notify the parent class.
-  if (dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED) {
+  if (dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED) {
     // TODO:
   }
 }
@@ -551,11 +550,11 @@ void WebRTCServer::Connection::OnIceServerDisconnected(const IceServer *iceServe
 }
 
 // implements IceServer::Listener
-void WebRTCServer::Connection::OnDtlsTransportConnecting(const RTC::DtlsTransport* dtlsTransport) {
+void WebRTCServer::Connection::OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) {
   TRACK();
 }
 void WebRTCServer::Connection::OnDtlsTransportConnected(
-  const RTC::DtlsTransport* dtlsTransport,
+  const DtlsTransport* dtlsTransport,
   RTC::SrtpSession::CryptoSuite srtpCryptoSuite,
   uint8_t* srtpLocalKey,
   size_t srtpLocalKeyLen,
@@ -583,12 +582,12 @@ void WebRTCServer::Connection::OnDtlsTransportConnected(
 }
 // The DTLS connection has been closed as the result of an error (such as a
 // DTLS alert or a failure to validate the remote fingerprint).
-void WebRTCServer::Connection::OnDtlsTransportFailed(const RTC::DtlsTransport* dtlsTransport) {
+void WebRTCServer::Connection::OnDtlsTransportFailed(const DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls failed"}});
   // TODO: callback
 }
 // The DTLS connection has been closed due to receipt of a close_notify alert.
-void WebRTCServer::Connection::OnDtlsTransportClosed(const RTC::DtlsTransport* dtlsTransport) {
+void WebRTCServer::Connection::OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls cloed"}});
   // Tell the parent class.
   // RTC::Transport::Disconnected();
@@ -597,7 +596,7 @@ void WebRTCServer::Connection::OnDtlsTransportClosed(const RTC::DtlsTransport* d
 }
 // Need to send DTLS data to the peer.
 void WebRTCServer::Connection::OnDtlsTransportSendData(
-  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) {
+  const DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) {
   TRACK();
   auto *session = ice_server_->GetSelectedSession();
   if (session == nullptr) {
@@ -610,7 +609,7 @@ void WebRTCServer::Connection::OnDtlsTransportSendData(
 }
 // DTLS application data received.
 void WebRTCServer::Connection::OnDtlsTransportApplicationDataReceived(
-  const RTC::DtlsTransport*, const uint8_t* data, size_t len) {
+  const DtlsTransport*, const uint8_t* data, size_t len) {
   TRACK();
   sctp_association_->ProcessSctpData(data, len);
 }

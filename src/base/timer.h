@@ -8,7 +8,7 @@
 
 namespace base {
   class Loop;
-  class Timer : public IoProcessor, public AlarmProcessor {
+  class TimerScheduler : public IoProcessor, public AlarmProcessor {
   public:
     typedef std::function<qrpc_time_t ()> Handler;
     typedef AlarmProcessor::Id Id;
@@ -19,10 +19,10 @@ namespace base {
       Id id;
     };
   public:
-    Timer(qrpc_time_t granularity) :
+    TimerScheduler(qrpc_time_t granularity) :
       fd_(INVALID_FD), granularity_(granularity),
       handlers_(), schedule_times_(), id_factory_() {}
-    virtual ~Timer() {}
+    virtual ~TimerScheduler() {}
     int Init(Loop &l);
     void Fin();
     inline Fd fd() const { return fd_; }

@@ -7,7 +7,7 @@
 #endif
 
 namespace base {
-  int Timer::Init(Loop &l) {
+  int TimerScheduler::Init(Loop &l) {
   #if defined(__ENABLE_EPOLL__)
     if ((fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK)) < 0) {
       logger::error({{"ev","timerfd_create fails"},{"errno",Syscall::Errno()}});
@@ -46,19 +46,19 @@ namespace base {
     }
     return QRPC_OK;    
   }
-  void Timer::Fin() {
+  void TimerScheduler::Fin() {
     if (fd_ != INVALID_FD) {
       Syscall::Close(fd_);
       fd_ = INVALID_FD;
     }
   }
-  Timer::Id Timer::Start(const Handler &h, qrpc_time_t at) {
+  TimerScheduler::Id TimerScheduler::Start(const Handler &h, qrpc_time_t at) {
     Id id = id_factory_.New();
     handlers_.insert(std::make_pair(at, Entry(id, h)));
     schedule_times_.insert(std::make_pair(id, at));
     return id;
   }
-  bool Timer::Stop(Id id) {
+  bool TimerScheduler::Stop(Id id) {
     auto i = schedule_times_.find(id);
     if (i == schedule_times_.end()) {
       logger::warn({{"ev","timer: id not found"},{"id",id}});
@@ -76,7 +76,7 @@ namespace base {
   }
 
   // implement IoProcessor
-  void Timer::OnEvent(Fd fd, const Event &ev) {
+  void TimerScheduler::OnEvent(Fd fd, const Event &ev) {
     ASSERT(fd == fd_);
     if (Loop::Readable(ev)) {
       while (true) {
@@ -112,7 +112,7 @@ namespace base {
     }
     Poll();
   }
-  void Timer::Poll() {
+  void TimerScheduler::Poll() {
     qrpc_time_t now = qrpc_time_now();
     for (auto it = handlers_.begin(); it != handlers_.end(); ) {
       auto &ent = *it;

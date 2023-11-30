@@ -9,7 +9,6 @@
 #include "nlohmann/json.hpp"
 
 using json = nlohmann::json;
-using Ticker = base::Timer;
 using namespace base;
 
 bool SetupSignalHandler(SignalHandler &sh, Loop &l) {
@@ -34,9 +33,9 @@ bool SetupSignalHandler(SignalHandler &sh, Loop &l) {
 }
 
 int main(int argc, char *argv[]) {
-    Loop l;
+    Loop l; {
+    TimerScheduler t(qrpc_time_msec(10)); { // 10ms resolution
     SignalHandler sh;
-    Ticker t(qrpc_time_msec(10)); // 10ms
     if (l.Open(1024) < 0) {
         logger::error("fail to init loop");
         exit(1);
@@ -49,12 +48,8 @@ int main(int argc, char *argv[]) {
         logger::error("fail to start timer");
         exit(1);
     }
-    if (!SDP::Test()) {
-        logger::info("fail sdp test");
-        exit(0);
-    }
     HttpServer s(l);
-    WebRTCServer w(l, &t, WebRTCServer::Config {
+    WebRTCServer w(l, t, WebRTCServer::Config {
         .ports = {
             {.protocol = WebRTCServer::Port::UDP, .ip = "", .port = 11111, .priority = 1},
             {.protocol = WebRTCServer::Port::TCP, .ip = "", .port = 11111, .priority = 100}
@@ -107,12 +102,11 @@ int main(int argc, char *argv[]) {
         logger::error("fail to listen");
         exit(1);
     }
-    UdpListener::Config c = { .alarm_processor = &t, .session_timeout = qrpc_time_sec(5)};
     AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
-    }, &c);
+    }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
     if (!us.Listen(9999)) {
         logger::error("fail to listen");
         exit(1);
@@ -120,5 +114,6 @@ int main(int argc, char *argv[]) {
     while (true) {
         l.Poll();
     }
+    }}
     return 0;
 }

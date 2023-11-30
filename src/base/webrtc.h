@@ -5,32 +5,38 @@
 #include "base/stream.h"
 #include "base/webrtc/ice.h"
 #include "base/webrtc/sctp.h"
+#include "base/webrtc/dtls.h"
 
-#include "RTC/IceCandidate.hpp"
-#include "RTC/DtlsTransport.hpp"
+// TODO: if enabling srtp, this also need to be replaced with homebrew version
 #include "RTC/SrtpSession.hpp"
 
 namespace base {
   class WebRTCServer {
   public:
-    class IceUFlag : public std::string {};
+    class IceUFlag : public std::string {
+    public:
+      IceUFlag(const std::string &s) : std::string(s) {}
+      IceUFlag(const std::string &&s) : std::string(s) {}
+      IceUFlag(const IceUFlag &f) : std::string(f) {}
+      IceUFlag(const IceUFlag &&f) : std::string(f) {}
+    };
   public: // sessions
     class Connection;
     class TcpSession : public TcpListener::TcpSession {
     public:
-      TcpSession(SessionFactory &f, Fd fd, const Address &addr) : 
-        TcpListener::TcpSession(f, fd, addr), connection_(nullptr) {}
+      TcpSession(TcpListener &f, Fd fd, const Address &addr) : 
+        TcpListener::TcpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
     private:
-      Connection *connection_;
+      std::shared_ptr<Connection> connection_;
     };
     class UdpSession : public UdpListener::UdpSession {
     public:
-      UdpSession(SessionFactory &f, Fd fd, const Address &addr) : 
-        UdpListener::UdpSession(f, fd, addr), connection_(nullptr) {}
+      UdpSession(UdpListener &f, Fd fd, const Address &addr) : 
+        UdpListener::UdpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
     private:
-      Connection *connection_;
+      std::shared_ptr<Connection> connection_;
     };
   public: // servers
     typedef TcpServer<TcpSession> BaseTcpServer;
@@ -44,18 +50,18 @@ namespace base {
     };
     class UdpPort : public BaseUdpServer {
     public:
-      UdpPort(WebRTCServer &ws) : BaseUdpServer(ws.loop(), &ws.udp_listener_config()), webrtc_server_(ws) {}
+      UdpPort(WebRTCServer &ws) : BaseUdpServer(ws.loop(), ws.udp_listener_config()), webrtc_server_(ws) {}
       WebRTCServer &webrtc_server() { return webrtc_server_; }
     private:
       WebRTCServer &webrtc_server_;
     };
   public: // connections
     class Connection : public IceServer::Listener,
-                       public RTC::DtlsTransport::Listener,
+                       public DtlsTransport::Listener,
                        public SctpAssociation::Listener,
                        public Stream::Processor {
     public:
-      Connection(WebRTCServer &sv, RTC::DtlsTransport::Role dtls_role) :
+      Connection(WebRTCServer &sv, DtlsTransport::Role dtls_role) :
         sv_(sv), last_active_(0), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr),
         srtp_send_(nullptr), srtp_recv_(nullptr), sctp_connected_(false) {}
@@ -98,10 +104,10 @@ namespace base {
 			void OnIceServerCompleted(const IceServer *iceServer)    override;
 			void OnIceServerDisconnected(const IceServer *iceServer) override;
 
-      // implements RTC::DtlsTransport::Listener
-			void OnDtlsTransportConnecting(const RTC::DtlsTransport* dtlsTransport) override;
+      // implements DtlsTransport::Listener
+			void OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) override;
 			void OnDtlsTransportConnected(
-			  const RTC::DtlsTransport* dtlsTransport,
+			  const DtlsTransport* dtlsTransport,
 			  RTC::SrtpSession::CryptoSuite srtpCryptoSuite,
 			  uint8_t* srtpLocalKey,
 			  size_t srtpLocalKeyLen,
@@ -110,15 +116,15 @@ namespace base {
 			  std::string& remoteCert) override;
 			// The DTLS connection has been closed as the result of an error (such as a
 			// DTLS alert or a failure to validate the remote fingerprint).
-			void OnDtlsTransportFailed(const RTC::DtlsTransport* dtlsTransport) override;
+			void OnDtlsTransportFailed(const DtlsTransport* dtlsTransport) override;
 			// The DTLS connection has been closed due to receipt of a close_notify alert.
-			void OnDtlsTransportClosed(const RTC::DtlsTransport* dtlsTransport) override;
+			void OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) override;
 			// Need to send DTLS data to the peer.
 			void OnDtlsTransportSendData(
-			  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;
+			  const DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;
 			// DTLS application data received.
 			void OnDtlsTransportApplicationDataReceived(
-			  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;  
+			  const DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;  
 
       // implements SctpAssociation::Listener
 			void OnSctpAssociationConnecting(SctpAssociation* sctpAssociation) override;
@@ -139,8 +145,8 @@ namespace base {
       qrpc_time_t last_active_;
       WebRTCServer &sv_;
       std::unique_ptr<IceServer> ice_server_; // ICE
-      RTC::DtlsTransport::Role dtls_role_;
-      std::unique_ptr<RTC::DtlsTransport> dtls_transport_; // DTLS
+      DtlsTransport::Role dtls_role_;
+      std::unique_ptr<DtlsTransport> dtls_transport_; // DTLS
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
       bool sctp_connected_;
@@ -176,17 +182,18 @@ namespace base {
       // derived from above config values
       std::string fingerprint;
     public:
-      int Derive();
+      int Derive(AlarmProcessor &ap);
     };
   public:
     WebRTCServer(
-      Loop &l, AlarmProcessor *alarm_processor, Config &&config
+      Loop &l, AlarmProcessor &alarm_processor, Config &&config
     ) : loop_(l), config_(config), alarm_processor_(alarm_processor),
-        tcp_ports_(), udp_ports_(), connections_() { config_.Derive(); }
+        tcp_ports_(), udp_ports_(), connections_() { config_.Derive(alarm_processor); }
     ~WebRTCServer() {}
   public:
     Loop &loop() { return loop_; }
     const Config &config() const { return config_; }
+    AlarmProcessor &alarm_processor() { return alarm_processor_; }
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
     const std::string &fingerprint() const { return config_.fingerprint; }
@@ -197,7 +204,7 @@ namespace base {
     int Init();
     void Fin();
     int NewConnection(const std::string &client_sdp, std::string &server_sdp);
-    Connection *FindFromStunRequest(const uint8_t *p, size_t sz);
+    std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
     void RemoveUFlag(IceUFlag &uflag) {
       if (connections_.erase(uflag) == 0) {
         logger::warn({{"ev","fail to remove uflag"},{"uflag",uflag}});
@@ -206,12 +213,12 @@ namespace base {
   protected:
     Loop &loop_;
     Config config_;
-    AlarmProcessor *alarm_processor_;
+    AlarmProcessor &alarm_processor_;
     std::vector<TcpPort> tcp_ports_;
     std::vector<UdpPort> udp_ports_;
-    std::map<IceUFlag, Connection*> connections_;
+    std::map<IceUFlag, std::shared_ptr<Connection>> connections_;
   private:
-    static int GlobalInit(AlarmProcessor *a);
+    static int GlobalInit(AlarmProcessor &a);
     static void GlobalFin();
   };
   typedef WebRTCServer::Connection Connection;

@@ -55,6 +55,8 @@ class Allocator {
     ASSERT(chunk_size_ > 0);
     GrowChunk();
   }
+  Allocator(Allocator &&a) noexcept : 
+    chunks_(std::move(a.chunks_)), total_block_(a.total_block_), chunk_size_(a.chunk_size_), pool_(std::move(a.pool_)) {}
   ~Allocator() {
     for (auto &c : chunks_) {
       auto pb = c.get();
