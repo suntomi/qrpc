@@ -2,6 +2,7 @@
 #include "base/crypto.h"
 #include "base/webrtc.h"
 #include "base/webrtc/sctp.h"
+#include "base/webrtc/dcep.h"
 #include "base/webrtc/sdp.h"
 
 #include "common.hpp"
@@ -23,10 +24,10 @@ namespace base {
 // WebRTCServer
 int WebRTCServer::Init() {
   int r;
-  if ((r = GlobalInit(alarm_processor_)) < 0) {
+  if ((r = GlobalInit(config_.alarm_processor)) < 0) {
     return r;
   }
-  if ((r = config_.Derive(alarm_processor_)) < 0) {
+  if ((r = config_.Derive(config_.alarm_processor)) < 0) {
     return r;
   }
   // setup TCP/UDP ports
@@ -58,6 +59,7 @@ void WebRTCServer::Fin() {
   // cleanup TCP/UDP ports
 }
 int WebRTCServer::NewConnection(const std::string &client_sdp, std::string &server_sdp) {
+  logger::info({{"ev","new connection"},{"client_sdp", client_sdp}});
   auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::SERVER));
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
@@ -250,36 +252,45 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
   }
   return QRPC_OK;
 }
-Stream *WebRTCServer::Connection::NewStream(Stream::Config &c, Stream::Handler &h) {
-  if (c.streamId == 0) {
+std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(Stream::Config &c) {
+  if (c.params.streamId == 0) {
     size_t cnt = 0;
     do {
       // auto allocate
-      c.streamId = stream_id_factory_.New();
-    } while (streams_.find(c.streamId) != streams_.end() && ++cnt <= 0xFFFF);
+      c.params.streamId = stream_id_factory_.New();
+    } while (streams_.find(c.params.streamId) != streams_.end() && ++cnt <= 0xFFFF);
     if (cnt > 0xFFFF) {
       ASSERT(false);
       logger::error({{"ev","cannot allocate stream id"}});
       return nullptr;
     }
-  } else if (streams_.find(c.streamId) != streams_.end()) {
+  } else if (streams_.find(c.params.streamId) != streams_.end()) {
     ASSERT(false);
-    logger::error({{"ev","stream id already used"},{"sid",c.streamId}});
+    logger::error({{"ev","stream id already used"},{"sid",c.params.streamId}});
     return nullptr;
   }
-  Stream *s = &streams_.emplace(std::piecewise_construct,
-    std::forward_as_tuple(c.streamId),
-    std::forward_as_tuple(this, c, h)
-  ).first->second;
-  ASSERT(s != nullptr);
-  int r;
-  if ((r = s->OnConnect()) < 0) {
-    logger::info({{"ev","new stream creation blocked"},{"sid",c.streamId},{"rc",r}});
-    return nullptr;    
+  auto s = server().stream_factory()(c, *this);
+  if (s == nullptr) {
+    ASSERT(false);
+    logger::error({{"ev","fail to create stream"},{"sid",c.params.streamId}});
+    return nullptr;
   }
+  logger::info({{"ev","new stream created"},{"sid",s->id()}});
+  return s;
+}
+std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(Stream::Config &c) {
+  int r;
+  auto s = NewStream(c);
+  if (s == nullptr) { return nullptr; }
   // allocate stream Id
-  sctp_association_->HandleDataConsumer(s);
-  logger::info({{"ev","new stream created"},{"sid",c.streamId}});
+  sctp_association_->HandleDataConsumer(s.get());
+  // TODO: send DCEP OPEN messsage to peer
+  if ((r = s->Open()) < 0) {
+    logger::info({{"ev","new stream creation blocked"},{"sid",s->id()},{"rc",r}});
+    Close(*s);
+    return nullptr;
+  }
+  logger::info({{"ev","new stream opened"},{"sid",s->id()}});
   return s;
 }
 int WebRTCServer::Connection::RunDtlsTransport() {
@@ -481,15 +492,29 @@ int WebRTCServer::Connection::OnRtpDataReceived(Session *session, const uint8_t 
 }
 
 // implements Stream::Processor
-int WebRTCServer::Connection::Send(Stream *s, const char *p, size_t sz, bool binary) {
+int WebRTCServer::Connection::Send(Stream &s, const char *p, size_t sz, bool binary) {
   PPID ppid = binary ? 
     (sz > 0 ? PPID::BINARY : PPID::BINARY_EMPTY) : 
     (sz > 0 ? PPID::STRING : PPID::STRING_EMPTY);
-  sctp_association_->SendSctpMessage(s, ppid, reinterpret_cast<const uint8_t *>(p), sz);
+  sctp_association_->SendSctpMessage(&s, ppid, reinterpret_cast<const uint8_t *>(p), sz);
   return QRPC_OK;
 }
-void WebRTCServer::Connection::Close(Stream *s) {
-  sctp_association_->DataConsumerClosed(s);
+void WebRTCServer::Connection::Close(Stream &s) {
+  sctp_association_->DataConsumerClosed(&s);
+  streams_.erase(s.id()); // s might destroyed
+}
+int WebRTCServer::Connection::Open(Stream &s) {
+  auto &c = s.config();
+  DcepRequest req(c);
+  uint8_t buff[req.PayloadSize()];
+  if (sctp_association_->SendSctpMessage(
+      &s, PPID::WEBRTC_DCEP, req.ToPaylod(buff, sizeof(buff)), req.PayloadSize()
+  ) < 0) {
+    logger::error({{"proto","sctp"},{"ev","fail to send DCEP ACK"},{"stream_id",s.id()}});
+    Close(s);
+    return QRPC_EALLOC;
+  }
+  return QRPC_OK;
 }
 
 // implements IceServer::Listener
@@ -641,6 +666,51 @@ void WebRTCServer::Connection::OnSctpAssociationSendData(
   }	  
   dtls_transport_->SendApplicationData(data, len);
 }
+void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
+  SctpAssociation* sctpAssociation,
+  uint16_t streamId,
+  const uint8_t* msg,
+  size_t len) {
+  // parse msg and create Stream::Config from it, then create stream by using NewStream
+  TRACK();
+  switch (*msg) {
+  case DATA_CHANNEL_ACK: {
+    auto s = streams_.find(streamId);
+    if (s == streams_.end()) {
+      logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_ACK received for unknown stream"}});
+      return;
+    }
+    if (s->second->OnConnect() < 0) {
+      logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_ACK blocked for application reason"}});
+      Close(*s->second);
+      return;
+    }
+  } break;
+  case DATA_CHANNEL_OPEN: {
+    auto req = DcepRequest::Parse(streamId, msg, len);
+    if (req == nullptr) {
+      logger::error({{"proto","sctp"},{"ev","invalid DCEP request received"}});
+      return;
+    }
+    auto c = req->ToStreamConfig();
+    auto s = NewStream(c);
+    if (s == nullptr) {
+      logger::error({{"proto","sctp"},{"ev","fail to create stream"},{"stream_id",streamId}});
+      return;
+    }
+    // send dcep ack
+    DcepResponse ack;
+    uint8_t buff[ack.PayloadSize()];
+    if (sctpAssociation->SendSctpMessage(
+        s.get(), PPID::WEBRTC_DCEP, ack.ToPaylod(buff, sizeof(buff)), ack.PayloadSize()
+    ) < 0) {
+      logger::error({{"proto","sctp"},{"ev","fail to send DCEP ACK"},{"stream_id",streamId}});
+      Close(*s);
+      return;
+    }
+  } break;
+  }
+}
 void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
   SctpAssociation* sctpAssociation,
   uint16_t streamId,
@@ -654,7 +724,7 @@ void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
     logger::debug({{"ev","SCTP message received for unknown stream, ignoring it"},{"sid",streamId}});
     return;
   }
-  it->second.OnRead(reinterpret_cast<const char *>(msg), len);
+  it->second->OnRead(reinterpret_cast<const char *>(msg), len);
 }
 void WebRTCServer::Connection::OnSctpAssociationBufferedAmount(
   SctpAssociation* sctpAssociation, uint32_t len) {

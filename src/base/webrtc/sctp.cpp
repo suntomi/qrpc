@@ -391,7 +391,7 @@ namespace base {
 		  len,
 		  this->maxSctpMessageSize);
 
-		const auto& parameters = dataConsumer->config();
+		const auto& parameters = dataConsumer->config().params;
 
 		// Fill sctp_sendv_spa.
 		struct sctp_sendv_spa spa; // NOLINT(cppcoreguidelines-pro-type-member-init)
@@ -468,7 +468,7 @@ namespace base {
 	{
 		TRACK();
 
-		auto streamId = dataConsumer->config().streamId;
+		auto streamId = dataConsumer->id();
 
 		// We need more OS.
 		if (streamId > this->os - 1)
@@ -479,7 +479,7 @@ namespace base {
 	{
 		TRACK();
 
-		auto streamId = dataConsumer->config().streamId;
+		auto streamId = dataConsumer->id();
 
 		// Send SCTP_RESET_STREAMS to the remote.
 		ResetSctpStream(streamId, StreamDirection::OUTGOING);
@@ -620,8 +620,7 @@ namespace base {
 		// Ignore WebRTC DataChannel Control DATA chunks.
 		if (ppid == 50)
 		{
-			MS_WARN_TAG(sctp, "ignoring SCTP data with ppid:50 (WebRTC DataChannel Control)");
-
+			listener->OnSctpWebRtcDataChannelControlDataReceived(this, streamId, data, len);
 			return;
 		}
 

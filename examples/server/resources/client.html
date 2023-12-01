@@ -5,42 +5,119 @@
   </head>
   <body>
     <script>
-      const socket = io();
+      class WHIPClient
+      {
+        constructor()
+        {
+          //Ice properties
+          this.iceUsername = null;
+          this.icePassword = null;
+          //Pending candidadtes
+          this.candidates = [];
+          this.endOfcandidates = false;
+        }
 
-      const configuration = {'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}]};
-      const pc = new RTCPeerConnection(configuration);
+        async connect(pc, url)
+        {
+          //If already publishing
+          if (this.pc)
+            throw new Error("Already publishing")
 
-      pc.onicecandidate = ({candidate}) => {
-        socket.emit('ice-candidate', candidate);
+          //Store pc object and token
+          this.pc = pc;
+          
+          //Listen for state change events
+          pc.onconnectionstatechange = (event) =>{
+            console.log("Connection state change", pc.connectionState);
+            switch(pc.connectionState) {
+              case "connected":
+                // The connection has become fully connected
+                break;
+              case "disconnected":
+              case "failed":
+                // One or more transports has terminated unexpectedly or in an error
+                break;
+              case "closed":
+                // The connection has been closed
+                break;
+            }
+          }
+
+          //Listen for candidates
+          pc.onicecandidate = (event)=>{
+            if (event.candidate) 
+            {
+              console.log("Ice candidate", event.candidate);
+              //Ignore candidates not from the first m line
+              if (event.candidate.sdpMLineIndex>0)
+                //Skip
+                return;
+              //Store candidate
+              this.candidates.push(event.candidate);                                         
+            } else {
+              console.log("no more Ice candidate", event.candidate);
+              //No more candidates
+              this.endOfcandidates = true;
+            }
+          }
+          //Create SDP offer
+          const offer = await pc.createOffer();
+
+          //Request headers
+          const headers = {
+            "Content-Type": "application/sdp"
+          };
+
+          //Do the post request to the WHIP endpoint with the SDP offer
+          const fetched = await fetch(url, {
+            method: "POST",
+            body: offer.sdp,
+            headers
+          });
+
+          if (!fetched.ok)
+            throw new Error("Request rejected with status " + fetched.status)
+
+          //Get the SDP answer
+          const answer = await fetched.text();
+
+          //Set local description
+          await pc.setLocalDescription(offer);
+
+          this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)\r\n/)[1];
+          this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)\r\n/)[1];
+          
+          //And set remote description
+          await pc.setRemoteDescription({type:"answer",sdp: answer});
+        }
+
+        async close()
+        {
+          if (!this.pc) {
+            // Already stopped
+            return
+          }
+
+          //Close peerconnection
+          this.pc.close();
+
+          //Null
+          this.pc = null;
+        }
       };
 
-      pc.ondatachannel = (event) => {
-        const receiveChannel = event.channel;
-        receiveChannel.onmessage = (event) => {
-          console.log('DataChannel message received:', event.data);
-        };
-      };
+      //Create peerconnection
+      const pc = new RTCPeerConnection();
 
-      socket.on('answer', (answer) => {
-        console.log('answer:', answer);
-        pc.setRemoteDescription(answer);
-      });
+      //Create datachannel
+      pc.createDataChannel("test");
 
-      socket.on('ice-candidate', (candidate) => {
-        console.log("candidate:", candidate);
-        pc.addIceCandidate(candidate);
-      });
+      //Create whip client
+      const whip = new WHIPClient();
 
-      const dataChannel = pc.createDataChannel('myDataChannel');
-
-      dataChannel.onopen = () => {
-        setInterval(() => dataChannel.send('Hello Node.js'), 1000);
-      };
-
-      // Create an offer and send it to the Node.js server
-      pc.createOffer()
-        .then(offer => pc.setLocalDescription(offer))
-        .then(() => socket.emit('offer', pc.localDescription));
+      const url = "https://localhost:8888/accept";
+      //Start publishing
+      whip.connect(pc, url);
     </script>
   </body>
 </html>
