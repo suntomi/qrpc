@@ -161,6 +161,14 @@ namespace logger {
   #endif
 #endif
 
+#if !defined(TRACEJ)
+  #if !defined(NDEBUG)
+    #define TRACEJ(...) { ::base::logger::trace(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+  #else
+    #define TRACEJ(...) // fprintf(stderr, __VA_ARGS__)
+  #endif
+#endif
+
 #if !defined(TRACK)
   #if !defined(NDEBUG)
     #define TRACK(...) { ::base::logger::tracef(::base::logger::level::debug, __FILE__, __LINE__, __func__, 0, "track"); }

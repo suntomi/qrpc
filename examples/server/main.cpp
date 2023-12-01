@@ -11,11 +11,25 @@
 using json = nlohmann::json;
 using namespace base;
 
-bool SetupSignalHandler(SignalHandler &sh, Loop &l) {
-    return sh.Ignore(SIGPIPE)
-        .Handle(SIGINT, [](int sig, const Signal &s) {
+int main(int argc, char *argv[]) {
+    bool alive = true;
+    // loop and timerscheduler must be live longer than other objects
+    // and loop must be more longer than timerscheduler
+    Loop l; {
+    if (l.Open(1024) < 0) {
+        DIE("fail to init loop");
+    }
+    TimerScheduler t(qrpc_time_msec(10)); { // 10ms resolution
+    if (t.Init(l) < 0) {
+        DIE("fail to start timer");
+    }
+    SignalHandler sh;
+    // in here, return type annotation is required for making compiler happy
+    if (!sh.Init(l, [&alive](SignalHandler &s) -> SignalHandler & {
+        return s.Ignore(SIGPIPE)
+        .Handle(SIGINT, [&alive](int sig, const Signal &s) {
             logger::info("SIGINT");
-            exit(0);
+            alive = false;
         })
         .Handle(SIGTERM, [](int sig, const Signal &s) {
             logger::info("SIGTERM");
@@ -29,24 +43,9 @@ bool SetupSignalHandler(SignalHandler &sh, Loop &l) {
         })
         .Handle(SIGUSR2, [](int sig, const Signal &s) {
             logger::info("SIGUSR2");
-        }).Start(l);
-}
-
-int main(int argc, char *argv[]) {
-    Loop l; {
-    TimerScheduler t(qrpc_time_msec(10)); { // 10ms resolution
-    SignalHandler sh;
-    if (l.Open(1024) < 0) {
-        logger::error("fail to init loop");
-        exit(1);
-    }
-    if (!SetupSignalHandler(sh, l)) {
-        logger::error("fail to setup signal handler");
-        exit(1);
-    }
-    if (t.Init(l) < 0) {
-        logger::error("fail to start timer");
-        exit(1);
+        });
+    })) {
+        DIE("fail to setup signal handler");
     }
     HttpServer s(l);
     WebRTCServer w(l, t, WebRTCServer::Config {
@@ -60,8 +59,7 @@ int main(int argc, char *argv[]) {
         .udp_session_timeout = qrpc_time_sec(30),
     });
     if (w.Init() < 0) {
-        logger::error("fail to init webrtc");
-        exit(1);
+        DIE("fail to init webrtc");
     }
     HttpRouter r = HttpRouter().
     Route(RGX("/accept"), [&w](HttpSession &s) {
@@ -99,8 +97,7 @@ int main(int argc, char *argv[]) {
         });
     });
     if (!s.Listen(8888, r)) {
-        logger::error("fail to listen");
-        exit(1);
+        DIE("fail to listen on tcp");
     }
     AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
@@ -108,10 +105,9 @@ int main(int argc, char *argv[]) {
         return s.Send(p, sz);
     }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
     if (!us.Listen(9999)) {
-        logger::error("fail to listen");
-        exit(1);
+        DIE("fail to listen on UDP");
     }
-    while (true) {
+    while (alive) {
         l.Poll();
     }
     }}

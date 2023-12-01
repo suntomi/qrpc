@@ -1072,7 +1072,7 @@ namespace base {
         typedef HttpServer::Callback Handler;
         typedef HttpFSM Request;
         HttpRouter() : route_() {}
-        HttpRouter &Route(const std::regex &pattern, Handler h) {
+        HttpRouter &Route(const std::regex &pattern, const Handler &h) {
             route_.push_back(std::make_pair(pattern, h));
             return *this;
         }
