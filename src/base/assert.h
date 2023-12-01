@@ -5,11 +5,9 @@
     #include <assert.h>
     #define ASSERT(cond) assert((cond))
     #define MASSERT(cond, ...) { if(!(cond)){ QRPC_LOG(fatal, __VA_ARGS__); assert((cond)); } }
-    #define DIE(msg) assert((msg) == nullptr)
   #else
     #define ASSERT(cond)
     #define MASSERT(cond, ...)
-    #define DIE(msg)
   #endif
 #endif
 

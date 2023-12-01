@@ -482,9 +482,9 @@ public:
     }
     return writev(fd, iov, sz);
   }
-  static std::unique_ptr<uint8_t> ReadFile(const std::string &path, qrpc_size_t *p_size) {
+  static std::unique_ptr<char> ReadFile(const std::string &path, qrpc_size_t *p_size) {
     STATIC_ASSERT(sizeof(long) == sizeof(qrpc_size_t));
-    std::unique_ptr<uint8_t> ptr = std::unique_ptr<uint8_t>(nullptr);
+    std::unique_ptr<char> ptr = std::unique_ptr<char>();
     long *sz; FILE *fp;
     
     fp = fopen(path.c_str(), "r");
@@ -494,7 +494,7 @@ public:
     if ((*sz = ftell(fp)) == -1) { goto fail; }
     rewind(fp);
 
-    ptr = std::unique_ptr<uint8_t>(new uint8_t[*sz]);
+    ptr = std::unique_ptr<char>(new char[*sz]);
     if (ptr == nullptr || fread(ptr.get(), *sz, 1, fp) <= 0) { goto fail; } 
   fail:
     if (fp != nullptr) { fclose(fp); }

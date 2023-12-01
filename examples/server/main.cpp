@@ -5,7 +5,6 @@
 #include "base/http.h"
 #include "base/webrtc.h"
 #include "base/string.h"
-#include "base/webrtc/sdp.h"
 #include "nlohmann/json.hpp"
 
 using json = nlohmann::json;
@@ -61,8 +60,24 @@ int main(int argc, char *argv[]) {
     if (w.Init() < 0) {
         DIE("fail to init webrtc");
     }
+    std::filesystem::path p(__FILE__);
+    auto htmlpath = p.parent_path().string() + "/resources/client.html";
     HttpRouter r = HttpRouter().
-    Route(RGX("/accept"), [&w](HttpSession &s) {
+    Route(std::regex("/"), [&htmlpath](HttpSession &s) {
+        size_t htmlsz;
+        auto html = Syscall::ReadFile(htmlpath, &htmlsz);
+        if (html == nullptr) {
+            DIE("fail to read html at " + htmlpath);
+        }
+        auto htmlen = std::to_string(htmlsz);
+        HttpHeader h[] = {
+            {.key = "Content-Type", .val = "text/html"},
+            {.key = "Content-Length", .val = htmlen.c_str()}
+        };
+        s.Write(HRC_OK, h, 2, html.get(), htmlsz);
+        return nullptr;
+    }).
+    Route(std::regex("/accept"), [&w](HttpSession &s) {
         int r;
         std::string sdp;
         if ((r = w.NewConnection(s.fsm().body(), sdp)) < 0) {
@@ -77,7 +92,7 @@ int main(int argc, char *argv[]) {
         s.Write(HRC_OK, h, 2, sdp.c_str(), sdp.length());
 	    return nullptr;
     }).
-    Route(RGX("/test"), [](HttpSession &s) {
+    Route(std::regex("/test"), [](HttpSession &s) {
         json j = {
             {"sdp", "hoge"}
         };
@@ -90,14 +105,14 @@ int main(int argc, char *argv[]) {
         s.Write(HRC_OK, h, 2, body.c_str(), body.length());
 	    return nullptr;
     }).
-    Route(RGX("/ws"), [](HttpSession &s) {
+    Route(std::regex("/ws"), [](HttpSession &s) {
         return WebSocketServer::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
             // echo server
             return ws.Send(p, sz);
         });
     });
     if (!s.Listen(8888, r)) {
-        DIE("fail to listen on tcp");
+        DIE("fail to listen on http");
     }
     AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
