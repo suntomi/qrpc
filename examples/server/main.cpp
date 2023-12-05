@@ -5,6 +5,7 @@
 #include "base/http.h"
 #include "base/webrtc.h"
 #include "base/string.h"
+#include "base/webrtc/sdp.h"
 #include "nlohmann/json.hpp"
 
 using json = nlohmann::json;
@@ -12,6 +13,9 @@ using namespace base;
 
 int main(int argc, char *argv[]) {
     bool alive = true;
+    // if (!SDP::Test()) {
+    //     exit(0);
+    // }
     // loop and timerscheduler must be live longer than other objects
     // and loop must be more longer than timerscheduler
     Loop l; {

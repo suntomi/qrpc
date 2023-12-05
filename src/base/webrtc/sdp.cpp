@@ -4,7 +4,13 @@
 
 namespace base {
   bool SDP::Answer(const WebRTCServer::Connection &c, std::string &answer) const {
-    for (auto it = find("media"); it != end(); ++it) {
+    auto mit = find("media");
+    if (mit == end()) {
+      answer = "no media found";
+      ASSERT(false);
+      return false;
+    }
+    for (auto it = mit->begin(); it != mit->end(); ++it) {
       auto proto = it->find("protocol");
       if (proto == it->end()) {
         logger::warn({{"ev","media does not have protocol"}, {"media", *it}});
@@ -48,10 +54,10 @@ a=sctp-port:%u
 a=max-message-size:%u
 )sdp",
     now, now,
-    proto,
-    c.ice_server()->GetUsernameFragment(),
-    c.ice_server()->GetPassword(),
-    c.server().fingerprint(),
+    proto.c_str(),
+    c.ice_server()->GetUsernameFragment().c_str(),
+    c.ice_server()->GetPassword().c_str(),
+    c.server().fingerprint().c_str(),
     proto == "UDP" ? c.server().udp_port() : c.server().tcp_port(),
     c.server().config().sctp_send_buffer_size
   );
@@ -78,6 +84,12 @@ a=max-message-size:262144
 )sdp";
     SDP sdp(text);
     logger::info(sdp);
+    auto m = sdp.find("media");
+    for (auto it = m->begin(); it != m->end(); ++it) {
+      logger::info({{"ev","media"}, {"media", *it}});
+      auto p = it->find("protocol");
+      logger::info({{"ev","media protocol"}, {"protocol", *p}});
+    }
     return false;
   }
 }
