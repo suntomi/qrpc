@@ -81,12 +81,16 @@
           //Get the SDP answer
           const answer = await fetched.text();
 
+          console.log("whip answer", answer)
+
           //Set local description
           await pc.setLocalDescription(offer);
 
           this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)\r\n/)[1];
           this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)\r\n/)[1];
           
+          console.log("ice:uflag/pwd", this.iceUsername, this.icePassword)
+
           //And set remote description
           await pc.setRemoteDescription({type:"answer",sdp: answer});
         }

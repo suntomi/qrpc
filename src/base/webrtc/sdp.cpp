@@ -33,32 +33,43 @@ namespace base {
     answer = "no data channel media found";
     return false;
   }
+  uint32_t SDP::AssignPriority(uint32_t component_id) const {
+    // borrow from
+    // https://github.com/IIlllII/bitbreeds-webrtc/blob/master/webrtc-signaling/src/main/java/com/bitbreeds/webrtc/signaling/SDPUtil.java#L191
+    return 2113929216 + 16776960 + (256 - component_id);
+  }
+
   std::string SDP::AnswerAs(const std::string &proto, const WebRTCServer::Connection &c) const {
     auto now = qrpc_time_now();
+    auto addr = "127.0.0.1";
+    auto port = proto == "UDP" ? c.server().udp_port() : c.server().tcp_port();
     return str::Format(R"sdp(v=0
-o=- %llu %llu IN IP4 127.0.0.1
+o=- %llu %llu IN IP4 %s
 s=-
 t=0 0
 a=group:BUNDLE 0
 a=msid-semantic: WMS
-m=application 9 %s/DTLS/SCTP webrtc-datachannel
+m=application %u %s/DTLS/SCTP webrtc-datachannel
 c=IN IP4 0.0.0.0
 b=AS:30
+a=candidate:0 1 udp %u %s %u typ host
+a=sendrecv
+a=end-of-candidates
 a=ice-ufrag:%s
 a=ice-pwd:%s
 a=ice-options:trickle
 a=fingerprint:sha-256 %s
-a=setup:active
+a=setup:passive
 a=mid:0
-a=sctp-port:%u
+a=sctp-port:5000
 a=max-message-size:%u
 )sdp",
-    now, now,
-    proto.c_str(),
+    now, now, addr,
+    port, proto.c_str(),
+    AssignPriority(1), addr, port,
     c.ice_server()->GetUsernameFragment().c_str(),
     c.ice_server()->GetPassword().c_str(),
     c.server().fingerprint().c_str(),
-    proto == "UDP" ? c.server().udp_port() : c.server().tcp_port(),
     c.server().config().sctp_send_buffer_size
   );
   }

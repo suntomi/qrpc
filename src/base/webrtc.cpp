@@ -221,8 +221,8 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
     logger::warn({{"ev","already init"}});
     return QRPC_OK;
   }
-  uflag = random::str(32);
-  pwd = random::str(32);
+  uflag = random::word(32);
+  pwd = random::word(32);
   // create ICE server
   ice_server_.reset(new IceServer(this, uflag, pwd));
   if (ice_server_ == nullptr) {

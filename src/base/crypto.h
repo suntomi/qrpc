@@ -37,6 +37,18 @@ namespace base {
       }
       return ret;
     }
+    inline std::string word(size_t len) {
+      // generate random string (alphanumeric) from std::mt19937
+      static const char alnums[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      std::string ret(len, 0);
+      for (size_t i = 0; i < len; ++i) {
+        // sizeof(alnums) - 2 to exclude null terminator
+        auto idx = gen((uint8_t)0, (uint8_t)(sizeof(alnums) - 2));
+        ret[i] = alnums[idx];
+        ASSERT(ret[i] != 0);
+      }
+      return ret;
+    }
   }
 
   namespace sha1 {

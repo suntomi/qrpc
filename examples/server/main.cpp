@@ -94,7 +94,7 @@ int main(int argc, char *argv[]) {
         }
         std::string sdplen = std::to_string(sdp.length());
         HttpHeader h[] = {
-            {.key = "Content-Type", .val = "application/json"},
+            {.key = "Content-Type", .val = "application/sdp"},
             {.key = "Content-Length", .val = sdplen.c_str()}
         };
         s.Write(HRC_OK, h, 2, sdp.c_str(), sdp.length());

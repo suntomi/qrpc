@@ -117,5 +117,6 @@ namespace base {
     static bool Test();
   protected:
     std::string AnswerAs(const std::string &proto, const WebRTCServer::Connection &c) const;
+    uint32_t AssignPriority(uint32_t component_id) const;
   };
 }
