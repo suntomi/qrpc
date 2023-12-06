@@ -6,6 +6,10 @@
 #include "base/logger.h"
 #include "base/webrtc/ice.h"
 
+// need to put last for overriding MS_XXX macro (because Logger.hpp also undef MS_XXX macro)
+#define QRPC_DISABLE_MS_TRACK
+#include "base/webrtc/mpatch.h"
+
 namespace base
 {
 	/* Static. */
@@ -19,7 +23,7 @@ namespace base
 	IceServer::IceServer(Listener* listener, const std::string& usernameFragment, const std::string& password)
 	  : listener(listener), usernameFragment(usernameFragment), password(password)
 	{
-		TRACK();
+		MS_TRACE();
 
 		// Notify the listener.
 		this->listener->OnIceServerLocalUsernameFragmentAdded(this, usernameFragment);
@@ -27,7 +31,7 @@ namespace base
 
 	IceServer::~IceServer()
 	{
-		TRACK();
+		MS_TRACE();
 
 		// Here we must notify the listener about the removal of current
 		// usernameFragments (and also the old one if any) and all sessions.
@@ -50,7 +54,7 @@ namespace base
 
 	void IceServer::ProcessStunPacket(RTC::StunPacket* packet, Session *session)
 	{
-		TRACK();
+		MS_TRACE();
 
 		// Must be a Binding method.
 		if (packet->GetMethod() != RTC::StunPacket::Method::BINDING)
@@ -204,10 +208,10 @@ namespace base
 					return;
 				}
 
-				QRPC_LOG(debug,
-				  "processing STUN Binding Request [Priority:%" PRIu32 ", UseCandidate:%s]",
-				  static_cast<uint32_t>(packet->GetPriority()),
-				  packet->HasUseCandidate() ? "true" : "false");
+				// QRPC_LOG(debug,
+				//   "processing STUN Binding Request [Priority:%" PRIu32 ", UseCandidate:%s]",
+				//   static_cast<uint32_t>(packet->GetPriority()),
+				//   packet->HasUseCandidate() ? "true" : "false");
 
 				// Create a success response.
 				RTC::StunPacket* response = packet->CreateSuccessResponse();
@@ -269,14 +273,14 @@ namespace base
 
 	bool IceServer::IsValidTuple(const Session *session) const
 	{
-		TRACK();
+		MS_TRACE();
 
 		return HasTuple(session) != nullptr;
 	}
 
 	void IceServer::RemoveTuple(Session *session)
 	{
-		TRACK();
+		MS_TRACE();
 
 		Session *removedSession{ nullptr };
 
@@ -336,7 +340,7 @@ namespace base
 
 	void IceServer::MayForceSelectedSession(const Session *session)
 	{
-		TRACK();
+		MS_TRACE();
 
 		if (this->state != IceState::CONNECTED && this->state != IceState::COMPLETED)
 		{
@@ -361,7 +365,7 @@ namespace base
 	void IceServer::HandleTuple(
 	  Session *session, bool hasUseCandidate, bool hasNomination, uint32_t nomination)
 	{
-		TRACK();
+		MS_TRACE();
 
 		switch (this->state)
 		{
@@ -575,7 +579,7 @@ namespace base
 
 	inline Session *IceServer::AddTuple(Session *session)
 	{
-		TRACK();
+		MS_TRACE();
 
 		auto* storedSession = HasTuple(session);
 
@@ -644,7 +648,7 @@ namespace base
 
 	inline Session *IceServer::HasTuple(const Session *session) const
 	{
-		TRACK();
+		MS_TRACE();
 
 		// Check the current selected session (if any).
 		if (this->selectedSession && this->selectedSession == session)
@@ -668,7 +672,7 @@ namespace base
 
 	inline void IceServer::SetSelectedSession(Session* storedSession)
 	{
-		TRACK();
+		MS_TRACE();
 
 		// If already the selected session do nothing.
 		if (storedSession == this->selectedSession)

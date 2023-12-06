@@ -42,8 +42,20 @@
 #if defined(MS_TRACE)
 #undef MS_TRACE
 #endif
+#if !defined(QRPC_DISABLE_MS_TRACK)
 #define MS_TRACE TRACK
+#else
+#define MS_TRACE()
+#endif
 #if defined(MS_ASSERT)
 #undef MS_ASSERT
 #endif
 #define MS_ASSERT MASSERT
+#if defined(MS_DUMP_DATA)
+#undef MS_DUMP_DATA
+#endif
+#define MS_DUMP_DATA(data, len) { logger::debug({{"hex",str::HexDump(data, len)}}); }
+#if defined(MS_DEBUG_DEV)
+#undef MS_DEBUG_DEV
+#endif
+#define MS_DEBUG_DEV TRACE

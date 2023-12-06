@@ -3,7 +3,7 @@
 #include "base/string.h"
 
 namespace base {
-  bool SDP::Answer(const WebRTCServer::Connection &c, std::string &answer) const {
+  bool SDP::Answer(WebRTCServer::Connection &c, std::string &answer) const {
     auto mit = find("media");
     if (mit == end()) {
       answer = "no media found";
@@ -20,15 +20,38 @@ namespace base {
       if ((*proto) == "UDP/DTLS/SCTP") {
         // answer udp port
         answer = AnswerAs("UDP", c);
-        return true;
       } else if ((*proto) == "TCP/DTLS/SCTP") {
         // answer tcp port
         answer = AnswerAs("TCP", c);
-        return true;
       } else {
         logger::debug({{"ev","non SCTP media protocol"}, {"media", *proto}});
         continue;
       }
+      // protocol found. set remote finger pring
+      // TODO: move this to dedicated function but type declaration of it is not easy
+      auto fp = it->find("fingerprint");
+      if (fp == it->end()) {
+        // malicious?
+        answer = "no fingerprint found";
+        ASSERT(false);
+        return false;
+      }
+      auto type = fp->find("type");
+      auto hash = fp->find("hash");
+      if (type == fp->end() || hash == fp->end()) {
+        // malicious?
+        answer = "no fingerprint type or hash found";
+        ASSERT(false);
+        return false;
+      }
+      auto algo = DtlsTransport::GetFingerprintAlgorithm(*type);
+      if (algo == DtlsTransport::FingerprintAlgorithm::NONE) {
+        answer = "unknown fingerprint algorithm:" + type->get<std::string>();
+        ASSERT(false);
+        return false;
+      }
+      c.dtls_transport().SetRemoteFingerprint({.algorithm = algo, .value = *hash});
+      return true;
     }
     answer = "no data channel media found";
     return false;
@@ -67,8 +90,8 @@ a=max-message-size:%u
     now, now, addr,
     port, proto.c_str(),
     AssignPriority(1), addr, port,
-    c.ice_server()->GetUsernameFragment().c_str(),
-    c.ice_server()->GetPassword().c_str(),
+    c.ice_server().GetUsernameFragment().c_str(),
+    c.ice_server().GetPassword().c_str(),
     c.server().fingerprint().c_str(),
     c.server().config().sctp_send_buffer_size
   );

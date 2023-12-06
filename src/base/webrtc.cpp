@@ -353,6 +353,9 @@ int WebRTCServer::Connection::RunDtlsTransport() {
   }
   return QRPC_OK;
 }
+void WebRTCServer::Connection::DtlsEstablished() {
+  sctp_association_->TransportConnected();
+}
 int WebRTCServer::Connection::OnPacketReceived(Session *session, const uint8_t *p, size_t sz) {
   // Check if it's STUN.
   if (RTC::StunPacket::IsStun(p, sz)) {
@@ -563,11 +566,12 @@ void WebRTCServer::Connection::OnIceServerConnected(const IceServer *iceServer) 
 
   // If DTLS was already connected, notify the parent class.
   if (dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED) {
-    // TODO:
+    DtlsEstablished();
   }
 }
 void WebRTCServer::Connection::OnIceServerCompleted(const IceServer *iceServer) {
   TRACK();
+  OnIceServerConnected(iceServer);
 }
 void WebRTCServer::Connection::OnIceServerDisconnected(const IceServer *iceServer) {
   TRACK();
@@ -597,8 +601,7 @@ void WebRTCServer::Connection::OnDtlsTransportConnected(
   try {
     srtp_recv_.reset(new RTC::SrtpSession(
       RTC::SrtpSession::Type::INBOUND, srtpCryptoSuite, srtpRemoteKey, srtpRemoteKeyLen));
-    // may need to implement equivalent
-    // RTC::Transport::Connected();
+    DtlsEstablished();
   } catch (const MediaSoupError& error) {
     logger::error({{"ev","error creating SRTP receiving session"},{"reason",error.what()}});
     srtp_send_.reset();
@@ -661,9 +664,11 @@ void WebRTCServer::Connection::OnSctpAssociationSendData(
   SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) {
   TRACK();
   if (!connected()) {
-		logger::warn({{"proto","sctp"},{"ev","DTLS not connected, cannot send SCTP data"}});
+		logger::warn({{"proto","sctp"},{"ev","DTLS not connected, cannot send SCTP data"},
+      {"dtls_state",dtls_transport_->GetState()}});
+    ASSERT(false);
     return;
-  }	  
+  }
   dtls_transport_->SendApplicationData(data, len);
 }
 void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
@@ -721,6 +726,7 @@ void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
   // TODO: callback app
   auto it = streams_.find(streamId);
   if (it == streams_.end()) {
+    ASSERT((streamId % 2) == (dtls_transport_->GetLocalRole() == DtlsTransport::Role::SERVER ? 0 : 1));
     logger::debug({{"ev","SCTP message received for unknown stream, ignoring it"},{"sid",streamId}});
     return;
   }

@@ -1,4 +1,5 @@
 .PHONY: build
+BUILD := Debugs
 
 # debug/release
 MODE=debug
@@ -12,7 +13,7 @@ all:
 	bazel build :server $(BUILD_OPT) --cpu=darwin_arm64 --features=oso_prefix_is_pwd
 
 setup:
-	make -C $(CURDIR)/src/ext setup
+	make -C $(CURDIR)/src/ext setup MODE=$(MODE)
 
 build: setup all
 

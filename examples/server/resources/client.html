@@ -114,7 +114,11 @@
       const pc = new RTCPeerConnection();
 
       //Create datachannel
-      pc.createDataChannel("test");
+      const ch = pc.createDataChannel("test");
+      ch.onopen = (event)=>{
+        console.log("Data channel open", event);
+        setTimeout(() => ch.send("Hello qrpc"), 1000);
+      }
 
       //Create whip client
       const whip = new WHIPClient();

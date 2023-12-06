@@ -12,6 +12,7 @@
 #include <cstring> // std::memcpy(), std::strcmp()
 
 // need to put last for overriding MS_XXX macro (because Logger.hpp also undef MS_XXX macro)
+#define QRPC_DISABLE_MS_TRACK
 #include "base/webrtc/mpatch.h"
 
 #define LOG_OPENSSL_ERROR(desc)                                                                    \

@@ -93,6 +93,7 @@ namespace base {
 
   void UdpListener::ProcessPackets(int size) {
     int r;
+    auto now = qrpc_time_now();
     for (int i = 0; i < size; i++) {
       auto &h = read_packets_[i].msg_hdr;
       auto a = Address(h.msg_name, h.msg_namelen);
@@ -127,6 +128,8 @@ namespace base {
         read_packets_[i].msg_len
       )) < 0) {
         s->Close(QRPC_CLOSE_REASON_LOCAL, r);
+      } else {
+        dynamic_cast<UdpSession*>(s)->Touch(now);
       }
     }
   #if defined(__QRPC_USE_RECVMMSG__)

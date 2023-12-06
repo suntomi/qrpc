@@ -27,7 +27,10 @@ load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
 cc_import(
   name = "mediasoup",
   hdrs = glob(["src/ext/mediasoup/worker/include/**", "src/ext/mediasoup/worker/subprojects/**"]),
-  static_library = "src/ext/mediasoup/worker/out/Release/libmediasoup-worker.a"
+  static_library = selects.with_or({
+    ":is_debug_build": "src/ext/mediasoup/worker/out/Debug/libmediasoup-worker.a",
+    "//conditions:default": "src/ext/mediasoup/worker/out/Release/libmediasoup-worker.a",
+  })
 )
 
 cc_binary(

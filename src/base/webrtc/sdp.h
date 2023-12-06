@@ -113,7 +113,8 @@ namespace base {
     SDP(const std::string &sdp) : json(sdptransform::parse(sdp)) {}
     ~SDP() {}
   public:
-    bool Answer(const WebRTCServer::Connection &c, std::string &answer) const;
+    // connection is not const reference because it might be configured with SDP
+    bool Answer(WebRTCServer::Connection &c, std::string &answer) const;
     static bool Test();
   protected:
     std::string AnswerAs(const std::string &proto, const WebRTCServer::Connection &c) const;

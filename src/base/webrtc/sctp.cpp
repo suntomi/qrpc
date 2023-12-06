@@ -1,5 +1,5 @@
 #define MS_CLASS "SctpAssociation"
-// #define MS_LOG_DEV_LEVEL 3
+#define MS_LOG_DEV_LEVEL 3
 
 #include "base/assert.h"
 #include "base/logger.h"
@@ -11,6 +11,10 @@
 #include <cstdlib> // std::malloc(), std::free()
 #include <cstring> // std::memset(), std::memcpy()
 #include <string>
+
+// need to put last for overriding MS_XXX macro (because Logger.hpp also undef MS_XXX macro)
+#define QRPC_DISABLE_MS_TRACK
+#include "base/webrtc/mpatch.h"
 
 // Free send buffer threshold (in bytes) upon which send_cb will be executed.
 static const uint32_t SendBufferThreshold{ 256u };

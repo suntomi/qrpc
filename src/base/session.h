@@ -290,6 +290,7 @@ namespace base {
                 }
                 return next_check;
             }
+            void Touch(qrpc_time_t at) { last_active_ = at; }
         protected:
             bool AllocIovec() {
                 auto b = listener().write_buffers_.Alloc();

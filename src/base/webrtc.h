@@ -70,7 +70,7 @@ namespace base {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case DtlsTransport::Role::CLIENT:
-              stream_id_factory_.set_init(2);
+              stream_id_factory_.set_init(0); // zero is allowed to be stream id of client
               break;
             case DtlsTransport::Role::SERVER:
               stream_id_factory_.set_init(1);
@@ -85,10 +85,12 @@ namespace base {
       bool connected() const;
       WebRTCServer &server() { return sv_; }
       const WebRTCServer &server() const { return sv_; }
-      const IceServer *ice_server() const { return ice_server_.get(); }
+      const IceServer &ice_server() const { return *ice_server_.get(); }
+      DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
     public:
       int Init(std::string &uflag, std::string &pwd);
       int RunDtlsTransport();
+      void DtlsEstablished();
       std::shared_ptr<Stream> OpenStream(Stream::Config &c);
       std::shared_ptr<Stream> NewStream(Stream::Config &c);
     public:
