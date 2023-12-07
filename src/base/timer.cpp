@@ -7,10 +7,7 @@
 #endif
 
 namespace base {
-  #if defined(__ENABLE_KQUEUE__)
-  IdFactory<uint64_t> Timer::id_factory_;
-  #endif
-  int Timer::Init(Loop &l) {
+  int TimerScheduler::Init(Loop &l) {
   #if defined(__ENABLE_EPOLL__)
     if ((fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK)) < 0) {
       logger::error({{"ev","timerfd_create fails"},{"errno",Syscall::Errno()}});
@@ -36,7 +33,7 @@ namespace base {
       }
     }
     struct kevent change;
-    EV_SET(&change, id_factory_.New(), 
+    EV_SET(&change, 1, // TODO: if register multiple timers, this should be different id
       EVFILT_TIMER, EV_ADD | EV_ENABLE, NOTE_NSECONDS, qrpc_time_to_nsec(granularity_), this);
     if (::kevent(fd_, &change, 1, nullptr, 0, nullptr) != 0) {
       logger::error({{"ev","timer: kevent() fails"},{"errno",Syscall::Errno()}});
@@ -49,18 +46,37 @@ namespace base {
     }
     return QRPC_OK;    
   }
-  void Timer::Fin() {
+  void TimerScheduler::Fin() {
     if (fd_ != INVALID_FD) {
       Syscall::Close(fd_);
       fd_ = INVALID_FD;
     }
   }
-  int Timer::Start(const Handler &h, qrpc_time_t at) {
-    handlers_.insert(std::make_pair(at, h));
-    return QRPC_OK;
+  TimerScheduler::Id TimerScheduler::Start(const Handler &h, qrpc_time_t at) {
+    Id id = id_factory_.New();
+    handlers_.insert(std::make_pair(at, Entry(id, h)));
+    schedule_times_.insert(std::make_pair(id, at));
+    return id;
   }
+  bool TimerScheduler::Stop(Id id) {
+    auto i = schedule_times_.find(id);
+    if (i == schedule_times_.end()) {
+      logger::warn({{"ev","timer: id not found"},{"id",id}});
+      return false;
+    }
+    auto range = handlers_.equal_range(i->second);
+    for (auto &j = range.first; j != range.second; ++j) {
+      Entry &e = j->second;
+      if (e.id == id) {
+        handlers_.erase(j);
+        return true;
+      }
+    }
+    return false;
+  }
+
   // implement IoProcessor
-  void Timer::OnEvent(Fd fd, const Event &ev) {
+  void TimerScheduler::OnEvent(Fd fd, const Event &ev) {
     ASSERT(fd == fd_);
     if (Loop::Readable(ev)) {
       while (true) {
@@ -80,14 +96,12 @@ namespace base {
         int r;
         Loop::Timeout to;
         Loop::ToTimeout(1000, to);
-        if ((r = ::kevent(fd_, nullptr, 0, ev, 1, &to)) < 0) {
-          if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+        if ((r = ::kevent(fd_, nullptr, 0, ev, 1, &to)) <= 0) {
+          if (r == 0) {
             break;
           }
           logger::error({{"ev","kevent() fails"},{"rv",r},{"errno",Syscall::Errno()}});
           ASSERT(false);
-          break;
-        } else if (r == 0) {
           break;
         }
         expires = ev[0].data;
@@ -98,20 +112,21 @@ namespace base {
     }
     Poll();
   }
-  void Timer::Poll() {
+  void TimerScheduler::Poll() {
     qrpc_time_t now = qrpc_time_now();
     for (auto it = handlers_.begin(); it != handlers_.end(); ) {
       auto &ent = *it;
       if (ent.first > now) {
         break;
       }
-      auto handler = std::move(ent.second);
-      qrpc_time_t next = handler();
+      auto e = std::move(ent.second);
+      qrpc_time_t next = e.handler();
       it = handlers_.erase(it);
       if (next < now) {
         continue;
       }
-      handlers_.insert(std::make_pair(next, handler));
+      handlers_.insert(std::make_pair(next, e));
+      schedule_times_.insert(std::make_pair(e.id, next));
     }
   }
 }

@@ -6,7 +6,16 @@
 namespace base {
   class AlarmProcessor {
   public:
-      typedef std::function<qrpc_time_t ()> Handler;
-      virtual int Set(const Handler &h, qrpc_time_t) = 0;
-  };  
+    typedef uint64_t Id;
+    constexpr static Id INVALID_ID = 0;
+    typedef std::function<qrpc_time_t ()> Handler;
+    virtual Id Set(const Handler &h, qrpc_time_t) = 0;
+    virtual bool Cancel(Id id) = 0;
+  };
+  class NopAlarmProcessor : public AlarmProcessor {
+  public:
+    static AlarmProcessor &Instance();
+    Id Set(const Handler &, qrpc_time_t) override { ASSERT(false); return 0; }
+    bool Cancel(Id) override { ASSERT(false); return false; }
+  };
 }

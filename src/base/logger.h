@@ -99,7 +99,7 @@ namespace logger {
   }
 
   template<class... Args>
-  inline void trace(
+  inline void tracef(
     level::def lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
     const std::string &fmt, const Args... args
   ) {
@@ -113,6 +113,15 @@ namespace logger {
     const json &j
   ) {
       log(lv, file, line, func, trace_id, j);
+  }
+
+  template<class... Args>
+  inline void logf(
+    level::def lv, const std::string &fmt, const Args... args
+  ) {
+      char buffer[1024];
+      snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
+      log(lv, buffer);
   }
 
   //short hands for each severity
@@ -129,21 +138,45 @@ namespace logger {
 }
 }
 
-#define QRPC_LOG(level_, trace_id__, ...) { ::base::logger::log(::base::logger::level::level__, __FILE__, __LINE__, __func__, trace_id__, __VA_ARGS__); }
-#define QRPC_SLOG(level_, ...) QRPC_LOG(level_, ConnectionId(), __VA_ARGS__)
-#if defined(VERBOSE) || !defined(NDEBUG)
-  #define QRPC_VLOG(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
+#if !defined(NDEBUG)
+  #define QRPC_LOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+#else
+  #define QRPC_LOG(level__, ...) { ::base::logger::logf(::base::logger::level::level__, __VA_ARGS__); }
+#endif
+#if defined(VERBOSE)
+  #if !defined(NDEBUG)
+    #define QRPC_VLOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
+  #else
+    #define QRPC_VLOG(level__, ...) { ::base::logger::logf(::base::logger::level::level__, __VA_ARGS__); } 
+  #endif
 #else
   #define QRPC_VLOG(level__, ...)
 #endif
 
 #if !defined(TRACE)
-  #if defined(DEBUG)
-    #define TRACE(...) { ::base::logger::trace(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+  #if !defined(NDEBUG)
+    #define TRACE(...) { ::base::logger::tracef(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
   #else
     #define TRACE(...) // fprintf(stderr, __VA_ARGS__)
   #endif
 #endif
+
+#if !defined(TRACEJ)
+  #if !defined(NDEBUG)
+    #define TRACEJ(...) { ::base::logger::trace(::base::logger::level::trace, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+  #else
+    #define TRACEJ(...) // fprintf(stderr, __VA_ARGS__)
+  #endif
+#endif
+
+#if !defined(TRACK)
+  #if !defined(NDEBUG)
+    #define TRACK(...) { ::base::logger::tracef(::base::logger::level::debug, __FILE__, __LINE__, __func__, 0, "track"); }
+  #else
+    #define TRACK(...) // fprintf(stderr, __VA_ARGS__)
+  #endif
+#endif
+
 
 #if !defined(DIE)
   #define DIE(msg) { ::base::logger::die(msg); }

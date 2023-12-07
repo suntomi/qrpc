@@ -1,5 +1,5 @@
 
-r1=$(curl -sS http://localhost:8888/accept)
+r1=$(curl -sS http://localhost:8888/test)
 if [ "${r1}" != '{"sdp":"hoge"}' ]; then
   echo "1: Unexpected response: ${r1}"
   exit 1

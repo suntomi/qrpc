@@ -1,5 +1,12 @@
+MODE=debug
+ifeq ($(MODE),debug)
+	MS_PROFILE=Debug
+else
+	MS_PROFILE=Release
+endif
+
 setup: apply
-	make -C $(CURDIR)/mediasoup/worker libmediasoup-worker
+	make -C $(CURDIR)/mediasoup/worker libmediasoup-worker MEDIASOUP_BUILDTYPE=$(MS_PROFILE)
 	echo "remove bazel project files to force copy all subprojects files into bazel sandbox"
 	find $(CURDIR)/mediasoup/worker/subprojects -name "BUILD*" -type f -delete
 	echo "export mediasoup cpparg info"

@@ -7,6 +7,14 @@ load("//tools/bazel/libs:selects.bzl", "selects")
 
 load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
 
+config_setting(
+    name = "is_debug_build",
+    values = {
+        "compilation_mode": "dbg",
+    },
+    visibility = ["//:__pkg__"],
+)
+
 # this cannot work on OSX because wrapped version of libtool 
 # in bazel sandbox does not support --version option, which is necessary for meson.
 # I had to build mediasoup separately in makefile and use it as cc_import.
@@ -27,20 +35,26 @@ load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
 cc_import(
   name = "mediasoup",
   hdrs = glob(["src/ext/mediasoup/worker/include/**", "src/ext/mediasoup/worker/subprojects/**"]),
-  static_library = "src/ext/mediasoup/worker/out/Release/libmediasoup-worker.a"
+  static_library = selects.with_or({
+    ":is_debug_build": "src/ext/mediasoup/worker/out/Debug/libmediasoup-worker.a",
+    "//conditions:default": "src/ext/mediasoup/worker/out/Release/libmediasoup-worker.a",
+  })
 )
 
 cc_binary(
   name = "server",
   srcs = glob([
     "examples/server/main.cpp",
-    "src/qrpc.h", "src/qrpc.cpp",
+    "src/qrpc.cpp",
     "src/base/**",
+    "src/ext/libsdptransform/src/*.cpp",
+    "src/qrpc.h", 
     "src/ext/mediasoup/include/*.hpp",
     "src/ext/mediasoup/include/**/*.hpp",
     "src/ext/moodycamel/*.h",
     "src/ext/hedley/*.h",
-    "src/ext/sha1/*.h"
+    "src/ext/sha1/*.h",
+    "src/ext/libsdptransform/include/*.hpp",
   ]),
   copts = [
     "-std=c++17",
@@ -73,6 +87,7 @@ cc_binary(
     "src/ext/mediasoup/worker/subprojects/libsrtp-2.5.0/include",
     "src/ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
     "src/ext/mediasoup/worker/subprojects/usrsctp-4e06feb01cadcd127d119486b98a4bd3d64aa1e7/usrsctplib",
+    "src/ext/libsdptransform/include",
   ],
   deps = [":mediasoup", "//src/ext/cares:ares"],
   linkstatic = True,

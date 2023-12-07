@@ -66,14 +66,12 @@ namespace base {
         int r;
         Loop::Timeout to;
         Loop::ToTimeout(1000, to);
-        if ((r = ::kevent(fd_, nullptr, 0, ev, SIGRTMAX, &to)) < 0) {
-          if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+        if ((r = ::kevent(fd_, nullptr, 0, ev, SIGRTMAX, &to)) <= 0) {
+          if (r == 0) {
             break;
           }
           logger::error({{"ev","kevent() fails"},{"rv",r},{"errno",Syscall::Errno()}});
           ASSERT(false);
-          break;
-        } else if (r == 0) {
           break;
         }
         for (int i = 0; i < r; i++) {

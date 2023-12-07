@@ -20,7 +20,7 @@
 ### WebRtcTransport::ProcessStunPacketFromWebRtcServerが呼ばれる流れ
 - WebRtcServer::OnStunDataReceived
   - すでにtransportが作成されている場合ないし、パケットに含まれたIce userfragmentでmapLocalIceUsernameFragmentWebRtcTransportの中にwebrtctransportが見つかった場合(なぜSTUNに含まれているのか？)
-  - usernamefragmentはice candidateとしてシグナリングしてきたクライアントに送られているはずだが、クライアントがSTUNリクエストを送るというのか？
+  - usernamefragmentはice candidateとしてシグナリングしてきたクライアントに送られているはずだが、クライアントがSTUNリクエストを送るというのか？ => 送るということのようだ。iceで接続先が通信可能か調べるときにstunパケットを使う
 
 ### WebRtcTransport::OnStunDataReceived
 - これは上の流れですでにtransportが登録された後のようだ

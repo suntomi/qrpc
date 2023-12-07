@@ -25,17 +25,20 @@ typedef struct {} Signal;
 namespace base {
   class SignalHandler : public IoProcessor {
   public:
-    typedef std::function<void(int, const Signal &)> Receiver;
+    typedef std::function<SignalHandler& (SignalHandler &)> Initializer;
+    typedef std::function<void (int, const Signal &)> Receiver;
     // TODO: make it singleton
+    // fd_ should be -1 so that signalfd(fd, ...) will create fd for first call of Register()
     SignalHandler() : fd_(-1), receivers_() {
       for (int i = 0; i < SIGRTMAX; i++) { receivers_[i] = Nop(); }
       sigemptyset(&mask_);
     }
     virtual ~SignalHandler() { if (fd_ >= 0) { Syscall::Close(fd_); fd_ = -1; } }
+    inline bool Init(Loop &l, const Initializer &init) { return init(*this).Start(l); }
     inline Fd fd() const { return fd_; }
     inline SignalHandler &Ignore(int sig) {
       return Handle(sig, [](int sig, const Signal &s) {
-        logger::info({{"ev","signal ignored"},{"sig",sig}});
+        TRACEJ({{"ev","signal ignored"},{"sig",sig}});
       });
     }
     SignalHandler &Handle(int sig, const Receiver &r) {

@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+  <head>
+    <title>WebRTC with QRPC base</title>
+  </head>
+  <body>
+    <script>
+      class WHIPClient
+      {
+        constructor()
+        {
+          //Ice properties
+          this.iceUsername = null;
+          this.icePassword = null;
+          //Pending candidadtes
+          this.candidates = [];
+          this.endOfcandidates = false;
+        }
+
+        async connect(pc, url)
+        {
+          //If already publishing
+          if (this.pc)
+            throw new Error("Already publishing")
+
+          //Store pc object and token
+          this.pc = pc;
+          
+          //Listen for state change events
+          pc.onconnectionstatechange = (event) =>{
+            console.log("Connection state change", pc.connectionState);
+            switch(pc.connectionState) {
+              case "connected":
+                // The connection has become fully connected
+                break;
+              case "disconnected":
+              case "failed":
+                // One or more transports has terminated unexpectedly or in an error
+                break;
+              case "closed":
+                // The connection has been closed
+                break;
+            }
+          }
+
+          //Listen for candidates
+          pc.onicecandidate = (event)=>{
+            if (event.candidate) 
+            {
+              console.log("Ice candidate", event.candidate);
+              //Ignore candidates not from the first m line
+              if (event.candidate.sdpMLineIndex>0)
+                //Skip
+                return;
+              //Store candidate
+              this.candidates.push(event.candidate);                                         
+            } else {
+              console.log("no more Ice candidate", event.candidate);
+              //No more candidates
+              this.endOfcandidates = true;
+            }
+          }
+          //Create SDP offer
+          const offer = await pc.createOffer();
+
+          //Request headers
+          const headers = {
+            "Content-Type": "application/sdp"
+          };
+
+          //Do the post request to the WHIP endpoint with the SDP offer
+          const fetched = await fetch(url, {
+            method: "POST",
+            body: offer.sdp,
+            headers
+          });
+
+          if (!fetched.ok)
+            throw new Error("Request rejected with status " + fetched.status)
+
+          //Get the SDP answer
+          const answer = await fetched.text();
+
+          console.log("whip answer", answer)
+
+          //Set local description
+          await pc.setLocalDescription(offer);
+
+          this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)\r\n/)[1];
+          this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)\r\n/)[1];
+          
+          console.log("ice:uflag/pwd", this.iceUsername, this.icePassword)
+
+          //And set remote description
+          await pc.setRemoteDescription({type:"answer",sdp: answer});
+        }
+
+        async close()
+        {
+          if (!this.pc) {
+            // Already stopped
+            return
+          }
+
+          //Close peerconnection
+          this.pc.close();
+
+          //Null
+          this.pc = null;
+        }
+      };
+
+      //Create peerconnection
+      const pc = new RTCPeerConnection();
+
+      //Create datachannel
+      const ch = pc.createDataChannel("test");
+      ch.onopen = (event)=>{
+        console.log("Data channel open", event);
+        setInterval(() => ch.send("Hello qrpc"), 1000);
+      }
+      ch.onmessage = (event)=>{
+        console.log("Data channel message", event);
+      }
+
+      //Create whip client
+      const whip = new WHIPClient();
+
+      const url = "http://localhost:8888/accept";
+      //Start publishing
+      whip.connect(pc, url);
+    </script>
+  </body>
+</html>

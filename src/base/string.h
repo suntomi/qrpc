@@ -6,7 +6,7 @@
 
 namespace base {
 namespace str {
-  inline std::string HexDump(uint8_t *p, size_t len) {
+  inline std::string HexDump(const uint8_t *p, size_t len) {
     constexpr char hex[] = "0123456789abcdef";
     std::string s;
     for (size_t i = 0; i < len; i++) {
@@ -27,6 +27,12 @@ namespace str {
     int r = vsnprintf(buff, sz, fmt, ap);
     va_end(ap);
     return r;
+  }
+  template<class... Args>
+  static std::string Format(const char *fmt, const Args... args) {
+    static thread_local char buff[1024];
+    Vprintf(buff, sizeof(buff), fmt, args...);
+    return std::string(buff);
   }
   inline int CmpNocase(const std::string &a, const std::string &b, size_t n) {
     return strncasecmp(a.c_str(), b.c_str(), n);

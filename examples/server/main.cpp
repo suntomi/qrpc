@@ -3,17 +3,36 @@
 #include "base/timer.h"
 #include "base/logger.h"
 #include "base/http.h"
+#include "base/webrtc.h"
 #include "base/string.h"
+#include "base/webrtc/sdp.h"
 #include "nlohmann/json.hpp"
 
 using json = nlohmann::json;
 using namespace base;
 
-bool SetupSignalHandler(SignalHandler &sh, Loop &l) {
-    return sh.Ignore(SIGPIPE)
-        .Handle(SIGINT, [](int sig, const Signal &s) {
+int main(int argc, char *argv[]) {
+    bool alive = true;
+    // if (!SDP::Test()) {
+    //     exit(0);
+    // }
+    // loop and timerscheduler must be live longer than other objects
+    // and loop must be more longer than timerscheduler
+    Loop l; {
+    if (l.Open(1024) < 0) {
+        DIE("fail to init loop");
+    }
+    TimerScheduler t(qrpc_time_msec(10)); { // 10ms resolution
+    if (t.Init(l) < 0) {
+        DIE("fail to start timer");
+    }
+    SignalHandler sh;
+    // in here, return type annotation is required for making compiler happy
+    if (!sh.Init(l, [&alive](SignalHandler &s) -> SignalHandler & {
+        return s.Ignore(SIGPIPE)
+        .Handle(SIGINT, [&alive](int sig, const Signal &s) {
             logger::info("SIGINT");
-            exit(0);
+            alive = false;
         })
         .Handle(SIGTERM, [](int sig, const Signal &s) {
             logger::info("SIGTERM");
@@ -27,28 +46,63 @@ bool SetupSignalHandler(SignalHandler &sh, Loop &l) {
         })
         .Handle(SIGUSR2, [](int sig, const Signal &s) {
             logger::info("SIGUSR2");
-        }).Start(l);
-}
-
-int main(int argc, char *argv[]) {
-    Loop l;
-    SignalHandler sh;
-    Timer t(qrpc_time_sec(1)); // 1 sec
-    if (l.Open(1024) < 0) {
-        logger::error("fail to init loop");
-        exit(1);
-    }
-    if (!SetupSignalHandler(sh, l)) {
-        logger::error("fail to setup signal handler");
-        exit(1);
-    }
-    if (t.Init(l) < 0) {
-        logger::error("fail to start timer");
-        exit(1);
+        });
+    })) {
+        DIE("fail to setup signal handler");
     }
     HttpServer s(l);
-    HttpRouter r;
-    r.Route(RGX("/accept"), [](HttpSession &s) {
+    AdhocWebRTCServer w(l, WebRTCServer::Config {
+        .ports = {
+            {.protocol = WebRTCServer::Port::UDP, .ip = "", .port = 11111, .priority = 1},
+            {.protocol = WebRTCServer::Port::TCP, .ip = "", .port = 11111, .priority = 100}
+        },
+        .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
+        .sctp_send_buffer_size = 256 * 1024,
+        .udp_session_timeout = qrpc_time_sec(30),
+        .connection_timeout = qrpc_time_sec(60),
+        .alarm_processor = t,
+    }, [](Stream &s, const char *p, size_t sz) {
+        auto pl = std::string(p, sz);
+        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"pl", pl}});
+        auto data = s.label() + ":" + pl;
+        return s.Send(data.c_str(), data.length()); // echo
+    });
+    if (w.Init() < 0) {
+        DIE("fail to init webrtc");
+    }
+    std::filesystem::path p(__FILE__);
+    auto htmlpath = p.parent_path().string() + "/resources/client.html";
+    HttpRouter r = HttpRouter().
+    Route(std::regex("/"), [&htmlpath](HttpSession &s) {
+        size_t htmlsz;
+        auto html = Syscall::ReadFile(htmlpath, &htmlsz);
+        if (html == nullptr) {
+            DIE("fail to read html at " + htmlpath);
+        }
+        auto htmlen = std::to_string(htmlsz);
+        HttpHeader h[] = {
+            {.key = "Content-Type", .val = "text/html"},
+            {.key = "Content-Length", .val = htmlen.c_str()}
+        };
+        s.Write(HRC_OK, h, 2, html.get(), htmlsz);
+        return nullptr;
+    }).
+    Route(std::regex("/accept"), [&w](HttpSession &s) {
+        int r;
+        std::string sdp;
+        if ((r = w.NewConnection(s.fsm().body(), sdp)) < 0) {
+            logger::error("fail to create connection");
+            s.ServerError("server error %s", r);
+        }
+        std::string sdplen = std::to_string(sdp.length());
+        HttpHeader h[] = {
+            {.key = "Content-Type", .val = "application/sdp"},
+            {.key = "Content-Length", .val = sdplen.c_str()}
+        };
+        s.Write(HRC_OK, h, 2, sdp.c_str(), sdp.length());
+	    return nullptr;
+    }).
+    Route(std::regex("/test"), [](HttpSession &s) {
         json j = {
             {"sdp", "hoge"}
         };
@@ -60,28 +114,27 @@ int main(int argc, char *argv[]) {
         };
         s.Write(HRC_OK, h, 2, body.c_str(), body.length());
 	    return nullptr;
-    }).Route(RGX("/ws"), [](HttpSession &s) {
+    }).
+    Route(std::regex("/ws"), [](HttpSession &s) {
         return WebSocketServer::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
             // echo server
             return ws.Send(p, sz);
         });
     });
     if (!s.Listen(8888, r)) {
-        logger::error("fail to listen");
-        exit(1);
+        DIE("fail to listen on http");
     }
-    UdpListener::Config c = { .alarm_processor = &t, .session_timeout_sec = 5};
     AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
-    }, &c);
+    }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
     if (!us.Listen(9999)) {
-        logger::error("fail to listen");
-        exit(1);
+        DIE("fail to listen on UDP");
     }
-    while (true) {
+    while (alive) {
         l.Poll();
     }
+    }}
     return 0;
 }

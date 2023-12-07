@@ -173,10 +173,11 @@ namespace base {
             const char *val;
         };
     public:
-        HttpSession(SessionFactory &f, Fd fd, const Address &addr) : TcpSession(f, fd, addr) {
+        HttpSession(TcpListener &f, Fd fd, const Address &addr) : TcpSession(f, fd, addr) {
             fsm_.reset(1024);
         }
         ~HttpSession() override {}
+        inline TcpListener &listener() { return factory().to<TcpListener>(); }
         const HttpFSM &req() const { return fsm_; }
         const HttpFSM &fsm() const { return fsm_; }
         HttpFSM &fsm() { return fsm_; }
@@ -229,6 +230,10 @@ namespace base {
         template<class... Args>
         int Unavailable(const std::string &fmt, const Args... args) {
             return Error(HRC_SERVICE_UNAVAILABLE, fmt, args...);
+        }
+        template<class... Args>
+        int ServerError(const std::string &fmt, const Args... args) {
+            return Error(HRC_SERVER_ERROR, fmt, args...);
         }
     private:
         HttpFSM fsm_;
@@ -412,16 +417,16 @@ namespace base {
         HttpFSM m_sm;
     public:
         // create client/server session from begining
-        WebSocketSession(SessionFactory &f, Fd fd, const Address &addr, const std::string &hostname) : 
+        WebSocketSession(TcpListener &f, Fd fd, const Address &addr, const std::string &hostname) : 
             TcpSession(f, fd, addr),
             m_state(state_client_handshake),
             m_sm_body_read(0), m_hostname(hostname), m_ctrl_frame(), m_sm() {}
-        WebSocketSession(SessionFactory &f, Fd fd, const Address &addr) : 
+        WebSocketSession(TcpListener &f, Fd fd, const Address &addr) : 
             TcpSession(f, fd, addr),
             m_state(state_server_handshake),
             m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {}
         // for upgrading from http session (as server session)
-        WebSocketSession(SessionFactory &f, Fd fd, const Address &addr, HttpFSM &fsm) : 
+        WebSocketSession(TcpListener &f, Fd fd, const Address &addr, HttpFSM &fsm) : 
             TcpSession(f, fd, addr), m_state(state_established),
             m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {
             m_sm.move_from(fsm);
@@ -429,6 +434,7 @@ namespace base {
         ~WebSocketSession() override {}
 
         inline bool is_client() const { return m_hostname.length() > 0; }
+        inline TcpListener &listener() { return factory().to<TcpListener>(); }
     public:
         // implements Session
         int Send(const char *p, size_t sz) override {
@@ -473,7 +479,6 @@ namespace base {
                     break;
                 }
             }
-            delete this;
         }
     public:
         inline void init_frame() { m_flen = 0; m_read = 0; m_mask_idx = 0; }
@@ -955,7 +960,7 @@ namespace base {
     class AdhocWebSocketSession : public WebSocketSession {
     public:
         typedef std::function<int (WebSocketSession &, const char *, size_t)> RecvCallback;
-        AdhocWebSocketSession(SessionFactory &f, Fd fd, const Address &addr, HttpFSM &fsm, RecvCallback cb) :
+        AdhocWebSocketSession(TcpListener &f, Fd fd, const Address &addr, HttpFSM &fsm, RecvCallback cb) :
             WebSocketSession(f, fd, addr, fsm), cb_(cb) {}
         ~AdhocWebSocketSession() {}
         int OnRead(const char *p, size_t l) override {
@@ -974,11 +979,11 @@ namespace base {
         static inline WebSocketSession *Upgrade(HttpSession &s) {
             static_assert(std::is_base_of<WebSocketSession, WS>(), "S must be a descendant of WebSocketSession");
             // ws will be created with established state
-            auto ws = new WS(s.factory(), s.fd(), s.addr(), s.fsm());
+            auto ws = new WS(s.listener(), s.fd(), s.addr(), s.fsm());
             return SetupUpgrade(ws, s);
         }
         static inline WebSocketSession *Upgrade(HttpSession &s, AdhocWebSocketSession::RecvCallback cb) {
-            auto ws = new AdhocWebSocketSession(s.factory(), s.fd(), s.addr(), s.fsm(), cb);
+            auto ws = new AdhocWebSocketSession(s.listener(), s.fd(), s.addr(), s.fsm(), cb);
             return SetupUpgrade(ws, s);
         }
         template <class WS>
@@ -1067,7 +1072,7 @@ namespace base {
         typedef HttpServer::Callback Handler;
         typedef HttpFSM Request;
         HttpRouter() : route_() {}
-        HttpRouter &Route(const std::regex &pattern, Handler h) {
+        HttpRouter &Route(const std::regex &pattern, const Handler &h) {
             route_.push_back(std::make_pair(pattern, h));
             return *this;
         }

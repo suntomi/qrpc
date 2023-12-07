@@ -18,6 +18,8 @@ struct BlockTrait {
   typedef struct BlockTag {
     alignas(E) char p[sizeof(E)];
     ManualConstructedOf<B> bss;
+    BlockTag() = default;
+    BlockTag(BlockTag&&) noexcept = default;
     inline void Init() { bss.Init(); }
     inline void Destroy() { bss.Destroy(); }
     static inline B *Bss(void *ptr) {
@@ -29,11 +31,13 @@ template <class E>
 struct BlockTrait<E, EmptyBSS> {
   STATIC_ASSERT((sizeof(E) % 8) == 0, "allocator target type should have 8 byte alignment");
   typedef struct BlockTag {
-    char p[sizeof(E)];
+    alignas(E) char p[sizeof(E)];
+    BlockTag() = default;
+    BlockTag(BlockTag&&) noexcept = default;
     inline void Init() {}
     inline void Destroy() {}
     static inline EmptyBSS *Bss(void *ptr) {
-      return nullptr;   
+      return nullptr;
     }
   } Block;  
 };
@@ -51,6 +55,8 @@ class Allocator {
     ASSERT(chunk_size_ > 0);
     GrowChunk();
   }
+  Allocator(Allocator &&a) noexcept : 
+    chunks_(std::move(a.chunks_)), total_block_(a.total_block_), chunk_size_(a.chunk_size_), pool_(std::move(a.pool_)) {}
   ~Allocator() {
     for (auto &c : chunks_) {
       auto pb = c.get();
