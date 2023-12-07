@@ -70,6 +70,9 @@ void WebRTCServer::Fin() {
 }
 void WebRTCServer::CloseConnection(Connection &c) {
   // how to close?
+  logger::info({{"ev","close webrtc connection"},{"uflag",c.ice_server().GetUsernameFragment()}});
+  connections_.erase(c.ice_server().GetUsernameFragment());
+  // c might be freed here
 }
 int WebRTCServer::NewConnection(const std::string &client_sdp, std::string &server_sdp) {
   logger::info({{"ev","new connection"},{"client_sdp", client_sdp}});
@@ -421,6 +424,7 @@ int WebRTCServer::Connection::OnDtlsDataReceived(Session *session, const uint8_t
     logger::warn({{"ev","ignoring DTLS data coming from an invalid session"},{"proto","dtls"}});
     return QRPC_OK;
   }
+  Touch(qrpc_time_now());
   // Trick for clients performing aggressive ICE regardless we are ICE-Lite.
   ice_server_->MayForceSelectedSession(session);
   // Check that DTLS status is 'connecting' or 'connected'.

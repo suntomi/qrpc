@@ -38,7 +38,7 @@ namespace base {
                 if (!closed()) {
                     logger::info({
                         {"ev", "close"},{"fd",fd()},{"addr", addr().str()},
-                        {"rc", reason.code},{"dc", reason.detail_code},{"rmsg", reason.msg}
+                        {"code", reason.code},{"dcode", reason.detail_code},{"rmsg", reason.msg}
                     });
                     SetCloseReason(reason);
                     factory_.Close(*this);

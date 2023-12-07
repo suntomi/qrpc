@@ -24,13 +24,14 @@ namespace base {
         // answer tcp port
         answer = AnswerAs("TCP", c);
       } else {
-        logger::debug({{"ev","non SCTP media protocol"}, {"media", *proto}});
+        logger::debug({{"ev","non SCTP media protocol"}, {"proto", *proto}});
         continue;
       }
       // protocol found. set remote finger pring
       // TODO: move this to dedicated function but type declaration of it is not easy
       auto fp = it->find("fingerprint");
       if (fp == it->end()) {
+        logger::error({{"ev","malform sdp"},{"reason","no fingerprint"}, {"as_json", dump()}});
         // malicious?
         answer = "no fingerprint found";
         ASSERT(false);
@@ -39,6 +40,7 @@ namespace base {
       auto type = fp->find("type");
       auto hash = fp->find("hash");
       if (type == fp->end() || hash == fp->end()) {
+        logger::error({{"ev","malform sdp"},{"reason","no fingerprint type or hash"}, {"as_json", dump()}});
         // malicious?
         answer = "no fingerprint type or hash found";
         ASSERT(false);
