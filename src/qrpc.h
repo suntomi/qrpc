@@ -610,6 +610,8 @@ QAPI_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n);
 
 QAPI_THREADSAFE qrpc_time_t qrpc_time_now();
 
+QAPI_INLINE qrpc_time_t qrpc_time_max() { return (UINT64_MAX); }
+
 QAPI_THREADSAFE qrpc_unix_time_t qrpc_time_unix();
 //ignore EINTR
 QAPI_THREADSAFE qrpc_time_t qrpc_time_sleep(qrpc_time_t d);

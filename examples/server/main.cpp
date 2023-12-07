@@ -56,14 +56,16 @@ int main(int argc, char *argv[]) {
             {.protocol = WebRTCServer::Port::UDP, .ip = "", .port = 11111, .priority = 1},
             {.protocol = WebRTCServer::Port::TCP, .ip = "", .port = 11111, .priority = 100}
         },
-        .ca = "", .cert = "", .key = "",
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .sctp_send_buffer_size = 256 * 1024,
         .udp_session_timeout = qrpc_time_sec(30),
+        .connection_timeout = qrpc_time_sec(60),
         .alarm_processor = t,
     }, [](Stream &s, const char *p, size_t sz) {
-        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"pl", std::string(p, sz)}});
-        return s.Send(p, sz); // echo
+        auto pl = std::string(p, sz);
+        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"pl", pl}});
+        auto data = s.label() + ":" + pl;
+        return s.Send(data.c_str(), data.length()); // echo
     });
     if (w.Init() < 0) {
         DIE("fail to init webrtc");

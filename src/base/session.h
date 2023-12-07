@@ -50,6 +50,19 @@ namespace base {
             virtual int OnConnect() { return QRPC_OK; }
             virtual void OnShutdown() {}
             virtual int OnRead(const char *p, size_t sz) = 0;
+        public:
+            static inline bool CheckTimeout(
+                qrpc_time_t last_active, qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check
+            ) {
+                ASSERT(timeout > 0);
+                auto diff = now - last_active;
+                if (diff > timeout) {
+                    return true;
+                } else {
+                    next_check = now + timeout - diff;
+                    return false;
+                }
+            }        
         protected:
             inline void SetCloseReason(const CloseReason &reason) {
                 close_reason_.reset(new CloseReason(reason));
@@ -263,32 +276,13 @@ namespace base {
             ~UdpSession() override {}
             UdpListener &listener() { return factory().to<UdpListener>(); }
             const UdpListener &listener() const { return factory().to<UdpListener>(); }
-            bool timeout(qrpc_time_t &next_check) const {
-                auto to = listener().timeout();
-                ASSERT(to > 0);
-                auto now = qrpc_time_now();
-                auto diff = now - last_active_;
-                if (diff > to) {
-                    return true;
-                } else {
-                    next_check = now + to - diff;
-                    return false;
-                }
+            bool timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
+                return CheckTimeout(last_active_, qrpc_time_now(), timeout, next_check);
             }
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
             // implements Session
             int Send(const char *data, size_t sz) override {
                 return Write(data, sz, addr());
-            }
-            // called from AlarmProcessor
-            qrpc_time_t CheckTimeout() {
-                qrpc_time_t next_check;
-                if (timeout(next_check)) {
-                    Close(QRPC_CLOSE_REASON_LOCAL, 0, "session timeout");
-                    delete this;
-                    return 0; // stop alarm
-                }
-                return next_check;
             }
             void Touch(qrpc_time_t at) { last_active_ = at; }
         protected:
@@ -411,16 +405,42 @@ namespace base {
                 Syscall::Close(fd_);
                 fd_ = INVALID_FD;
                 return false;
-            }            
+            }
+            if (timeout() > 0) {
+                alarm_processor_.Set(
+                    [this]() { return this->CheckTimeout(); }, qrpc_time_now() + timeout()
+                );
+            }
             return true;
         }
         void Close() {
             if (fd_ != INVALID_FD) {
                 loop_.Del(fd_);
                 Syscall::Close(fd_);
+                fd_ = INVALID_FD;
+            }
+            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+                alarm_processor_.Cancel(alarm_id_);
+                alarm_id_ = AlarmProcessor::INVALID_ID;
             }
         }
         int Read();
+        qrpc_time_t CheckTimeout() {
+            qrpc_time_t now = qrpc_time_now();
+            qrpc_time_t nearest_check = now + timeout_;
+            for (auto s = sessions_.begin(); s != sessions_.end();) {
+                qrpc_time_t next_check;
+                auto cur = s++;
+                if (dynamic_cast<UdpSession *>(cur->second)->timeout(now, timeout_, next_check)) {
+                    // inside Close, the entry will be erased
+                    cur->second->Close(QRPC_CLOSE_REASON_LOCAL, 0, "session timeout");
+                    delete cur->second;
+                } else {
+                    nearest_check = std::min(nearest_check, next_check);
+                }
+            }
+            return nearest_check;
+        }
         void SetupPacket();
         void ProcessPackets(int count);
         // implements IoProcessor
@@ -450,6 +470,7 @@ namespace base {
         AlarmProcessor &alarm_processor_;
         int batch_size_;
         qrpc_time_t timeout_;
+        AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
         bool overflow_supported_;
         FactoryMethod factory_method_;
         std::vector<mmsghdr> read_packets_;

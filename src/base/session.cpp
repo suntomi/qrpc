@@ -111,14 +111,6 @@ namespace base {
           delete s;
           continue;
         }
-        if (timeout() > 0) {
-          auto h = [s]() { return dynamic_cast<UdpSession *>(s)->CheckTimeout(); };
-          if (alarm_processor_.Set(h, qrpc_time_now() + timeout()) < 0) {
-            s->Close(QRPC_CLOSE_REASON_LOCAL, QRPC_EALLOC, "fail to register alarm");
-            delete s;
-            continue;
-          }
-        }
       } else {
         s = exists->second;
       }
@@ -128,6 +120,7 @@ namespace base {
         read_packets_[i].msg_len
       )) < 0) {
         s->Close(QRPC_CLOSE_REASON_LOCAL, r);
+        delete s;
       } else {
         dynamic_cast<UdpSession*>(s)->Touch(now);
       }

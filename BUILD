@@ -7,6 +7,14 @@ load("//tools/bazel/libs:selects.bzl", "selects")
 
 load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
 
+config_setting(
+    name = "is_debug_build",
+    values = {
+        "compilation_mode": "dbg",
+    },
+    visibility = ["//:__pkg__"],
+)
+
 # this cannot work on OSX because wrapped version of libtool 
 # in bazel sandbox does not support --version option, which is necessary for meson.
 # I had to build mediasoup separately in makefile and use it as cc_import.

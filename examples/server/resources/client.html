@@ -117,7 +117,10 @@
       const ch = pc.createDataChannel("test");
       ch.onopen = (event)=>{
         console.log("Data channel open", event);
-        setTimeout(() => ch.send("Hello qrpc"), 1000);
+        setInterval(() => ch.send("Hello qrpc"), 1000);
+      }
+      ch.onmessage = (event)=>{
+        console.log("Data channel message", event);
       }
 
       //Create whip client

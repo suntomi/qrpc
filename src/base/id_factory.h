@@ -12,11 +12,18 @@ class IdFactory {
     (((NUMBER)0x80) << (8 * (sizeof(NUMBER) - 1))) + 
     ((((NUMBER)0x80) << (8 * (sizeof(NUMBER) - 1))) - 1);
 public:
-  IdFactory(NUMBER init = 0) : seed_(init), limit_(kLimit), incr_(1), init_(init) {}
-  void set_limit(NUMBER limit) { limit_ = limit; }
-  void set_incr(NUMBER incr) { incr_ = incr; }
-  void set_init(NUMBER init) { init_ = init; seed_ = init; }
-
+  IdFactory(NUMBER init = 1, NUMBER incr = 1, NUMBER limit = kLimit) {
+    configure(init, incr, limit);
+  }
+  void configure(NUMBER init, NUMBER incr, NUMBER limit = kLimit) {
+    limit_ = limit;
+    incr_ = incr;
+    init_ = init;
+    // New() adds incr_ to seed_ before returning it, so we need to subtract
+    // to return init for first return value of New()
+    auto true_init = init - incr;
+    seed_ = true_init;
+  }
   NUMBER New() {
     while (true) {
       NUMBER expect = seed_;

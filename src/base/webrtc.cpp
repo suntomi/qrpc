@@ -52,11 +52,24 @@ int WebRTCServer::Init() {
         return QRPC_ENOTSUPPORT;
     }
   }
+  if (config_.connection_timeout > 0) {
+    alarm_processor().Set(
+      [this]() { return this->CheckTimeout(); },
+      qrpc_time_now() + config_.connection_timeout
+    );
+  }
   return QRPC_OK;
 }
 void WebRTCServer::Fin() {
   GlobalFin();
+  if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+    alarm_processor().Cancel(alarm_id_);
+    alarm_id_ = AlarmProcessor::INVALID_ID;
+  }
   // cleanup TCP/UDP ports
+}
+void WebRTCServer::CloseConnection(Connection &c) {
+  // how to close?
 }
 int WebRTCServer::NewConnection(const std::string &client_sdp, std::string &server_sdp) {
   logger::info({{"ev","new connection"},{"client_sdp", client_sdp}});
@@ -194,6 +207,11 @@ int WebRTCServer::TcpSession::OnRead(const char *p, size_t sz) {
   }
   return connection_->OnPacketReceived(this, up, sz);
 }
+void WebRTCServer::TcpSession::OnShutdown() {
+  if (connection_ != nullptr) {
+    connection_->OnTcpSessionShutdown(this);
+  }
+}
 int WebRTCServer::UdpSession::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
   if (connection_ == nullptr) {
@@ -204,6 +222,11 @@ int WebRTCServer::UdpSession::OnRead(const char *p, size_t sz) {
     }
   }
   return connection_->OnPacketReceived(this, up, sz);
+}
+void WebRTCServer::UdpSession::OnShutdown() {
+  if (connection_ != nullptr) {
+    connection_->OnUdpSessionShutdown(this);
+  }
 }
 
 
@@ -253,18 +276,7 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
   return QRPC_OK;
 }
 std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(Stream::Config &c) {
-  if (c.params.streamId == 0) {
-    size_t cnt = 0;
-    do {
-      // auto allocate
-      c.params.streamId = stream_id_factory_.New();
-    } while (streams_.find(c.params.streamId) != streams_.end() && ++cnt <= 0xFFFF);
-    if (cnt > 0xFFFF) {
-      ASSERT(false);
-      logger::error({{"ev","cannot allocate stream id"}});
-      return nullptr;
-    }
-  } else if (streams_.find(c.params.streamId) != streams_.end()) {
+  if (streams_.find(c.params.streamId) != streams_.end()) {
     ASSERT(false);
     logger::error({{"ev","stream id already used"},{"sid",c.params.streamId}});
     return nullptr;
@@ -276,10 +288,21 @@ std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(Stream::Config &c) {
     return nullptr;
   }
   logger::info({{"ev","new stream created"},{"sid",s->id()}});
+  streams_.emplace(s->id(), s);
   return s;
 }
 std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(Stream::Config &c) {
   int r;
+  size_t cnt = 0;
+  do {
+    // auto allocate
+    c.params.streamId = stream_id_factory_.New();
+  } while (streams_.find(c.params.streamId) != streams_.end() && ++cnt <= 0xFFFF);
+  if (cnt > 0xFFFF) {
+    ASSERT(false);
+    logger::error({{"ev","cannot allocate stream id"}});
+    return nullptr;
+  }
   auto s = NewStream(c);
   if (s == nullptr) { return nullptr; }
   // allocate stream Id
@@ -353,9 +376,16 @@ int WebRTCServer::Connection::RunDtlsTransport() {
   }
   return QRPC_OK;
 }
-void WebRTCServer::Connection::DtlsEstablished() {
+void WebRTCServer::Connection::OnDtlsEstablished() {
   sctp_association_->TransportConnected();
 }
+void WebRTCServer::Connection::OnTcpSessionShutdown(Session *s) {
+  ice_server_->RemoveTuple(s);
+}
+void WebRTCServer::Connection::OnUdpSessionShutdown(Session *s) {
+  ice_server_->RemoveTuple(s);
+}
+
 int WebRTCServer::Connection::OnPacketReceived(Session *session, const uint8_t *p, size_t sz) {
   // Check if it's STUN.
   if (RTC::StunPacket::IsStun(p, sz)) {
@@ -523,7 +553,7 @@ int WebRTCServer::Connection::Open(Stream &s) {
 // implements IceServer::Listener
 void WebRTCServer::Connection::OnIceServerSendStunPacket(
   const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) {
-  TRACK();
+  // TRACK();
   session->Send(reinterpret_cast<const char *>(packet->GetData()), packet->GetSize());
   // may need to implement equivalent
   // RTC::Transport::DataSent(packet->GetSize());
@@ -566,7 +596,7 @@ void WebRTCServer::Connection::OnIceServerConnected(const IceServer *iceServer) 
 
   // If DTLS was already connected, notify the parent class.
   if (dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED) {
-    DtlsEstablished();
+    OnDtlsEstablished();
   }
 }
 void WebRTCServer::Connection::OnIceServerCompleted(const IceServer *iceServer) {
@@ -601,7 +631,7 @@ void WebRTCServer::Connection::OnDtlsTransportConnected(
   try {
     srtp_recv_.reset(new RTC::SrtpSession(
       RTC::SrtpSession::Type::INBOUND, srtpCryptoSuite, srtpRemoteKey, srtpRemoteKeyLen));
-    DtlsEstablished();
+    OnDtlsEstablished();
   } catch (const MediaSoupError& error) {
     logger::error({{"ev","error creating SRTP receiving session"},{"reason",error.what()}});
     srtp_send_.reset();
@@ -726,7 +756,6 @@ void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
   // TODO: callback app
   auto it = streams_.find(streamId);
   if (it == streams_.end()) {
-    ASSERT((streamId % 2) == (dtls_transport_->GetLocalRole() == DtlsTransport::Role::SERVER ? 0 : 1));
     logger::debug({{"ev","SCTP message received for unknown stream, ignoring it"},{"sid",streamId}});
     return;
   }

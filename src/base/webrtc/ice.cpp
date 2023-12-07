@@ -585,7 +585,7 @@ namespace base
 
 		if (storedSession)
 		{
-			TRACE("session already exists");
+			// TRACE("session already exists");
 
 			return storedSession;
 		}

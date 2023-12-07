@@ -11,11 +11,3 @@ workspace(name = "qrpc")
 # load("@rules_foreign_cc//foreign_cc:repositories.bzl", "rules_foreign_cc_dependencies")
 
 # rules_foreign_cc_dependencies()
-
-config_setting(
-    name = "is_debug_build",
-    values = {
-        "compilation_mode": "dbg",
-    },
-    visibility = ["//:__pkg__"],
-)

@@ -7,6 +7,7 @@ namespace base {
   class AlarmProcessor {
   public:
     typedef uint64_t Id;
+    constexpr static Id INVALID_ID = 0;
     typedef std::function<qrpc_time_t ()> Handler;
     virtual Id Set(const Handler &h, qrpc_time_t) = 0;
     virtual bool Cancel(Id id) = 0;

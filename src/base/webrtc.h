@@ -27,6 +27,7 @@ namespace base {
       TcpSession(TcpListener &f, Fd fd, const Address &addr) : 
         TcpListener::TcpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
+      void OnShutdown() override;
     private:
       std::shared_ptr<Connection> connection_;
     };
@@ -35,6 +36,7 @@ namespace base {
       UdpSession(UdpListener &f, Fd fd, const Address &addr) : 
         UdpListener::UdpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
+      void OnShutdown() override;
     private:
       std::shared_ptr<Connection> connection_;
     };
@@ -62,18 +64,17 @@ namespace base {
                        public Stream::Processor {
     public:
       Connection(WebRTCServer &sv, DtlsTransport::Role dtls_role) :
-        sv_(sv), last_active_(0), ice_server_(nullptr), dtls_role_(dtls_role),
+        sv_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr),
         srtp_send_(nullptr), srtp_recv_(nullptr), sctp_connected_(false),
         streams_(), stream_id_factory_() {
-          stream_id_factory_.set_incr(2);
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case DtlsTransport::Role::CLIENT:
-              stream_id_factory_.set_init(0); // zero is allowed to be stream id of client
+              stream_id_factory_.configure(0, 2); // zero is allowed to be stream id of client
               break;
             case DtlsTransport::Role::SERVER:
-              stream_id_factory_.set_init(1);
+              stream_id_factory_.configure(1, 2);
               break;
             default:
               DIE("invalid dtls role")
@@ -89,10 +90,16 @@ namespace base {
       DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
     public:
       int Init(std::string &uflag, std::string &pwd);
+      void Touch(qrpc_time_t now) { last_active_ = now; }
       int RunDtlsTransport();
-      void DtlsEstablished();
+      void OnDtlsEstablished();
+      void OnTcpSessionShutdown(Session *s);
+      void OnUdpSessionShutdown(Session *s);
       std::shared_ptr<Stream> OpenStream(Stream::Config &c);
       std::shared_ptr<Stream> NewStream(Stream::Config &c);
+      bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
+        return Session::CheckTimeout(last_active_, now, timeout, next_check);
+      }
     public:
       // entry point of all incoming packets
       int OnPacketReceived(Session *session, const uint8_t *p, size_t sz);
@@ -190,10 +197,10 @@ namespace base {
     };
     struct Config {
       std::vector<Port> ports;
-      std::string ca, cert, key;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
       size_t sctp_send_buffer_size;
       qrpc_time_t udp_session_timeout;
+      qrpc_time_t connection_timeout;
       AlarmProcessor &alarm_processor;
 
       // derived from above config values
@@ -223,6 +230,7 @@ namespace base {
     int Init();
     void Fin();
     int NewConnection(const std::string &client_sdp, std::string &server_sdp);
+    void CloseConnection(Connection &c);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
     void RemoveUFlag(IceUFlag &uflag) {
       // raw pointer in map might be freed
@@ -230,9 +238,25 @@ namespace base {
         logger::warn({{"ev","fail to remove uflag"},{"uflag",uflag}});
       }
     }
+    qrpc_time_t CheckTimeout() {
+        qrpc_time_t now = qrpc_time_now();
+        qrpc_time_t nearest_check = now + config_.connection_timeout;
+        for (auto s = connections_.begin(); s != connections_.end();) {
+            qrpc_time_t next_check;
+            auto cur = s++;
+            if (cur->second->Timeout(now, config_.connection_timeout, next_check)) {
+                // inside Close, the entry will be erased
+                CloseConnection(*cur->second);
+            } else {
+                nearest_check = std::min(nearest_check, next_check);
+            }
+        }
+        return nearest_check;
+    }
   protected:
     Loop &loop_;
     Config config_;
+    AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
     StreamFactory stream_factory_;
     std::vector<TcpPort> tcp_ports_;
     std::vector<UdpPort> udp_ports_;
