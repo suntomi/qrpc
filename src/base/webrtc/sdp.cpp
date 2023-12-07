@@ -10,6 +10,8 @@ namespace base {
       ASSERT(false);
       return false;
     }
+    // firefox contains fingerprint in root section, not in media
+    auto root_fp = find("fingerprint");
     for (auto it = mit->begin(); it != mit->end(); ++it) {
       auto proto = it->find("protocol");
       if (proto == it->end()) {
@@ -29,13 +31,16 @@ namespace base {
       }
       // protocol found. set remote finger pring
       // TODO: move this to dedicated function but type declaration of it is not easy
-      auto fp = it->find("fingerprint");
-      if (fp == it->end()) {
-        logger::error({{"ev","malform sdp"},{"reason","no fingerprint"}, {"as_json", dump()}});
-        // malicious?
-        answer = "no fingerprint found";
-        ASSERT(false);
-        return false;
+      auto fp = root_fp;
+      if (fp == end()) {
+        fp = it->find("fingerprint");
+        if (fp == it->end()) {
+          logger::error({{"ev","malform sdp"},{"reason","no fingerprint"}, {"as_json", dump()}});
+          // malicious?
+          answer = "no fingerprint found";
+          ASSERT(false);
+          return false;
+        }
       }
       auto type = fp->find("type");
       auto hash = fp->find("hash");
@@ -80,10 +85,10 @@ b=AS:30
 a=candidate:0 1 udp %u %s %u typ host
 a=sendrecv
 a=end-of-candidates
+a=ice-lite
 a=ice-ufrag:%s
 a=ice-pwd:%s
-a=ice-options:trickle
-a=fingerprint:sha-256 %s
+a=fingerprint:%s %s
 a=setup:passive
 a=mid:0
 a=sctp-port:5000
@@ -94,7 +99,7 @@ a=max-message-size:%u
     AssignPriority(1), addr, port,
     c.ice_server().GetUsernameFragment().c_str(),
     c.ice_server().GetPassword().c_str(),
-    c.server().fingerprint().c_str(),
+    c.server().fingerprint_algorithm().c_str(), c.server().fingerprint().c_str(),
     c.server().config().sctp_send_buffer_size
   );
   }

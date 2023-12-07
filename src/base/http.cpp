@@ -254,6 +254,7 @@ namespace base {
     HttpFSM::recv_body_nochunk()
     {
         long diff = (recvctx().bd + recvctx().bl) - (m_p + m_len);
+        ASSERT(recvctx().bd[0] != 'P');
         if (diff > 0) {
             return state_recv_body_nochunk;
         }

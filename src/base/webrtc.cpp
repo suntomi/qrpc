@@ -189,12 +189,13 @@ class DummyDtlsTransportListener : public DtlsTransport::Listener {
 };
 int WebRTCServer::Config::Derive(AlarmProcessor &ap) {
   for (auto fp : DtlsTransport::GetLocalFingerprints()) {
-    if (fp.algorithm == DtlsTransport::FingerprintAlgorithm::SHA256) {
+    // TODO: SHA256 is enough?
+    if (fp.algorithm == DtlsTransport::GetFingerprintAlgorithm(fingerprint_algorithm)) {
       fingerprint = fp.value;
       return QRPC_OK;
     }
   }
-  logger::die({{"ev","no SHA256 fingerprint found"}}); // should not happen
+  logger::die({{"ev","no fingerprint for algorithm found"},{"algo", fingerprint_algorithm}}); // should not happen
   return QRPC_EDEPS;
 }
 
@@ -204,7 +205,7 @@ int WebRTCServer::TcpSession::OnRead(const char *p, size_t sz) {
   if (connection_ == nullptr) {
     connection_ = factory().to<TcpPort>().webrtc_server().FindFromStunRequest(up, sz);
     if (connection_ == nullptr) {
-      ASSERT(false);
+      QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}})
       return QRPC_EINVAL;
     }
   }
@@ -220,7 +221,7 @@ int WebRTCServer::UdpSession::OnRead(const char *p, size_t sz) {
   if (connection_ == nullptr) {
     connection_ = factory().to<UdpPort>().webrtc_server().FindFromStunRequest(up, sz);
     if (connection_ == nullptr) {
-      ASSERT(false);
+      QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}})
       return QRPC_EINVAL;
     }
   }

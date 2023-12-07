@@ -68,6 +68,8 @@
             "Content-Type": "application/sdp"
           };
 
+          console.log("sdp", offer.sdp);
+
           //Do the post request to the WHIP endpoint with the SDP offer
           const fetched = await fetch(url, {
             method: "POST",
@@ -111,7 +113,12 @@
       };
 
       //Create peerconnection
-      const pc = new RTCPeerConnection();
+      const pc = new RTCPeerConnection({
+        // firefox seems to need this
+        iceServers: [{
+          urls: ["stun:stun.l.google.com:19302"]
+        }]
+      });
 
       //Create datachannel
       const ch = pc.createDataChannel("test");

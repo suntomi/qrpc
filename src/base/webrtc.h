@@ -202,6 +202,7 @@ namespace base {
       qrpc_time_t udp_session_timeout;
       qrpc_time_t connection_timeout;
       AlarmProcessor &alarm_processor;
+      std::string fingerprint_algorithm;
 
       // derived from above config values
       std::string fingerprint;
@@ -223,6 +224,7 @@ namespace base {
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
     const std::string &fingerprint() const { return config_.fingerprint; }
+    const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
     const UdpPort::Config udp_listener_config() const {
       return { .alarm_processor = config_.alarm_processor, .session_timeout = config_.udp_session_timeout };
     }
@@ -232,11 +234,10 @@ namespace base {
     int NewConnection(const std::string &client_sdp, std::string &server_sdp);
     void CloseConnection(Connection &c);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
-    void RemoveUFlag(IceUFlag &uflag) {
-      // raw pointer in map might be freed
-      if (connections_.erase(uflag) == 0) {
-        logger::warn({{"ev","fail to remove uflag"},{"uflag",uflag}});
-      }
+    inline void RemoveUFlag(IceUFlag &uflag) {
+      // NOTE: this also called from destructor of Connection
+      // though raw pointer in map might be freed here, in above case, erase does nothing.
+      connections_.erase(uflag);
     }
     qrpc_time_t CheckTimeout() {
         qrpc_time_t now = qrpc_time_now();

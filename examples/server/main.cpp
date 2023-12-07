@@ -60,6 +60,7 @@ int main(int argc, char *argv[]) {
         .sctp_send_buffer_size = 256 * 1024,
         .udp_session_timeout = qrpc_time_sec(30),
         .connection_timeout = qrpc_time_sec(60),
+        .fingerprint_algorithm = "sha-256",
         .alarm_processor = t,
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
@@ -92,7 +93,7 @@ int main(int argc, char *argv[]) {
         std::string sdp;
         if ((r = w.NewConnection(s.fsm().body(), sdp)) < 0) {
             logger::error("fail to create connection");
-            s.ServerError("server error %s", r);
+            s.ServerError("server error %d", r);
         }
         std::string sdplen = std::to_string(sdp.length());
         HttpHeader h[] = {
