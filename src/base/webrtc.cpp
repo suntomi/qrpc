@@ -76,7 +76,9 @@ void WebRTCServer::CloseConnection(Connection &c) {
 }
 int WebRTCServer::NewConnection(const std::string &client_sdp, std::string &server_sdp) {
   logger::info({{"ev","new connection"},{"client_sdp", client_sdp}});
-  auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::SERVER));
+  // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
+  // even if sdp anwser ask to do it.
+  auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::CLIENT));
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return QRPC_EALLOC;

@@ -79,8 +79,8 @@ s=-
 t=0 0
 a=group:BUNDLE 0
 a=msid-semantic: WMS
-m=application %u %s/DTLS/SCTP webrtc-datachannel
-c=IN IP4 0.0.0.0
+m=application 9 %s/DTLS/SCTP webrtc-datachannel
+c=IN IP4 %s
 b=AS:30
 a=candidate:0 1 udp %u %s %u typ host
 a=sendrecv
@@ -89,13 +89,14 @@ a=ice-lite
 a=ice-ufrag:%s
 a=ice-pwd:%s
 a=fingerprint:%s %s
-a=setup:passive
+a=setup:active
 a=mid:0
 a=sctp-port:5000
 a=max-message-size:%u
 )sdp",
     now, now, addr,
-    port, proto.c_str(),
+    proto.c_str(),
+    addr,
     AssignPriority(1), addr, port,
     c.ice_server().GetUsernameFragment().c_str(),
     c.ice_server().GetPassword().c_str(),
