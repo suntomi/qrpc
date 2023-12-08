@@ -71,19 +71,28 @@ namespace base {
 
   std::string SDP::AnswerAs(const std::string &proto, const WebRTCServer::Connection &c) const {
     auto now = qrpc_time_now();
-    auto addr = "127.0.0.1";
     auto port = proto == "UDP" ? c.server().udp_port() : c.server().tcp_port();
+    auto candidates = std::string("");
+    size_t idx = 0;
+    for (auto &a : c.server().config().ifaddrs) {
+      candidates += str::Format(
+        "%sa=candidate:0 %u %s %u %s %u typ host",
+        idx == 0 ? "" : "\n",
+        idx + 1, proto.c_str(), AssignPriority(idx), a.c_str(), port
+      );
+      idx++;
+    }
     return str::Format(R"sdp(v=0
-o=- %llu %llu IN IP4 %s
+o=- %llu %llu IN IP4 0.0.0.0
 s=-
 t=0 0
 a=group:BUNDLE 0
 a=msid-semantic: WMS
 m=application 9 %s/DTLS/SCTP webrtc-datachannel
-c=IN IP4 %s
+c=IN IP4 0.0.0.0
 b=AS:30
-a=candidate:0 1 udp %u %s %u typ host
 a=sendrecv
+%s
 a=end-of-candidates
 a=ice-lite
 a=ice-ufrag:%s
@@ -94,15 +103,14 @@ a=mid:0
 a=sctp-port:5000
 a=max-message-size:%u
 )sdp",
-    now, now, addr,
-    proto.c_str(),
-    addr,
-    AssignPriority(1), addr, port,
-    c.ice_server().GetUsernameFragment().c_str(),
-    c.ice_server().GetPassword().c_str(),
-    c.server().fingerprint_algorithm().c_str(), c.server().fingerprint().c_str(),
-    c.server().config().sctp_send_buffer_size
-  );
+      now, now,
+      proto.c_str(),
+      candidates.c_str(),
+      c.ice_server().GetUsernameFragment().c_str(),
+      c.ice_server().GetPassword().c_str(),
+      c.server().fingerprint_algorithm().c_str(), c.server().fingerprint().c_str(),
+      c.server().config().sctp_send_buffer_size
+    );
   }
   bool SDP::Test() {
     auto text = R"sdp(v=0

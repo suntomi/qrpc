@@ -194,11 +194,24 @@ int WebRTCServer::Config::Derive(AlarmProcessor &ap) {
     // TODO: SHA256 is enough?
     if (fp.algorithm == DtlsTransport::GetFingerprintAlgorithm(fingerprint_algorithm)) {
       fingerprint = fp.value;
-      return QRPC_OK;
     }
   }
-  logger::die({{"ev","no fingerprint for algorithm found"},{"algo", fingerprint_algorithm}}); // should not happen
-  return QRPC_EDEPS;
+  if (fingerprint.length() <= 0) {
+    logger::die({{"ev","no fingerprint for algorithm"},{"algo", fingerprint_algorithm}});
+    return QRPC_EDEPS;
+  }
+  if (ip.length() <= 0) {
+    for (auto &a : Syscall::GetIfAddrs()) {
+      if (in6 == (a.family() == AF_INET6)) {
+        logger::info({{"ev","add detected ip"},{"ip",a.hostip()},{"in6",in6}});
+        ifaddrs.push_back(a.hostip());
+      }
+    }
+  } else {
+    logger::info({{"ev","add configured ip"},{"ip",ip}});
+    ifaddrs.push_back(ip);
+  }
+  return QRPC_OK;
 }
 
 // WebRTCServer::UdpSession/TcpSession

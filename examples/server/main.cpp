@@ -53,8 +53,8 @@ int main(int argc, char *argv[]) {
     HttpServer s(l);
     AdhocWebRTCServer w(l, WebRTCServer::Config {
         .ports = {
-            {.protocol = WebRTCServer::Port::UDP, .ip = "", .port = 11111, .priority = 1},
-            {.protocol = WebRTCServer::Port::TCP, .ip = "", .port = 11111, .priority = 100}
+            {.protocol = WebRTCServer::Port::UDP, .port = 11111},
+            {.protocol = WebRTCServer::Port::TCP, .port = 11111}
         },
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .sctp_send_buffer_size = 256 * 1024,

@@ -113,12 +113,7 @@
       };
 
       //Create peerconnection
-      const pc = new RTCPeerConnection({
-        // firefox seems to need this
-        iceServers: [{
-          urls: ["stun:stun.l.google.com:19302"]
-        }]
-      });
+      const pc = new RTCPeerConnection();
 
       //Create datachannel
       const ch = pc.createDataChannel("test");

@@ -191,11 +191,10 @@ namespace base {
         TCP = 2,
       };
       Protocol protocol;
-      std::string ip;
       int port;
-      uint32_t priority;
     };
     struct Config {
+      std::string ip{""};
       std::vector<Port> ports;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
       size_t sctp_send_buffer_size;
@@ -203,9 +202,11 @@ namespace base {
       qrpc_time_t connection_timeout;
       AlarmProcessor &alarm_processor;
       std::string fingerprint_algorithm;
+      bool in6{false};
 
       // derived from above config values
-      std::string fingerprint;
+      std::string fingerprint{""};
+      std::vector<std::string> ifaddrs;
     public:
       int Derive(AlarmProcessor &ap);
     };
