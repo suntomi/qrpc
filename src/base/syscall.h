@@ -522,7 +522,7 @@ public:
       for (auto p = ifaddrs; p != nullptr; p = p->ifa_next) {
         if (p->ifa_addr == nullptr) { continue; }
         if (p->ifa_flags & IFF_LOOPBACK) { continue; }
-        if (!(p->ifa_flags & (IFF_UP|IFF_RUNNING))) { continue; }
+        if ((p->ifa_flags & (IFF_UP|IFF_RUNNING)) != (IFF_UP|IFF_RUNNING)) { continue; }
         auto a = Address(*p->ifa_addr);
         if (!a.inet_family()) { continue; }
         logger::info({{"ev","found interface"},{"ifname",p->ifa_name},{"address",a.hostip()}});

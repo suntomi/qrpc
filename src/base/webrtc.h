@@ -83,6 +83,10 @@ namespace base {
         }
       ~Connection() {}
     public:
+      virtual int OnConnect() { return QRPC_OK; }
+      virtual void OnShutdown() {}
+      void Close();
+    public:
       bool connected() const;
       WebRTCServer &server() { return sv_; }
       const WebRTCServer &server() const { return sv_; }
@@ -272,6 +276,11 @@ namespace base {
     AdhocWebRTCServer(Loop &l, Config &&c, const Stream::Handler &h) : WebRTCServer(l, std::move(c), 
       [&h](const Stream::Config &config, WebRTCServer::Connection &conn) {
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, h));
+      }) {}
+    AdhocWebRTCServer(Loop &l, Config &&c, 
+      const Stream::Handler &h, const AdhocStream::ConnectHandler &ch, const AdhocStream::ShutdownHandler &sh) :
+      WebRTCServer(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, WebRTCServer::Connection &conn) {
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, h, ch, sh));
       }) {}
     ~AdhocWebRTCServer() {}
   };

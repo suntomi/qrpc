@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
         },
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .sctp_send_buffer_size = 256 * 1024,
-        .udp_session_timeout = qrpc_time_sec(30),
+        .udp_session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
         .alarm_processor = t,

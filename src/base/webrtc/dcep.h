@@ -82,7 +82,7 @@ namespace base {
       r->msg_type = h->msg_type;
       if (r->msg_type != DATA_CHANNEL_OPEN) {
         // because we already check msg type before calling the method, this should not happen
-        logger::die({{"ev","invalid dcep packet"},{"reason", "invalid msg type"},{"msg_type",r->msg_type}});
+        logger::error({{"ev","invalid dcep packet"},{"reason", "invalid msg type"},{"msg_type",r->msg_type}});
         return nullptr;
       }
       r->channel_type = h->channel_type;

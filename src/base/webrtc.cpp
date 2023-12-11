@@ -71,6 +71,7 @@ void WebRTCServer::Fin() {
 void WebRTCServer::CloseConnection(Connection &c) {
   // how to close?
   logger::info({{"ev","close webrtc connection"},{"uflag",c.ice_server().GetUsernameFragment()}});
+  c.Close();
   connections_.erase(c.ice_server().GetUsernameFragment());
   // c might be freed here
 }
@@ -172,23 +173,6 @@ void WebRTCServer::GlobalFin() {
 }
 
 // WebRTCServer::Config
-class DummyDtlsTransportListener : public DtlsTransport::Listener {
-  void OnDtlsTransportConnecting(const DtlsTransport*) override {}
-  void OnDtlsTransportConnected(
-    const DtlsTransport*,
-    RTC::SrtpSession::CryptoSuite,
-    uint8_t*,
-    size_t,
-    uint8_t*,
-    size_t,
-    std::string&) override {}
-  void OnDtlsTransportFailed(const DtlsTransport*) override {}
-  void OnDtlsTransportClosed(const DtlsTransport*) override {}
-  void OnDtlsTransportSendData(
-    const DtlsTransport*, const uint8_t*, size_t) override {}
-  void OnDtlsTransportApplicationDataReceived(
-    const DtlsTransport*, const uint8_t*, size_t) override {}
-};
 int WebRTCServer::Config::Derive(AlarmProcessor &ap) {
   for (auto fp : DtlsTransport::GetLocalFingerprints()) {
     // TODO: SHA256 is enough?
@@ -275,7 +259,7 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
   try {
     dtls_transport_.reset(new DtlsTransport(this, server().alarm_processor()));
   } catch (const MediaSoupError &error) {
-    logger::die({{"ev","fail to create DTLS transport"},{"reason",error.what()}});
+    logger::error({{"ev","fail to create DTLS transport"},{"reason",error.what()}});
     return QRPC_EALLOC;
   }
   // create SCTP association
@@ -335,6 +319,17 @@ std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(Stream::Config &c) 
   logger::info({{"ev","new stream opened"},{"sid",s->id()}});
   return s;
 }
+void WebRTCServer::Connection::Close() {
+  if (dtls_transport_ != nullptr) {
+    dtls_transport_->Reset();
+    dtls_transport_->SendPendingOutgoingDtlsData();
+  }
+  for (auto &s : streams_) {
+    s.second->OnShutdown();
+  }
+  streams_.clear();
+  OnShutdown();
+}
 int WebRTCServer::Connection::RunDtlsTransport() {
   TRACK();
 
@@ -391,12 +386,20 @@ int WebRTCServer::Connection::RunDtlsTransport() {
       break;
     }
 
-    default: logger::die({{"ev","invalid local DTLS role"},{"role",dtls_role_}});
+    default: {
+      logger::error({{"ev","invalid local DTLS role"},{"role",dtls_role_}});
+      return QRPC_EINVAL;
+    }
   }
   return QRPC_OK;
 }
 void WebRTCServer::Connection::OnDtlsEstablished() {
   sctp_association_->TransportConnected();
+  int r;
+  if ((r = OnOpen()) < 0) {
+    logger::error({{"ev","application reject connection"},{"rc",r}});
+    server().CloseConnection(*this);
+  }
 }
 void WebRTCServer::Connection::OnTcpSessionShutdown(Session *s) {
   ice_server_->RemoveTuple(s);
@@ -612,7 +615,11 @@ void WebRTCServer::Connection::OnIceServerSelectedSession(
 void WebRTCServer::Connection::OnIceServerConnected(const IceServer *iceServer) {
   TRACK();
   // If ready, run the DTLS handler.
-  RunDtlsTransport();
+  if (RunDtlsTransport() < 0) {
+    logger::error({{"ev","fail to run DTLS transport"}});
+    server().CloseConnection(*this);
+    return;
+  }
 
   // If DTLS was already connected, notify the parent class.
   if (dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED) {
@@ -661,15 +668,17 @@ void WebRTCServer::Connection::OnDtlsTransportConnected(
 // DTLS alert or a failure to validate the remote fingerprint).
 void WebRTCServer::Connection::OnDtlsTransportFailed(const DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls failed"}});
-  // TODO: callback
+  OnDtlsTransportClosed();
 }
 // The DTLS connection has been closed due to receipt of a close_notify alert.
 void WebRTCServer::Connection::OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls cloed"}});
-  // Tell the parent class.
+  OnClose();
+  // Tell the parent class. (if we handle srtp, need to implement equivalent)
   // RTC::Transport::Disconnected();
   // above notifies TransportCongestionControlClient and TransportCongestionControlServer
   // may need to implement equivalent for performance
+  server().CloseConnection(*this); // this might be freed here, so don't touch after the line
 }
 // Need to send DTLS data to the peer.
 void WebRTCServer::Connection::OnDtlsTransportSendData(

@@ -217,10 +217,6 @@ QRPC_DECL_CLOSURE(void, qrpc_on_client_conn_open_t, void *, qrpc_conn_t, void **
 //if this function returns positive value,
 //connection automatically reconnect with back off which equals to returned value.
 QRPC_DECL_CLOSURE(qrpc_time_t, qrpc_on_client_conn_close_t, void *, qrpc_conn_t, const qrpc_close_reason_t*, bool);
-//client connection finalized. just after this callback is done, memory corresponding to the qrpc_conn_t, will be freed. 
-//because qrpc_conn_t is already invalidate when this callback invokes, almost qrpc_conn_* API returns invalid value in this callback.
-//so the callback is basically for cleanup user defined resourse, like closure arg pointer (1st arg) or user context (3rd arg).
-QRPC_DECL_CLOSURE(void, qrpc_on_client_conn_finalize_t, void *, qrpc_conn_t, void *);
 
 
 /* server */
@@ -334,7 +330,6 @@ typedef struct {
   //connection open/close/finalize watcher
   qrpc_on_client_conn_open_t on_open;
   qrpc_on_client_conn_close_t on_close;
-  qrpc_on_client_conn_finalize_t on_finalize;
 
   //protocol type/version
   qrpc_wire_proto_t protocol;

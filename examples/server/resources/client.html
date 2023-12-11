@@ -112,6 +112,9 @@
         }
       };
 
+      //Create whip client
+      const whip = new WHIPClient();
+
       //Create peerconnection
       const pc = new RTCPeerConnection();
 
@@ -119,14 +122,22 @@
       const ch = pc.createDataChannel("test");
       ch.onopen = (event)=>{
         console.log("Data channel open", event);
-        setInterval(() => ch.send("Hello qrpc"), 1000);
+        let count = 0;
+        setInterval(() => {
+          count++;
+          if (count >= 5) {
+            whip.close();
+            return;
+          }
+          ch.send("Hello qrpc");
+        }, 1000);
+      }
+      ch.onclose = (event)=>{
+        console.log("Data channel close", event);
       }
       ch.onmessage = (event)=>{
         console.log("Data channel message", event);
       }
-
-      //Create whip client
-      const whip = new WHIPClient();
 
       const url = "http://localhost:8888/accept";
       // const url = "http://localhost:7080/whip/endpoint/abc1234";
