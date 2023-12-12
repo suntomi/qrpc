@@ -724,7 +724,6 @@ void WebRTCServer::Connection::OnSctpAssociationSendData(
   if (!connected()) {
 		logger::warn({{"proto","sctp"},{"ev","DTLS not connected, cannot send SCTP data"},
       {"dtls_state",dtls_transport_->GetState()}});
-    ASSERT(false);
     return;
   }
   dtls_transport_->SendApplicationData(data, len);

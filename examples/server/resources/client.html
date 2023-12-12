@@ -6,8 +6,9 @@
   <body>
     <script>
       class QRPCStream {
-        constructor(label) {
+        constructor(label, runtime) {
           this.label = label;
+          this.runtime = runtime;
         }
         open(c) {
           const ch = c.pc.createDataChannel(this.label);
@@ -22,7 +23,7 @@
         }
         send(data) {
           if (!this.ch) {
-            console.log("Channel not opened: " + this.label);
+            console.log("QRPCStream.send: channel not opened : " + this.label);
             return;
           }
           this.ch.send(data);
@@ -32,7 +33,7 @@
         }
         close(parentClosed) {
           if (!this.ch) {
-            console.log("Channel not opened: " + this.label);
+            console.log("QRPCStream.close: channel not opened : " + this.label);
             return;
           }
           if (!parentClosed) {
@@ -44,13 +45,18 @@
       class QRPClient {
         constructor(url) {
           this.url = url;
+          this.connectCount = 0;
+          this.streams = {};
+        }
+
+        init() {
           //Ice properties
           this.iceUsername = null;
           this.icePassword = null;
           //Pending candidadtes
           this.candidates = [];
           this.endOfcandidates = false;
-          this.streams = {};
+          this.connectCount++;
         }
 
         async connect() {
@@ -60,9 +66,10 @@
             return;
           }
 
-          const pc = new RTCPeerConnection();
+          const pc = new RTCPeerConnection(); 
           //Store pc object and token
           this.pc = pc;
+          this.init();
           
           //Listen for state change events
           pc.onconnectionstatechange = (event) =>{
@@ -156,10 +163,15 @@
           }
           let reconnectionWaitMS;
           if (this.onclose) {
-            // nsec to msec
-            reconnectionWaitMS = this.onclose() / 1000 / 1000;
+            reconnectionWaitMS = this.onclose();
+            if (!reconnectionWaitMS) {
+              reconnectionWaitMS = 0;
+            } else {
+              // nsec to msec
+              reconnectionWaitMS = reconnectionWaitMS / 1000 / 1000;
+            }
           } else {
-            // default 5 sec
+            // default 5 sec (TODO: exponential backoff by using connectCount)
             reconnectionWaitMS = 5000;
           }
           if (this.pc.connectionState != "failed") {
@@ -168,6 +180,9 @@
           this.pc = null;
           for (const label in this.streams) {
             this.streams[label].close(true);
+            if (this.streams[label].runtime) {
+              this.streams[label] = null;
+            }
           }
           if (reconnectionWaitMS > 0) {
             console.log("attempt reconnect after " + reconnectionWaitMS + "ms");
@@ -175,16 +190,15 @@
               this.connect();
             }, reconnectionWaitMS);
           } else {
-            console.log("no reconnect. stop");
+            console.log("no reconnect. bye!");
           }
         }
 
         stream(label) {
           if (this.streams[label]) {
-            console.log("stream already created for label " + label);
-            return;
+            return this.streams[label];
           }
-          const s = new QRPCStream(label);
+          const s = new QRPCStream(label, this.connectCount > 0);
           this.streams[label] = s;
           if (this.pc) {
             s.open(this);
@@ -199,7 +213,7 @@
             return;
           }
           if (!s.isOpened()) {
-            console.log("Channel not opened: " + label);
+            console.log("closeStream: channel not opened : " + label);
             return;
           }
           s.close();
@@ -213,11 +227,12 @@
       let closed = 0;
       c.onclose = () => {
         console.log("client onclose called", closed);
-        if (closed <= 0) {
+        if (closed <= 3) {
           closed++;
           return 2000 * 1000 * 1000;
         } else {
-          return 0;
+          // stop reconnection
+          return;
         }
       };
       const s = c.stream("test");
