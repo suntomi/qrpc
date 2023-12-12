@@ -5,24 +5,62 @@
   </head>
   <body>
     <script>
-      class WHIPClient
-      {
-        constructor()
-        {
+      class QRPCStream {
+        constructor(label) {
+          this.label = label;
+        }
+        open(c) {
+          const ch = c.pc.createDataChannel(this.label);
+          ch.onopen = this.onopen || ((event) => {});
+          ch.onclose = this.onclose || ((event) => {});
+          if (this.onmessage) {
+            ch.onmessage = this.onmessage;
+          } else {
+            throw new Error("No onmessage callback");
+          }
+          this.ch = ch;
+        }
+        send(data) {
+          if (!this.ch) {
+            console.log("Channel not opened: " + this.label);
+            return;
+          }
+          this.ch.send(data);
+        }
+        isOpened() {
+          return this.ch != null;
+        }
+        close(parentClosed) {
+          if (!this.ch) {
+            console.log("Channel not opened: " + this.label);
+            return;
+          }
+          if (!parentClosed) {
+            this.ch.close();
+          }
+          this.ch = null;
+        }
+      }
+      class QRPClient {
+        constructor(url) {
+          this.url = url;
           //Ice properties
           this.iceUsername = null;
           this.icePassword = null;
           //Pending candidadtes
           this.candidates = [];
           this.endOfcandidates = false;
+          this.streams = {};
         }
 
-        async connect(pc, url)
-        {
+        async connect() {
           //If already publishing
-          if (this.pc)
-            throw new Error("Already publishing")
+          if (this.pc) {
+            console.log("Already connected");
+            return;
+          }
 
+          const pc = new RTCPeerConnection();
           //Store pc object and token
           this.pc = pc;
           
@@ -36,6 +74,7 @@
               case "disconnected":
               case "failed":
                 // One or more transports has terminated unexpectedly or in an error
+                this.close();
                 break;
               case "closed":
                 // The connection has been closed
@@ -60,6 +99,19 @@
               this.endOfcandidates = true;
             }
           }
+
+          if (Object.keys(this.streams).length <= 0) {
+            // because if no stream is added, no offer for creating datachannl will be created
+            // so we need to add dummy stream here
+            const s = this.stream("dummy");
+            s.onmessage = (event)=>{};
+          }
+
+          // create data channel here
+          for (const label in this.streams) {
+            this.streams[label].open(this);
+          }
+
           //Create SDP offer
           const offer = await pc.createOffer();
 
@@ -71,7 +123,7 @@
           console.log("sdp", offer.sdp);
 
           //Do the post request to the WHIP endpoint with the SDP offer
-          const fetched = await fetch(url, {
+          const fetched = await fetch(this.url, {
             method: "POST",
             body: offer.sdp,
             headers
@@ -97,52 +149,98 @@
           await pc.setRemoteDescription({type:"answer",sdp: answer});
         }
 
-        async close()
-        {
+        close() {
           if (!this.pc) {
             // Already stopped
             return
           }
-
-          //Close peerconnection
-          this.pc.close();
-
-          //Null
+          let reconnectionWaitMS;
+          if (this.onclose) {
+            // nsec to msec
+            reconnectionWaitMS = this.onclose() / 1000 / 1000;
+          } else {
+            // default 5 sec
+            reconnectionWaitMS = 5000;
+          }
+          if (this.pc.connectionState != "failed") {
+            this.pc.close();
+          }
           this.pc = null;
+          for (const label in this.streams) {
+            this.streams[label].close(true);
+          }
+          if (reconnectionWaitMS > 0) {
+            console.log("attempt reconnect after " + reconnectionWaitMS + "ms");
+            setTimeout(() => {
+              this.connect();
+            }, reconnectionWaitMS);
+          } else {
+            console.log("no reconnect. stop");
+          }
+        }
+
+        stream(label) {
+          if (this.streams[label]) {
+            console.log("stream already created for label " + label);
+            return;
+          }
+          const s = new QRPCStream(label);
+          this.streams[label] = s;
+          if (this.pc) {
+            s.open(this);
+          }
+          return s;
+        }
+
+        closeStream(label) {
+          const s = this.streams[label];
+          if (!s) {
+            console.log("No stream callbacks for label " + label);
+            return;
+          }
+          if (!s.isOpened()) {
+            console.log("Channel not opened: " + label);
+            return;
+          }
+          s.close();
+          this.streams[label] = null;
         }
       };
 
       //Create whip client
-      const whip = new WHIPClient();
-
-      //Create peerconnection
-      const pc = new RTCPeerConnection();
-
-      //Create datachannel
-      const ch = pc.createDataChannel("test");
-      ch.onopen = (event)=>{
+      const url = "http://localhost:8888/accept";
+      const c = new QRPClient(url);
+      let closed = 0;
+      c.onclose = () => {
+        console.log("client onclose called", closed);
+        if (closed <= 0) {
+          closed++;
+          return 2000 * 1000 * 1000;
+        } else {
+          return 0;
+        }
+      };
+      const s = c.stream("test");
+      s.onopen = (event)=>{
         console.log("Data channel open", event);
         let count = 0;
         setInterval(() => {
           count++;
-          if (count >= 5) {
-            whip.close();
+          if (count >= 3) {
+            c.close();
             return;
           }
-          ch.send("Hello qrpc");
+          s.send("Hello qrpc");
         }, 1000);
-      }
-      ch.onclose = (event)=>{
+      };
+      s.onclose = (event)=>{
         console.log("Data channel close", event);
-      }
-      ch.onmessage = (event)=>{
+      };
+      s.onmessage = (event)=>{
         console.log("Data channel message", event);
-      }
+      };
 
-      const url = "http://localhost:8888/accept";
-      // const url = "http://localhost:7080/whip/endpoint/abc1234";
-      //Start publishing
-      whip.connect(pc, url);
+      c.connect();
     </script>
   </body>
 </html>

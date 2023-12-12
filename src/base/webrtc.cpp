@@ -321,8 +321,7 @@ std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(Stream::Config &c) 
 }
 void WebRTCServer::Connection::Close() {
   if (dtls_transport_ != nullptr) {
-    dtls_transport_->Reset();
-    dtls_transport_->SendPendingOutgoingDtlsData();
+    dtls_transport_->Close();
   }
   for (auto &s : streams_) {
     s.second->OnShutdown();
@@ -396,7 +395,7 @@ int WebRTCServer::Connection::RunDtlsTransport() {
 void WebRTCServer::Connection::OnDtlsEstablished() {
   sctp_association_->TransportConnected();
   int r;
-  if ((r = OnOpen()) < 0) {
+  if ((r = OnConnect()) < 0) {
     logger::error({{"ev","application reject connection"},{"rc",r}});
     server().CloseConnection(*this);
   }
@@ -668,12 +667,12 @@ void WebRTCServer::Connection::OnDtlsTransportConnected(
 // DTLS alert or a failure to validate the remote fingerprint).
 void WebRTCServer::Connection::OnDtlsTransportFailed(const DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls failed"}});
-  OnDtlsTransportClosed();
+  OnDtlsTransportClosed(dtlsTransport);
 }
 // The DTLS connection has been closed due to receipt of a close_notify alert.
 void WebRTCServer::Connection::OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls cloed"}});
-  OnClose();
+  OnShutdown();
   // Tell the parent class. (if we handle srtp, need to implement equivalent)
   // RTC::Transport::Disconnected();
   // above notifies TransportCongestionControlClient and TransportCongestionControlServer
