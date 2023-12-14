@@ -68,13 +68,11 @@ int main(int argc, char *argv[]) {
         auto req = json::parse(pl);
         if (s.label() == "test") {
             // echo + label name
-            json j = {
+            return s.Send({
                 {"hello", s.label() + ":" + req["hello"].get<std::string>()},
-                {"ts", req["ts"].get<float>()},
+                {"ts", req["ts"].get<uint64_t>()},
                 {"count", req["count"].get<uint64_t>()}
-            };
-            auto data = j.dump();
-            return s.Send(data.c_str(), data.length()); // echo
+            }); // echo
         } else if (s.label() == "test2") {
             auto stream_name = req["streamName"].get<std::string>();
             auto ns = s.processor().OpenStream({
@@ -85,6 +83,8 @@ int main(int argc, char *argv[]) {
             auto die = req["die"].get<bool>();
             if (die) {
                 s.processor().CloseConnection();
+            } else {
+                return s.Send({{"msg", "byebye"}});
             }
         }
         return 0;

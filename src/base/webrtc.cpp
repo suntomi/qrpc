@@ -290,7 +290,7 @@ std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(const Stream::Config
     logger::error({{"ev","fail to create stream"},{"sid",c.params.streamId}});
     return nullptr;
   }
-  logger::info({{"ev","new stream created"},{"sid",s->id()}});
+  logger::info({{"ev","new stream created"},{"sid",s->id()},{"l",s->label()}});
   streams_.emplace(s->id(), s);
   return s;
 }
@@ -316,7 +316,7 @@ std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(const Stream::Confi
     s->Close(QRPC_CLOSE_REASON_SYSCALL, r, "dcep open failed");
     return nullptr;
   }
-  logger::info({{"ev","new stream opened"},{"sid",s->id()}});
+  logger::info({{"ev","new stream opened"},{"sid",s->id()},{"l",s->label()}});
   return s;
 }
 void WebRTCServer::Connection::Close() {

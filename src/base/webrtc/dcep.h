@@ -124,6 +124,10 @@ namespace base {
         logger::error({{"ev","invalid dcep packet"},{"reason", "buffer size is too small"},{"sz",sz},{"payload_size",PayloadSize()}});
         return nullptr;
       }
+      if (label.length() > UINT16_MAX || protocol.length() > UINT16_MAX) {
+        logger::error({{"ev","invalid dcep packet"},{"reason", "protocol or label length too long"},{"llen",label.length()},{"plen",protocol.length()}});
+        return nullptr;
+      }
       Header *h = reinterpret_cast<Header *>(buffer);
       h->msg_type = msg_type;
       h->channel_type = channel_type;
@@ -139,8 +143,10 @@ namespace base {
           h->reliability_params = 0;
           break;
       }
-      h->label_length = Endian::HostToNet(label.length());
-      h->protocol_length = Endian::HostToNet(protocol.length());
+      uint16_t llen = label.length();
+      uint16_t plen = protocol.length();
+      h->label_length = Endian::HostToNet(llen);
+      h->protocol_length = Endian::HostToNet(plen);
       Syscall::MemCopy(buffer + sizeof(Header), label.c_str(), label.length());
       Syscall::MemCopy(buffer + sizeof(Header) + label.length(), protocol.c_str(), protocol.length());
       return buffer;

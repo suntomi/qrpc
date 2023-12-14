@@ -34,13 +34,14 @@
           //Listen for data channels
           pc.ondatachannel = (event) => {            
             const s = event.channel;
+            console.log("accept stream", s.label);
             const h = this.hdmap[s.label];
             if (!h) {
               console.log("No stream callbacks for label [" + s.label + "]");
               s.close();
               return;
             }
-            this.#setupStream(s, s.label);
+            this.#setupStream(s, h);
           };
           
           //Listen for state change events
@@ -153,11 +154,12 @@
           }
         }
         handler(label, callbacks) {
-          if (this.hdmap[label]) {
-            return this.hdmap[label];
+          if (typeof callbacks.onmessage !== "function") {
+            throw new Error("onmessage is mandatory and should be function");
           }
-          if (!callbacks.onmessage) {
-            throw new Error("onmessage is mandatory");
+          if (this.hdmap[label]) {
+            Object.assign(this.hdmap[label], callbacks);
+            return;
           }
           this.hdmap[label] = callbacks;
         }
@@ -185,7 +187,6 @@
         }
 
         #setupStream(s, h) {
-          s.context = context;
           s.onopen = (h.onopen && ((event) => {
             const ctx = h.onopen(s, event);
             if (ctx === false || ctx === null) {
@@ -228,11 +229,12 @@
       c.handler("test", {
         onopen: (s, event)=>{
           console.log("Data channel open", event);
-          s.send(JSON.stringify({hello: s.context.texts[0], count: 0, ts: Date.now()}));
+          s.send(JSON.stringify({hello: context.texts[0], count: 0, ts: Date.now()}));
           return context;
         },
         onclose: (s, event)=>{
           console.log("Data channel close", event);
+          c.openStream("test2");
         },
         onmessage: (s, event)=>{
           const now = Date.now();
@@ -246,7 +248,6 @@
             console.log("Data channel latency", now - resp.ts);
             s.send(JSON.stringify({hello: s.context.texts[resp.count + 1], count: resp.count + 1, ts: now}));
           } else {
-            c.openStream("test2");
             s.close();
           }
         }
@@ -263,7 +264,7 @@
       });
       c.handler("recv", {
         onopen: (s, event)=>{
-          console.log("Data channel3 open", s.label);
+          console.log("Data channel3 open", s.label, closed, closed <= MAX_RECONNECT);
           // die is true, server close connection.
           s.send(JSON.stringify({die: closed <= MAX_RECONNECT}));
         },

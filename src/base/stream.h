@@ -57,6 +57,10 @@ namespace base {
     virtual int Send(const char *data, size_t sz) {
       return processor_.Send(*this, data, sz, true);
     }
+    inline int Send(const json &&j) {
+      auto data = j.dump();
+      return Send(data.c_str(), data.length());
+    }
     virtual int OnConnect() { return QRPC_OK; }
     virtual void OnShutdown() {}
     virtual int OnRead(const char *p, size_t sz) = 0;
