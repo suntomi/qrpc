@@ -99,8 +99,7 @@ namespace base {
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
-      std::shared_ptr<Stream> OpenStream(Stream::Config &c);
-      std::shared_ptr<Stream> NewStream(Stream::Config &c);
+      std::shared_ptr<Stream> NewStream(const Stream::Config &c);
       bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
         return Session::CheckTimeout(last_active_, now, timeout, next_check);
       }
@@ -117,6 +116,8 @@ namespace base {
       int Send(Stream &s, const char *p, size_t sz, bool binary) override;
       void Close(Stream &s) override;
       int Open(Stream &s) override;
+      std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override;
+      void CloseConnection() override { Close(); }
 
       // implements IceServer::Listener
 			void OnIceServerSendStunPacket(

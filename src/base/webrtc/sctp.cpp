@@ -1,5 +1,5 @@
 #define MS_CLASS "SctpAssociation"
-#define MS_LOG_DEV_LEVEL 3
+// #define MS_LOG_DEV_LEVEL 3
 
 #include "base/assert.h"
 #include "base/logger.h"

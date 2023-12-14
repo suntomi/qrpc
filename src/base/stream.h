@@ -10,15 +10,6 @@
 namespace base {
   class Stream {
   public:
-    class Processor {
-    public:
-      virtual ~Processor() = default;
-    public:
-      virtual int Open(Stream &) = 0;
-      virtual void Close(Stream &) = 0;
-      virtual int Send(Stream &, const char *, size_t, bool) = 0;
-    };
-  public:
     typedef struct {
       RTC::SctpStreamParameters params;
       std::string label;
@@ -28,6 +19,17 @@ namespace base {
     typedef uint16_t Id;
     typedef std::function<int (Stream &, const char *, size_t)> Handler;
   public:
+    class Processor {
+    public:
+      virtual ~Processor() = default;
+    public:
+      virtual int Open(Stream &) = 0;
+      virtual void Close(Stream &) = 0;
+      virtual int Send(Stream &, const char *, size_t, bool) = 0;
+      virtual std::shared_ptr<Stream> OpenStream(const Config &) = 0;
+      virtual void CloseConnection() = 0;
+    };
+  public:
     Stream(Processor &p, const Config &c) : 
       processor_(p), config_(c), close_reason_(nullptr) {}
     virtual ~Stream() {}
@@ -35,6 +37,7 @@ namespace base {
     bool closed() const { return close_reason_ != nullptr; }
     Id id() const { return config_.params.streamId; }
     const std::string &label() const { return config_.label; }
+    Processor &processor() { return processor_; }
   public:
     virtual int Open() {
       return processor_.Open(*this);
@@ -45,6 +48,11 @@ namespace base {
         OnShutdown();
         processor_.Close(*this);
       }
+    }
+    inline void Close(
+        qrpc_close_reason_code_t code, int64_t detail_code = 0, const std::string &msg = ""
+    ) {
+        Close( { .code = code, .detail_code = detail_code, .msg = msg });
     }
     virtual int Send(const char *data, size_t sz) {
       return processor_.Send(*this, data, sz, true);

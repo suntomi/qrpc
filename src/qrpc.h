@@ -450,12 +450,10 @@ QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t
 // conn API
 //
 // --------------------------
-//returns application protocol that nagotiated by ALPN
-QAPI_THREADSAFE bool qrpc_conn_app_proto(qrpc_conn_t conn, const uint8_t **pp_proto, qrpc_size_t *p_proto_len);
 //can modify handler map of connection, which is usually inherit from qrpc_client_t or qrpc_server_t.
 //if you use this API in callback functions of qrpc_conn_t (eg. qrpc_on_client/server_conn_open_t) are called, 
-//all modification of hdmap will be immediately finished.
-//but if it called from outside of callback functions for qrpc_conn_t, it will be queued
+//all modification of hdmap will be immediately finished. (this is recommended usage)
+//if it called from outside of callback functions for qrpc_conn_t, it will be queued
 //and actual modification will not immediately take place.
 QAPI_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modify_hdmap_t modifier);
 //close connection with reason_code and reason_detail through close frame.

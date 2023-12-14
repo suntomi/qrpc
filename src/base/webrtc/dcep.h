@@ -109,10 +109,10 @@ namespace base {
       r->priority = Endian::NetToHost(h->priority);
       auto llen = Endian::NetToHost(h->label_length);
       auto plen = Endian::NetToHost(h->protocol_length);
-      if (llen > 0) {
+      if (h->label_length > 0) {
         r->label.assign(reinterpret_cast<const char *>(p) + sizeof(Header), llen);
       }
-      if (plen > 0) {
+      if (h->protocol_length > 0) {
         r->protocol.assign(reinterpret_cast<const char *>(p) + sizeof(Header) + llen, plen);
         logger::error({{"ev","invalid dcep packet"},{"reason", "protocol field of dcep request is not supported"},{"proto",r->protocol}});
         return nullptr;

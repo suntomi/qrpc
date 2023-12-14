@@ -58,4 +58,8 @@
 #if defined(MS_DEBUG_DEV)
 #undef MS_DEBUG_DEV
 #endif
+#if !defined(QRPC_DISABLE_MS_DEBUG_DEV)
 #define MS_DEBUG_DEV TRACE
+#else
+#define MS_DEBUG_DEV(...)
+#endif

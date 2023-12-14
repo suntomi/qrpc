@@ -5,50 +5,12 @@
   </head>
   <body>
     <script>
-      class QRPCStream {
-        constructor(label, runtime) {
-          this.label = label;
-          this.runtime = runtime;
-        }
-        open(c) {
-          const ch = c.pc.createDataChannel(this.label);
-          ch.onopen = this.onopen || ((event) => {});
-          ch.onclose = this.onclose || ((event) => {});
-          if (this.onmessage) {
-            ch.onmessage = this.onmessage;
-          } else {
-            throw new Error("No onmessage callback");
-          }
-          this.ch = ch;
-        }
-        send(data) {
-          if (!this.ch) {
-            console.log("QRPCStream.send: channel not opened : " + this.label);
-            return;
-          }
-          this.ch.send(data);
-        }
-        isOpened() {
-          return this.ch != null;
-        }
-        close(parentClosed) {
-          if (!this.ch) {
-            console.log("QRPCStream.close: channel not opened : " + this.label);
-            return;
-          }
-          if (!parentClosed) {
-            this.ch.close();
-          }
-          this.ch = null;
-        }
-      }
       class QRPClient {
         constructor(url) {
           this.url = url;
-          this.connectCount = 0;
           this.streams = {};
+          this.hdmap = {};
         }
-
         init() {
           //Ice properties
           this.iceUsername = null;
@@ -56,9 +18,7 @@
           //Pending candidadtes
           this.candidates = [];
           this.endOfcandidates = false;
-          this.connectCount++;
         }
-
         async connect() {
           //If already publishing
           if (this.pc) {
@@ -70,6 +30,18 @@
           //Store pc object and token
           this.pc = pc;
           this.init();
+
+          //Listen for data channels
+          pc.ondatachannel = (event) => {            
+            const s = event.channel;
+            const h = this.hdmap[s.label];
+            if (!h) {
+              console.log("No stream callbacks for label [" + s.label + "]");
+              s.close();
+              return;
+            }
+            this.#setupStream(s, s.label);
+          };
           
           //Listen for state change events
           pc.onconnectionstatechange = (event) =>{
@@ -107,16 +79,10 @@
             }
           }
 
-          if (Object.keys(this.streams).length <= 0) {
-            // because if no stream is added, no offer for creating datachannl will be created
-            // so we need to add dummy stream here
-            const s = this.stream("dummy");
-            s.onmessage = (event)=>{};
-          }
-
-          // create data channel here
-          for (const label in this.streams) {
-            this.streams[label].open(this);
+          if (this.onopen) {
+            this.context = this.onopen();
+          } else {
+            throw new Error("must set onopen callback and open initial stream in it");
           }
 
           //Create SDP offer
@@ -147,15 +113,13 @@
           //Set local description
           await pc.setLocalDescription(offer);
 
+          //store ice uflag/pwd
           this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)\r\n/)[1];
           this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)\r\n/)[1];
           
-          console.log("ice:uflag/pwd", this.iceUsername, this.icePassword)
-
           //And set remote description
           await pc.setRemoteDescription({type:"answer",sdp: answer});
         }
-
         close() {
           if (!this.pc) {
             // Already stopped
@@ -171,19 +135,14 @@
               reconnectionWaitMS = reconnectionWaitMS / 1000 / 1000;
             }
           } else {
-            // default 5 sec (TODO: exponential backoff by using connectCount)
+            // default 5 sec (TODO: configurable)
             reconnectionWaitMS = 5000;
           }
           if (this.pc.connectionState != "failed") {
             this.pc.close();
           }
           this.pc = null;
-          for (const label in this.streams) {
-            this.streams[label].close(true);
-            if (this.streams[label].runtime) {
-              this.streams[label] = null;
-            }
-          }
+          this.streams = {};
           if (reconnectionWaitMS > 0) {
             console.log("attempt reconnect after " + reconnectionWaitMS + "ms");
             setTimeout(() => {
@@ -193,41 +152,71 @@
             console.log("no reconnect. bye!");
           }
         }
-
-        stream(label) {
+        handler(label, callbacks) {
+          if (this.hdmap[label]) {
+            return this.hdmap[label];
+          }
+          if (!callbacks.onmessage) {
+            throw new Error("onmessage is mandatory");
+          }
+          this.hdmap[label] = callbacks;
+        }
+        openStream(label) {
           if (this.streams[label]) {
             return this.streams[label];
           }
-          const s = new QRPCStream(label, this.connectCount > 0);
-          this.streams[label] = s;
-          if (this.pc) {
-            s.open(this);
+          const h = this.hdmap[label];
+          if (!h) {
+            console.log("No stream callbacks for label " + label);
+            return null;
           }
+          const s = this.pc.createDataChannel(label);
+          this.#setupStream(s, h);
           return s;
         }
-
         closeStream(label) {
           const s = this.streams[label];
           if (!s) {
             console.log("No stream callbacks for label " + label);
             return;
           }
-          if (!s.isOpened()) {
-            console.log("closeStream: channel not opened : " + label);
-            return;
-          }
           s.close();
           this.streams[label] = null;
+        }
+
+        #setupStream(s, h) {
+          s.context = context;
+          s.onopen = (h.onopen && ((event) => {
+            const ctx = h.onopen(s, event);
+            if (ctx === false || ctx === null) {
+              console.log("close stream by application", s.label);
+              this.closeStream(s.label);
+              return;
+            } else {
+              s.context = ctx;
+            }
+          })) || ((event) => {});
+          s.onclose = (h.onclose && ((event) => {
+            h.onclose(s, event);
+          })) || ((event) => {});
+          s.onmessage = (event) => h.onmessage(s, event);
+          this.streams[s.label] = s;
         }
       };
 
       //Create whip client
       const url = "http://localhost:8888/accept";
       const c = new QRPClient(url);
+      const context = { texts: ["aaaa", "bbbb", "cccc"] };
+      const MAX_RECONNECT = 1;
       let closed = 0;
+      c.onopen = () => {
+        console.log("client onopen called");
+        c.openStream("test");
+      };
       c.onclose = () => {
         console.log("client onclose called", closed);
-        if (closed <= 3) {
+        if (closed <= MAX_RECONNECT) {
           closed++;
           return 2000 * 1000 * 1000;
         } else {
@@ -235,25 +224,55 @@
           return;
         }
       };
-      const s = c.stream("test");
-      s.onopen = (event)=>{
-        console.log("Data channel open", event);
-        let count = 0;
-        setInterval(() => {
-          count++;
-          if (count >= 3) {
-            c.close();
+      const decoder = new TextDecoder('utf-8');
+      c.handler("test", {
+        onopen: (s, event)=>{
+          console.log("Data channel open", event);
+          s.send(JSON.stringify({hello: s.context.texts[0], count: 0, ts: Date.now()}));
+          return context;
+        },
+        onclose: (s, event)=>{
+          console.log("Data channel close", event);
+        },
+        onmessage: (s, event)=>{
+          const now = Date.now();
+          const resp = JSON.parse(decoder.decode(event.data));
+          console.log("Data channel message", resp);
+          if (resp.hello != ("test:" + s.context.texts[resp.count])) {
+            console.log("Data channel message hello wrong", resp.hello, "should be", s.context.texts[resp.count]);
             return;
           }
-          s.send("Hello qrpc");
-        }, 1000);
-      };
-      s.onclose = (event)=>{
-        console.log("Data channel close", event);
-      };
-      s.onmessage = (event)=>{
-        console.log("Data channel message", event);
-      };
+          if (resp.count < 2) {
+            console.log("Data channel latency", now - resp.ts);
+            s.send(JSON.stringify({hello: s.context.texts[resp.count + 1], count: resp.count + 1, ts: now}));
+          } else {
+            c.openStream("test2");
+            s.close();
+          }
+        }
+      });
+      c.handler("test2", {
+        onopen: (s, event)=>{
+          console.log("Data channel2 open", s.label);
+          s.send(JSON.stringify({streamName: "recv"})); //will create stream which name is "recv"
+          return false; // close stream
+        },
+        onmessage: (s, event)=>{
+          throw new Error("should not be called");
+        }
+      });
+      c.handler("recv", {
+        onopen: (s, event)=>{
+          console.log("Data channel3 open", s.label);
+          // die is true, server close connection.
+          s.send(JSON.stringify({die: closed <= MAX_RECONNECT}));
+        },
+        onmessage: (s, event)=>{
+          const resp = JSON.parse(decoder.decode(event.data));
+          console.log("Data channel3 message", resp);
+          c.close();
+        }
+      });
 
       c.connect();
     </script>

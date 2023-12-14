@@ -64,9 +64,35 @@ int main(int argc, char *argv[]) {
         .alarm_processor = t,
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
-        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"pl", pl}});
-        auto data = s.label() + ":" + pl;
-        return s.Send(data.c_str(), data.length()); // echo
+        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
+        auto req = json::parse(pl);
+        if (s.label() == "test") {
+            // echo + label name
+            json j = {
+                {"hello", s.label() + ":" + req["hello"].get<std::string>()},
+                {"ts", req["ts"].get<float>()},
+                {"count", req["count"].get<uint64_t>()}
+            };
+            auto data = j.dump();
+            return s.Send(data.c_str(), data.length()); // echo
+        } else if (s.label() == "test2") {
+            auto stream_name = req["streamName"].get<std::string>();
+            auto ns = s.processor().OpenStream({
+                .label = stream_name
+            });
+            ASSERT(ns != nullptr);
+        } else if (s.label() == "recv") {
+            auto die = req["die"].get<bool>();
+            if (die) {
+                s.processor().CloseConnection();
+            }
+        }
+        return 0;
+    }, [](Stream &s) {
+        logger::info({{"ev","stream opened"},{"l",s.label()},{"sid",s.id()}});
+        return QRPC_OK;
+    }, [](Stream &s, const Stream::CloseReason &reason) {
+        logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
     });
     if (w.Init() < 0) {
         DIE("fail to init webrtc");

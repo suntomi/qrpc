@@ -278,7 +278,7 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
   }
   return QRPC_OK;
 }
-std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(Stream::Config &c) {
+std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(const Stream::Config &c) {
   if (streams_.find(c.params.streamId) != streams_.end()) {
     ASSERT(false);
     logger::error({{"ev","stream id already used"},{"sid",c.params.streamId}});
@@ -294,12 +294,12 @@ std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(Stream::Config &c) {
   streams_.emplace(s->id(), s);
   return s;
 }
-std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(Stream::Config &c) {
+std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(const Stream::Config &c) {
   int r;
   size_t cnt = 0;
   do {
     // auto allocate
-    c.params.streamId = stream_id_factory_.New();
+    const_cast<Stream::Config &>(c).params.streamId = stream_id_factory_.New();
   } while (streams_.find(c.params.streamId) != streams_.end() && ++cnt <= 0xFFFF);
   if (cnt > 0xFFFF) {
     ASSERT(false);
@@ -313,7 +313,7 @@ std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(Stream::Config &c) 
   // TODO: send DCEP OPEN messsage to peer
   if ((r = s->Open()) < 0) {
     logger::info({{"ev","new stream creation blocked"},{"sid",s->id()},{"rc",r}});
-    Close(*s);
+    s->Close(QRPC_CLOSE_REASON_SYSCALL, r, "dcep open failed");
     return nullptr;
   }
   logger::info({{"ev","new stream opened"},{"sid",s->id()}});
@@ -449,7 +449,7 @@ int WebRTCServer::Connection::OnDtlsDataReceived(Session *session, const uint8_t
   if (
     dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTING ||
     dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED) {
-    logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"}});
+    // logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"}});
     dtls_transport_->ProcessDtlsData(p, sz);
   } else {
     logger::warn({
@@ -735,6 +735,7 @@ void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
   size_t len) {
   // parse msg and create Stream::Config from it, then create stream by using NewStream
   TRACK();
+  int r;
   switch (*msg) {
   case DATA_CHANNEL_ACK: {
     auto s = streams_.find(streamId);
@@ -742,9 +743,9 @@ void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_ACK received for unknown stream"}});
       return;
     }
-    if (s->second->OnConnect() < 0) {
-      logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_ACK blocked for application reason"}});
-      Close(*s->second);
+    if ((r = s->second->OnConnect()) < 0) {
+      logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_ACK blocked for application reason"},{"rc",r}});
+      s->second->Close(QRPC_CLOSE_REASON_LOCAL, r);
       return;
     }
   } break;
@@ -763,11 +764,11 @@ void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
     // send dcep ack
     DcepResponse ack;
     uint8_t buff[ack.PayloadSize()];
-    if (sctpAssociation->SendSctpMessage(
+    if ((r = sctpAssociation->SendSctpMessage(
         s.get(), PPID::WEBRTC_DCEP, ack.ToPaylod(buff, sizeof(buff)), ack.PayloadSize()
-    ) < 0) {
-      logger::error({{"proto","sctp"},{"ev","fail to send DCEP ACK"},{"stream_id",streamId}});
-      Close(*s);
+    )) < 0) {
+      logger::error({{"proto","sctp"},{"ev","fail to send DCEP ACK"},{"stream_id",streamId},{"rc",r}});
+      s->Close(QRPC_CLOSE_REASON_LOCAL, r);
       return;
     }
   } break;
@@ -786,7 +787,11 @@ void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
     logger::debug({{"ev","SCTP message received for unknown stream, ignoring it"},{"sid",streamId}});
     return;
   }
-  it->second->OnRead(reinterpret_cast<const char *>(msg), len);
+  int r;
+  if ((r = it->second->OnRead(reinterpret_cast<const char *>(msg), len)) < 0) {
+    logger::info({{"ev", "application close stream"},{"sid",streamId},{"rc",r}});
+    it->second->Close(QRPC_CLOSE_REASON_LOCAL, r);
+  }
 }
 void WebRTCServer::Connection::OnSctpAssociationBufferedAmount(
   SctpAssociation* sctpAssociation, uint32_t len) {
