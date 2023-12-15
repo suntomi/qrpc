@@ -99,9 +99,10 @@ int main(int argc, char *argv[]) {
         DIE("fail to init webrtc");
     }
     std::filesystem::path p(__FILE__);
-    auto htmlpath = p.parent_path().string() + "/resources/client.html";
+    auto rootpath = p.parent_path().string();
+    auto htmlpath = rootpath + "/resources/client.html";
     HttpRouter r = HttpRouter().
-    Route(std::regex("/"), [&htmlpath](HttpSession &s) {
+    Route(std::regex("/"), [&htmlpath](HttpSession &s, std::cmatch &) {
         size_t htmlsz;
         auto html = Syscall::ReadFile(htmlpath, &htmlsz);
         if (html == nullptr) {
@@ -115,7 +116,31 @@ int main(int argc, char *argv[]) {
         s.Write(HRC_OK, h, 2, html.get(), htmlsz);
         return nullptr;
     }).
-    Route(std::regex("/accept"), [&w](HttpSession &s) {
+    Route(std::regex("/(.*)\\.(.*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
+        size_t filesz;
+        auto path = rootpath + "/resources/" + m[1].str() + "." + m[2].str();
+        auto file = Syscall::ReadFile(path, &filesz);
+        if (file == nullptr) {
+            DIE("fail to read html at " + path);
+        }
+        auto flen = std::to_string(filesz);
+        std::map<std::string, std::string> ctypes = {
+            {"js", "text/javascript"},
+            {"css", "text/css"},
+            {"png", "image/png"},
+            {"jpg", "image/jpeg"},
+            {"jpeg", "image/jpeg"},
+            {"gif", "image/gif"},
+            {"ico", "image/x-icon"}
+        };
+        HttpHeader h[] = {
+            {.key = "Content-Type", .val = ctypes[m[2].str()].c_str()},
+            {.key = "Content-Length", .val = flen.c_str()}
+        };
+        s.Write(HRC_OK, h, 2, file.get(), filesz);
+        return nullptr;
+    }).
+    Route(std::regex("/accept"), [&w](HttpSession &s, std::cmatch &) {
         int r;
         std::string sdp;
         if ((r = w.NewConnection(s.fsm().body(), sdp)) < 0) {
@@ -130,7 +155,7 @@ int main(int argc, char *argv[]) {
         s.Write(HRC_OK, h, 2, sdp.c_str(), sdp.length());
 	    return nullptr;
     }).
-    Route(std::regex("/test"), [](HttpSession &s) {
+    Route(std::regex("/test"), [](HttpSession &s, std::cmatch &) {
         json j = {
             {"sdp", "hoge"}
         };
@@ -143,7 +168,7 @@ int main(int argc, char *argv[]) {
         s.Write(HRC_OK, h, 2, body.c_str(), body.length());
 	    return nullptr;
     }).
-    Route(std::regex("/ws"), [](HttpSession &s) {
+    Route(std::regex("/ws"), [](HttpSession &s, std::cmatch &) {
         return WebSocketServer::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
             // echo server
             return ws.Send(p, sz);
