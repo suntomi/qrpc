@@ -20,6 +20,7 @@
 #include <algorithm>
 
 namespace base {
+namespace webrtc {
 
 // WebRTCServer
 int WebRTCServer::Init() {
@@ -825,5 +826,6 @@ void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
 void WebRTCServer::Connection::OnSctpAssociationBufferedAmount(
   SctpAssociation* sctpAssociation, uint32_t len) {
   TRACK();
-}   
+}
+} //namespace webrtc
 } //namespace base

@@ -91,6 +91,7 @@ using json = nlohmann::json;
 // a=max-message-size:262144
 
 namespace base {
+namespace webrtc {
   // v=0
   // o=- $timestamp $timestamp IN IP4 0.0.0.0
   // s=-
@@ -120,4 +121,5 @@ namespace base {
     std::string AnswerAs(const std::string &proto, const WebRTCServer::Connection &c) const;
     uint32_t AssignPriority(uint32_t component_id) const;
   };
-}
+} // namespace webrtc
+} // namespace base

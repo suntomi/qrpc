@@ -11,7 +11,14 @@
 #include "RTC/SrtpSession.hpp"
 
 namespace base {
+namespace webrtc {
+  typedef base::Stream Stream;
+  typedef base::AdhocStream AdhocStream;
+  typedef base::AlarmProcessor AlarmProcessor;
   class WebRTCServer {
+  public:
+    class Connection;
+    typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, WebRTCServer::Connection &)> StreamFactory;
   public:
     class IceUFlag : public std::string {
     public:
@@ -21,7 +28,6 @@ namespace base {
       IceUFlag(const IceUFlag &&f) : std::string(f) {}
     };
   public: // sessions
-    class Connection;
     class TcpSession : public TcpListener::TcpSession {
     public:
       TcpSession(TcpListener &f, Fd fd, const Address &addr) : 
@@ -63,7 +69,6 @@ namespace base {
         AdhocStream(c, config, Handler(Nop()), h, ShutdownHandler(Nop())) {}
       ~SyscallStream() {}
     };
-    typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, WebRTCServer::Connection &)> StreamFactory;
   public: // connections
     class Connection : public IceServer::Listener,
                        public DtlsTransport::Listener,
@@ -299,4 +304,5 @@ namespace base {
     ~AdhocWebRTCServer() {}
   };
   typedef WebRTCServer::Connection Connection;
+} //namespace webrtc
 } //namespace base

@@ -7,8 +7,8 @@
 #include <list>
 #include <string>
 
-namespace base
-{
+namespace base {
+namespace webrtc {
 	class IceServer
 	{
 	public:
@@ -130,6 +130,7 @@ namespace base
 		std::list<Session*> sessions;
 		Session *selectedSession{ nullptr };
 	};
-} // namespace RTC
+} // namespace webrtc
+} // namespace base
 
 #endif

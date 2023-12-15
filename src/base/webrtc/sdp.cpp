@@ -3,6 +3,7 @@
 #include "base/string.h"
 
 namespace base {
+namespace webrtc {
   bool SDP::Answer(WebRTCServer::Connection &c, std::string &answer) const {
     auto mit = find("media");
     if (mit == end()) {
@@ -142,4 +143,5 @@ a=max-message-size:262144
     }
     return false;
   }
-}
+} // namespace webrtc
+} // namespace base

@@ -10,8 +10,8 @@
 #define QRPC_DISABLE_MS_TRACK
 #include "base/webrtc/mpatch.h"
 
-namespace base
-{
+namespace base {
+namespace webrtc {
 	/* Static. */
 
 	static constexpr size_t StunSerializeBufferSize{ 65536 };
@@ -695,4 +695,5 @@ namespace base
 		// Notify the listener.
 		this->listener->OnIceServerSelectedSession(this, this->selectedSession);
 	}
-} // namespace RTC
+} // namespace webrtc
+} // namespace base

@@ -44,7 +44,7 @@ inline static int onSslCertificateVerify(int /*preverifyOk*/, X509_STORE_CTX* /*
 
 inline static void onSslInfo(const SSL* ssl, int where, int ret)
 {
-	static_cast<base::DtlsTransport*>(SSL_get_ex_data(ssl, 0))->OnSslInfo(where, ret);
+	static_cast<base::webrtc::DtlsTransport*>(SSL_get_ex_data(ssl, 0))->OnSslInfo(where, ret);
 }
 
 inline static unsigned int onSslDtlsTimer(SSL* /*ssl*/, unsigned int timerUs)
@@ -57,8 +57,8 @@ inline static unsigned int onSslDtlsTimer(SSL* /*ssl*/, unsigned int timerUs)
 		return 2 * timerUs;
 }
 
-namespace base
-{
+namespace base {
+namespace webrtc {
 	/* Static. */
 
 	// clang-format off
@@ -1453,4 +1453,5 @@ namespace base
 			this->listener->OnDtlsTransportFailed(this);
 		}
 	}
-} // namespace RTC
+} // namespace webrtc
+} // namespace base

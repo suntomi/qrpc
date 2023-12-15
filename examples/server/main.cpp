@@ -51,10 +51,10 @@ int main(int argc, char *argv[]) {
         DIE("fail to setup signal handler");
     }
     HttpServer s(l);
-    AdhocWebRTCServer w(l, WebRTCServer::Config {
+    webrtc::AdhocWebRTCServer w(l, webrtc::WebRTCServer::Config {
         .ports = {
-            {.protocol = WebRTCServer::Port::UDP, .port = 11111},
-            {.protocol = WebRTCServer::Port::TCP, .port = 11111}
+            {.protocol = webrtc::WebRTCServer::Port::UDP, .port = 11111},
+            {.protocol = webrtc::WebRTCServer::Port::TCP, .port = 11111}
         },
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .sctp_send_buffer_size = 256 * 1024,
