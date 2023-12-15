@@ -1,5 +1,6 @@
 #pragma once
 
+#include "base/conn.h"
 #include "base/id_factory.h"
 #include "base/session.h"
 #include "base/stream.h"
@@ -18,8 +19,6 @@ namespace webrtc {
   class WebRTCServer {
   public:
     class Connection;
-    typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, WebRTCServer::Connection &)> StreamFactory;
-  public:
     class IceUFlag : public std::string {
     public:
       IceUFlag(const std::string &s) : std::string(s) {}
@@ -70,10 +69,10 @@ namespace webrtc {
       ~SyscallStream() {}
     };
   public: // connections
-    class Connection : public IceServer::Listener,
+    class Connection : public base::Connection, 
+                       public IceServer::Listener,
                        public DtlsTransport::Listener,
-                       public SctpAssociation::Listener,
-                       public Stream::Processor {
+                       public SctpAssociation::Listener {
     public:
       Connection(WebRTCServer &sv, DtlsTransport::Role dtls_role) :
         sv_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
@@ -97,7 +96,6 @@ namespace webrtc {
     public:
       virtual int OnConnect() { return QRPC_OK; }
       virtual void OnShutdown() {}
-      void Close();
     public:
       bool connected() const;
       inline bool closed() const { return closed_; }
@@ -113,8 +111,8 @@ namespace webrtc {
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
-      std::shared_ptr<Stream> NewStream(const Stream::Config &c, const WebRTCServer::StreamFactory &sf);
-      std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const WebRTCServer::StreamFactory &sf);
+      std::shared_ptr<Stream> NewStream(const Stream::Config &c, const StreamFactory &sf);
+      std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const StreamFactory &sf);
       bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
         return Session::CheckTimeout(last_active_, now, timeout, next_check);
       }
@@ -127,14 +125,14 @@ namespace webrtc {
       int OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz);
       int OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz);      
     public:
-      // implements Stream::Processor
+      // implements base::Connection
+      void Close() override;
       int Send(Stream &s, const char *p, size_t sz, bool binary) override;
       void Close(Stream &s) override;
       int Open(Stream &s) override;
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override {
         return OpenStream(c, server().stream_factory());
       }
-      void CloseConnection() override { Close(); }
 
       // implements IceServer::Listener
 			void OnIceServerSendStunPacket(
@@ -293,12 +291,12 @@ namespace webrtc {
   class AdhocWebRTCServer : public WebRTCServer {
   public:
     AdhocWebRTCServer(Loop &l, Config &&c, const Stream::Handler &h) : WebRTCServer(l, std::move(c), 
-      [&h](const Stream::Config &config, WebRTCServer::Connection &conn) {
+      [&h](const Stream::Config &config, base::Connection &conn) {
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, h));
       }) {}
     AdhocWebRTCServer(Loop &l, Config &&c, 
       const Stream::Handler &h, const AdhocStream::ConnectHandler &ch, const AdhocStream::ShutdownHandler &sh) :
-      WebRTCServer(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, WebRTCServer::Connection &conn) {
+      WebRTCServer(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, h, ch, sh));
       }) {}
     ~AdhocWebRTCServer() {}

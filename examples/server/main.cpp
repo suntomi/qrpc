@@ -75,7 +75,7 @@ int main(int argc, char *argv[]) {
             }); // echo
         } else if (s.label() == "test2") {
             auto stream_name = req["streamName"].get<std::string>();
-            auto ns = s.processor().OpenStream({
+            auto ns = s.connection().OpenStream({
                 .label = stream_name
             });
             ASSERT(ns != nullptr);
@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) {
             auto die = req["die"].get<bool>();
             if (die) {
                 logger::info({{"ev","recv die"}});
-                s.processor().CloseConnection();
+                s.connection().Close();
             } else {
                 return s.Send({{"msg", "byebye"}});
             }

@@ -283,7 +283,7 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
   return QRPC_OK;
 }
 std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(
-  const Stream::Config &c, const WebRTCServer::StreamFactory &sf
+  const Stream::Config &c, const StreamFactory &sf
 ) {
   if (streams_.find(c.params.streamId) != streams_.end()) {
     ASSERT(false);
@@ -301,7 +301,7 @@ std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(
   return s;
 }
 std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(
-  const Stream::Config &c, const WebRTCServer::StreamFactory &sf
+  const Stream::Config &c, const StreamFactory &sf
 ) {
   int r;
   size_t cnt = 0;
@@ -344,7 +344,7 @@ void WebRTCServer::Connection::Close() {
   closed_ = true;
   OpenStream({
     .label = "$syscall"
-  }, [](const Stream::Config &config, Connection &conn) {
+  }, [](const Stream::Config &config, base::Connection &conn) {
     return std::make_shared<SyscallStream>(conn, config, [](Stream &s) {
       return s.Send({{"fn","close"}});
     });
