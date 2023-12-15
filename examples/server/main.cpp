@@ -128,7 +128,9 @@ int main(int argc, char *argv[]) {
         auto path = rootpath + "/resources/" + m[1].str() + "." + m[2].str();
         auto file = Syscall::ReadFile(path, &filesz);
         if (file == nullptr) {
-            DIE("fail to read html at " + path);
+            QRPC_LOG(warn, "fail to read html at " + path);
+            s.NotFound("fail to read file at " + path);
+            return nullptr;
         }
         auto flen = std::to_string(filesz);
         std::map<std::string, std::string> ctypes = {
