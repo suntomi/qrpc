@@ -71,7 +71,7 @@ void WebRTCServer::Fin() {
 void WebRTCServer::CloseConnection(Connection &c) {
   // how to close?
   logger::info({{"ev","close webrtc connection"},{"uflag",c.ice_server().GetUsernameFragment()}});
-  c.Close(); // close connection if not closed yet
+  c.Fin(); // cleanup resources if not yet
   connections_.erase(c.ice_server().GetUsernameFragment());
   // c might be freed here
 }
@@ -204,9 +204,12 @@ int WebRTCServer::TcpSession::OnRead(const char *p, size_t sz) {
   if (connection_ == nullptr) {
     connection_ = factory().to<TcpPort>().webrtc_server().FindFromStunRequest(up, sz);
     if (connection_ == nullptr) {
-      QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}})
+      QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}});
       return QRPC_EINVAL;
     }
+  } else if (connection_->closed()) {
+    QRPC_LOGJ(info, {{"ev","parent connection closed, remove the session"},{"from",addr().str()}});
+    return QRPC_EGOAWAY;
   }
   return connection_->OnPacketReceived(this, up, sz);
 }
@@ -278,13 +281,15 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
   }
   return QRPC_OK;
 }
-std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(const Stream::Config &c) {
+std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(
+  const Stream::Config &c, const WebRTCServer::StreamFactory &sf
+) {
   if (streams_.find(c.params.streamId) != streams_.end()) {
     ASSERT(false);
     logger::error({{"ev","stream id already used"},{"sid",c.params.streamId}});
     return nullptr;
   }
-  auto s = server().stream_factory()(c, *this);
+  auto s = sf(c, *this);
   if (s == nullptr) {
     ASSERT(false);
     logger::error({{"ev","fail to create stream"},{"sid",c.params.streamId}});
@@ -294,7 +299,9 @@ std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(const Stream::Config
   streams_.emplace(s->id(), s);
   return s;
 }
-std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(const Stream::Config &c) {
+std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(
+  const Stream::Config &c, const WebRTCServer::StreamFactory &sf
+) {
   int r;
   size_t cnt = 0;
   do {
@@ -306,7 +313,7 @@ std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(const Stream::Confi
     logger::error({{"ev","cannot allocate stream id"}});
     return nullptr;
   }
-  auto s = NewStream(c);
+  auto s = NewStream(c, sf);
   if (s == nullptr) { return nullptr; }
   // allocate stream Id
   sctp_association_->HandleDataConsumer(s.get());
@@ -319,11 +326,7 @@ std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(const Stream::Confi
   logger::info({{"ev","new stream opened"},{"sid",s->id()},{"l",s->label()}});
   return s;
 }
-void WebRTCServer::Connection::Close() {
-  if (closed()) {
-    return;
-  }
-  closed_ = true;
+void WebRTCServer::Connection::Fin() {
   if (dtls_transport_ != nullptr) {
     dtls_transport_->Close();
   }
@@ -332,6 +335,19 @@ void WebRTCServer::Connection::Close() {
   }
   OnShutdown();
   streams_.clear();
+}
+void WebRTCServer::Connection::Close() {
+  if (closed()) {
+    return;
+  }
+  closed_ = true;
+  OpenStream({
+    .label = "$syscall"
+  }, [](const Stream::Config &config, Connection &conn) {
+    return std::make_shared<SyscallStream>(conn, config, [](Stream &s) {
+      return s.Send({{"fn","close"}});
+    });
+  });
 }
 int WebRTCServer::Connection::RunDtlsTransport() {
   TRACK();
@@ -769,7 +785,7 @@ void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       return;
     }
     auto c = req->ToStreamConfig();
-    auto s = NewStream(c);
+    auto s = NewStream(c, server().stream_factory());
     if (s == nullptr) {
       logger::error({{"proto","sctp"},{"ev","fail to create stream"},{"stream_id",streamId}});
       return;

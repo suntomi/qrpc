@@ -57,6 +57,13 @@ namespace base {
     private:
       WebRTCServer &webrtc_server_;
     };
+    class SyscallStream : public AdhocStream {
+    public:
+      SyscallStream(Connection &c, const Config &config, const ConnectHandler &h) :
+        AdhocStream(c, config, Handler(Nop()), h, ShutdownHandler(Nop())) {}
+      ~SyscallStream() {}
+    };
+    typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, WebRTCServer::Connection &)> StreamFactory;
   public: // connections
     class Connection : public IceServer::Listener,
                        public DtlsTransport::Listener,
@@ -95,12 +102,14 @@ namespace base {
       inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
     public:
       int Init(std::string &uflag, std::string &pwd);
+      void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
       int RunDtlsTransport();
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
-      std::shared_ptr<Stream> NewStream(const Stream::Config &c);
+      std::shared_ptr<Stream> NewStream(const Stream::Config &c, const WebRTCServer::StreamFactory &sf);
+      std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const WebRTCServer::StreamFactory &sf);
       bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
         return Session::CheckTimeout(last_active_, now, timeout, next_check);
       }
@@ -117,7 +126,9 @@ namespace base {
       int Send(Stream &s, const char *p, size_t sz, bool binary) override;
       void Close(Stream &s) override;
       int Open(Stream &s) override;
-      std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override;
+      std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override {
+        return OpenStream(c, server().stream_factory());
+      }
       void CloseConnection() override { Close(); }
 
       // implements IceServer::Listener
@@ -219,8 +230,6 @@ namespace base {
     public:
       int Derive(AlarmProcessor &ap);
     };
-  public:
-    typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, WebRTCServer::Connection &)> StreamFactory;
   public:
     WebRTCServer(Loop &l, Config &&config, const StreamFactory &sf) :
       loop_(l), config_(config), stream_factory_(sf),

@@ -6,10 +6,20 @@
   <body>
     <script>
       class QRPClient {
+        static SYSCALL_STREAM = "$syscall";
         constructor(url) {
           this.url = url;
           this.streams = {};
           this.hdmap = {};
+          this.handler(QRPClient.SYSCALL_STREAM, {
+            onmessage: (s, event) => {
+              const data = JSON.parse(event.data);
+              if (data.fn === "close") {
+                console.log("shutdown by server");
+                this.close();
+              }
+            }
+          });
         }
         init() {
           //Ice properties
@@ -228,7 +238,6 @@
           return;
         }
       };
-      const decoder = new TextDecoder('utf-8');
       c.handler("test", {
         onopen: (s, event)=>{
           console.log("Data channel open", event);
@@ -239,15 +248,9 @@
           console.log("Data channel close", event);
           c.openStream("test2");
         },
-        onmessage: async (s, event)=>{
+        onmessage: (s, event)=>{
           const now = Date.now();
-          let data;
-          if (event.data.constructor.name === "Blob") {
-            data = await event.data.arrayBuffer();
-          } else {
-            data = event.data;
-          }
-          const resp = JSON.parse(decoder.decode(data));
+          const resp = JSON.parse(event.data);
           console.log("Data channel message", resp);
           if (resp.hello != ("test:" + s.context.texts[resp.count])) {
             console.log("Data channel message hello wrong", resp.hello, "should be", s.context.texts[resp.count]);
@@ -278,7 +281,7 @@
           s.send(JSON.stringify({die: closed <= MAX_RECONNECT}));
         },
         onmessage: (s, event)=>{
-          const resp = JSON.parse(decoder.decode(event.data));
+          const resp = JSON.parse(event.data);
           console.log("Data channel3 message", resp);
           c.close();
         }

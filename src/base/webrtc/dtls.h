@@ -156,13 +156,12 @@ namespace base
 	public:
 		void Dump() const;
 		void Run(Role localRole);
+		// this causes next DTLS packet receive fails with SSL_ERROR_SYSCALL in DtlsTransport::CheckStatus
+		// which calls OnDtlsTransportFailed (calls OnDtlsTransportClosed)
 		void Close() {
-			if (this->state == DtlsState::CLOSED) {
-					return;
-			}
-			Reset(true);
-			this->state = DtlsState::CLOSED;
-			// this->listener->OnDtlsTransportClosed(this);
+			// Send close alert to the peer.
+			SSL_shutdown(this->ssl);
+			SendPendingOutgoingDtlsData();
 		}
 		static inline std::vector<Fingerprint>& GetLocalFingerprints()
 		{

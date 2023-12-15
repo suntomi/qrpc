@@ -30,8 +30,9 @@ namespace base {
       virtual void CloseConnection() = 0;
     };
   public:
-    Stream(Processor &p, const Config &c) : 
-      processor_(p), config_(c), close_reason_(nullptr) {}
+    Stream(Processor &p, const Config &c, bool binary_payload = true) : 
+      processor_(p), config_(c), close_reason_(nullptr),
+      binary_payload_(binary_payload) {}
     virtual ~Stream() {}
     const Config &config() const { return config_; }
     bool closed() const { return close_reason_ != nullptr; }
@@ -55,7 +56,7 @@ namespace base {
         Close( { .code = code, .detail_code = detail_code, .msg = msg });
     }
     virtual int Send(const char *data, size_t sz) {
-      return processor_.Send(*this, data, sz, true);
+      return processor_.Send(*this, data, sz, binary_payload_);
     }
     inline int Send(const json &&j) {
       auto data = j.dump();
@@ -68,6 +69,7 @@ namespace base {
     Processor &processor_;
     Config config_;
     std::unique_ptr<CloseReason> close_reason_;
+    bool binary_payload_;
   };
   class AdhocStream : public Stream {
   public:
@@ -75,17 +77,18 @@ namespace base {
     typedef std::function<void (Stream &, const CloseReason &)> ShutdownHandler;
   public:
     AdhocStream(Processor &p, const Config &c, const Handler &h) :
-      Stream(p, c), read_handler_(h), connect_handler_(Nop()), shutdown_handler_(Nop()) {}
+      Stream(p, c, false), read_handler_(h), connect_handler_(Nop()), shutdown_handler_(Nop()) {}
     AdhocStream(Processor &p, const Config &c, 
       const Handler &rh, const ConnectHandler &ch, const ShutdownHandler &sh) :
-        Stream(p, c), read_handler_(rh), connect_handler_(ch), shutdown_handler_(sh) {}
+        Stream(p, c, false), read_handler_(rh), connect_handler_(ch), shutdown_handler_(sh) {}
     int OnRead(const char *p, size_t sz) override { return read_handler_(*this, p, sz); }
     int OnConnect() override { return connect_handler_(*this); }
     void OnShutdown() override { return shutdown_handler_(*this, *close_reason_); }
-  private:
+  protected:
     struct Nop {
       int operator()(Stream &) { return QRPC_OK; }
       void operator()(Stream &, const CloseReason &) {}
+      int operator()(Stream &, const char *, size_t) { return QRPC_OK; }
     };
   private:
     Handler read_handler_;
