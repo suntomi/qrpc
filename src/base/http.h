@@ -1069,7 +1069,7 @@ namespace base {
     /******* HttpRouter *******/
     class HttpRouter {
     public:
-        typedef HttpServer::Callback Handler;
+        typedef std::function<TcpSession *(HttpSession&, std::cmatch&)> Handler;
         typedef HttpFSM Request;
         HttpRouter() : route_() {}
         HttpRouter &Route(const std::regex &pattern, const Handler &h) {
@@ -1080,8 +1080,9 @@ namespace base {
             char buff[256];
             const char *path = s.fsm().url(buff, sizeof(buff));
             for (auto &it : route_) {
-                if (std::regex_match(path, it.first)) {
-                    return it.second(s);
+                std::cmatch match;
+                if (std::regex_match(path, match, it.first)) {
+                    return it.second(s, match);
                 }
             }
             s.NotFound("no route matched for %s\n", path);

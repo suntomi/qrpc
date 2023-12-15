@@ -57,6 +57,13 @@ namespace base {
     private:
       WebRTCServer &webrtc_server_;
     };
+    class SyscallStream : public AdhocStream {
+    public:
+      SyscallStream(Connection &c, const Config &config, const ConnectHandler &h) :
+        AdhocStream(c, config, Handler(Nop()), h, ShutdownHandler(Nop())) {}
+      ~SyscallStream() {}
+    };
+    typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, WebRTCServer::Connection &)> StreamFactory;
   public: // connections
     class Connection : public IceServer::Listener,
                        public DtlsTransport::Listener,
@@ -66,8 +73,8 @@ namespace base {
       Connection(WebRTCServer &sv, DtlsTransport::Role dtls_role) :
         sv_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr),
-        srtp_send_(nullptr), srtp_recv_(nullptr), sctp_connected_(false),
-        streams_(), stream_id_factory_() {
+        srtp_send_(nullptr), srtp_recv_(nullptr), streams_(), stream_id_factory_(),
+        sctp_connected_(false), closed_(false) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case DtlsTransport::Role::CLIENT:
@@ -83,20 +90,26 @@ namespace base {
         }
       ~Connection() {}
     public:
+      virtual int OnConnect() { return QRPC_OK; }
+      virtual void OnShutdown() {}
+      void Close();
+    public:
       bool connected() const;
-      WebRTCServer &server() { return sv_; }
-      const WebRTCServer &server() const { return sv_; }
-      const IceServer &ice_server() const { return *ice_server_.get(); }
-      DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
+      inline bool closed() const { return closed_; }
+      inline WebRTCServer &server() { return sv_; }
+      inline const WebRTCServer &server() const { return sv_; }
+      inline const IceServer &ice_server() const { return *ice_server_.get(); }
+      inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
     public:
       int Init(std::string &uflag, std::string &pwd);
+      void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
       int RunDtlsTransport();
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
-      std::shared_ptr<Stream> OpenStream(Stream::Config &c);
-      std::shared_ptr<Stream> NewStream(Stream::Config &c);
+      std::shared_ptr<Stream> NewStream(const Stream::Config &c, const WebRTCServer::StreamFactory &sf);
+      std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const WebRTCServer::StreamFactory &sf);
       bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
         return Session::CheckTimeout(last_active_, now, timeout, next_check);
       }
@@ -113,6 +126,10 @@ namespace base {
       int Send(Stream &s, const char *p, size_t sz, bool binary) override;
       void Close(Stream &s) override;
       int Open(Stream &s) override;
+      std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override {
+        return OpenStream(c, server().stream_factory());
+      }
+      void CloseConnection() override { Close(); }
 
       // implements IceServer::Listener
 			void OnIceServerSendStunPacket(
@@ -129,6 +146,7 @@ namespace base {
 			void OnIceServerConnected(const IceServer *iceServer)    override;
 			void OnIceServerCompleted(const IceServer *iceServer)    override;
 			void OnIceServerDisconnected(const IceServer *iceServer) override;
+      bool OnIceServerCheckClosed(const IceServer *) override { return closed(); }
 
       // implements DtlsTransport::Listener
 			void OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) override;
@@ -159,6 +177,8 @@ namespace base {
 			void OnSctpAssociationClosed(SctpAssociation* sctpAssociation)     override;
 			void OnSctpAssociationSendData(
 			  SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) override;
+			void OnSctpStreamReset(
+			  SctpAssociation* sctpAssociation, uint16_t streamId) override;        
 			void OnSctpWebRtcDataChannelControlDataReceived(
 			  SctpAssociation* sctpAssociation,
 			  uint16_t streamId,
@@ -180,9 +200,9 @@ namespace base {
       std::unique_ptr<DtlsTransport> dtls_transport_; // DTLS
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
-      bool sctp_connected_;
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       IdFactory<Stream::Id> stream_id_factory_;
+      bool sctp_connected_, closed_;
     };
     struct Port {
       enum Protocol {
@@ -191,25 +211,25 @@ namespace base {
         TCP = 2,
       };
       Protocol protocol;
-      std::string ip;
       int port;
-      uint32_t priority;
     };
     struct Config {
+      std::string ip{""};
       std::vector<Port> ports;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
       size_t sctp_send_buffer_size;
       qrpc_time_t udp_session_timeout;
       qrpc_time_t connection_timeout;
       AlarmProcessor &alarm_processor;
+      std::string fingerprint_algorithm;
+      bool in6{false};
 
       // derived from above config values
-      std::string fingerprint;
+      std::string fingerprint{""};
+      std::vector<std::string> ifaddrs;
     public:
       int Derive(AlarmProcessor &ap);
     };
-  public:
-    typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, WebRTCServer::Connection &)> StreamFactory;
   public:
     WebRTCServer(Loop &l, Config &&config, const StreamFactory &sf) :
       loop_(l), config_(config), stream_factory_(sf),
@@ -223,6 +243,7 @@ namespace base {
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
     const std::string &fingerprint() const { return config_.fingerprint; }
+    const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
     const UdpPort::Config udp_listener_config() const {
       return { .alarm_processor = config_.alarm_processor, .session_timeout = config_.udp_session_timeout };
     }
@@ -232,11 +253,10 @@ namespace base {
     int NewConnection(const std::string &client_sdp, std::string &server_sdp);
     void CloseConnection(Connection &c);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
-    void RemoveUFlag(IceUFlag &uflag) {
-      // raw pointer in map might be freed
-      if (connections_.erase(uflag) == 0) {
-        logger::warn({{"ev","fail to remove uflag"},{"uflag",uflag}});
-      }
+    inline void RemoveUFlag(IceUFlag &uflag) {
+      // NOTE: this also called from destructor of Connection
+      // though raw pointer in map might be freed here, in above case, erase does nothing.
+      connections_.erase(uflag);
     }
     qrpc_time_t CheckTimeout() {
         qrpc_time_t now = qrpc_time_now();
@@ -270,6 +290,11 @@ namespace base {
     AdhocWebRTCServer(Loop &l, Config &&c, const Stream::Handler &h) : WebRTCServer(l, std::move(c), 
       [&h](const Stream::Config &config, WebRTCServer::Connection &conn) {
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, h));
+      }) {}
+    AdhocWebRTCServer(Loop &l, Config &&c, 
+      const Stream::Handler &h, const AdhocStream::ConnectHandler &ch, const AdhocStream::ShutdownHandler &sh) :
+      WebRTCServer(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, WebRTCServer::Connection &conn) {
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, h, ch, sh));
       }) {}
     ~AdhocWebRTCServer() {}
   };

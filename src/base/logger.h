@@ -140,14 +140,18 @@ namespace logger {
 
 #if !defined(NDEBUG)
   #define QRPC_LOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+  #define QRPC_LOGJ(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
 #else
   #define QRPC_LOG(level__, ...) { ::base::logger::logf(::base::logger::level::level__, __VA_ARGS__); }
+  #define QRPC_LOGJ(level__, ...) { ::base::logger::log(::base::logger::level::level__, __VA_ARGS__); }
 #endif
 #if defined(VERBOSE)
   #if !defined(NDEBUG)
     #define QRPC_VLOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
+    #define QRPC_VLOGJ(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
   #else
     #define QRPC_VLOG(level__, ...) { ::base::logger::logf(::base::logger::level::level__, __VA_ARGS__); } 
+    #define QRPC_VLOGJ(level__, ...) { ::base::logger::log(::base::logger::level::level__, __VA_ARGS__); } 
   #endif
 #else
   #define QRPC_VLOG(level__, ...)
@@ -170,7 +174,7 @@ namespace logger {
 #endif
 
 #if !defined(TRACK)
-  #if !defined(NDEBUG)
+  #if !defined(NDEBUG) && defined(QRPC_ENABLE_TRACK)
     #define TRACK(...) { ::base::logger::tracef(::base::logger::level::debug, __FILE__, __LINE__, __func__, 0, "track"); }
   #else
     #define TRACK(...) // fprintf(stderr, __VA_ARGS__)

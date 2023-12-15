@@ -4,131 +4,115 @@
     <title>WebRTC with QRPC base</title>
   </head>
   <body>
+    <script src="http://localhost:8888/client.js"></script>
     <script>
-      class WHIPClient
-      {
-        constructor()
-        {
-          //Ice properties
-          this.iceUsername = null;
-          this.icePassword = null;
-          //Pending candidadtes
-          this.candidates = [];
-          this.endOfcandidates = false;
+      showError = (err) => {
+        showResult("error:" + err);
+        throw new Error(err);
+      }
+      showResult = (result) => {
+        let div = document.getElementById("result");
+        if (!div) {
+          div = document.createElement("div");
+          div.id = "result";
+          document.body.appendChild(div);
         }
-
-        async connect(pc, url)
-        {
-          //If already publishing
-          if (this.pc)
-            throw new Error("Already publishing")
-
-          //Store pc object and token
-          this.pc = pc;
-          
-          //Listen for state change events
-          pc.onconnectionstatechange = (event) =>{
-            console.log("Connection state change", pc.connectionState);
-            switch(pc.connectionState) {
-              case "connected":
-                // The connection has become fully connected
-                break;
-              case "disconnected":
-              case "failed":
-                // One or more transports has terminated unexpectedly or in an error
-                break;
-              case "closed":
-                // The connection has been closed
-                break;
-            }
-          }
-
-          //Listen for candidates
-          pc.onicecandidate = (event)=>{
-            if (event.candidate) 
-            {
-              console.log("Ice candidate", event.candidate);
-              //Ignore candidates not from the first m line
-              if (event.candidate.sdpMLineIndex>0)
-                //Skip
-                return;
-              //Store candidate
-              this.candidates.push(event.candidate);                                         
-            } else {
-              console.log("no more Ice candidate", event.candidate);
-              //No more candidates
-              this.endOfcandidates = true;
-            }
-          }
-          //Create SDP offer
-          const offer = await pc.createOffer();
-
-          //Request headers
-          const headers = {
-            "Content-Type": "application/sdp"
-          };
-
-          //Do the post request to the WHIP endpoint with the SDP offer
-          const fetched = await fetch(url, {
-            method: "POST",
-            body: offer.sdp,
-            headers
-          });
-
-          if (!fetched.ok)
-            throw new Error("Request rejected with status " + fetched.status)
-
-          //Get the SDP answer
-          const answer = await fetched.text();
-
-          console.log("whip answer", answer)
-
-          //Set local description
-          await pc.setLocalDescription(offer);
-
-          this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)\r\n/)[1];
-          this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)\r\n/)[1];
-          
-          console.log("ice:uflag/pwd", this.iceUsername, this.icePassword)
-
-          //And set remote description
-          await pc.setRemoteDescription({type:"answer",sdp: answer});
-        }
-
-        async close()
-        {
-          if (!this.pc) {
-            // Already stopped
-            return
-          }
-
-          //Close peerconnection
-          this.pc.close();
-
-          //Null
-          this.pc = null;
+        div.innerText = result;
+      };
+      //Create whip client
+      const url = "http://localhost:8888/accept";
+      const c = new QRPClient(url);
+      const context = { texts: ["aaaa", "bbbb", "cccc"] };
+      const MAX_RECONNECT = 2;
+      let closed = 0;
+      c.onopen = () => {
+        console.log("client onopen called");
+        c.openStream("test");
+        c.openStream("test3");
+      };
+      c.onclose = () => {
+        console.log("client onclose called", closed);
+        if (closed < MAX_RECONNECT) {
+          closed++;
+          return 2000 * 1000 * 1000;
+        } else {
+          // stop reconnection
+          showResult("success");
+          return;
         }
       };
-
-      //Create peerconnection
-      const pc = new RTCPeerConnection();
-
-      //Create datachannel
-      const ch = pc.createDataChannel("test");
-      ch.onopen = (event)=>{
-        console.log("Data channel open", event);
-        setInterval(() => ch.send("Hello qrpc"), 1000);
-      }
-      ch.onmessage = (event)=>{
-        console.log("Data channel message", event);
-      }
-
-      //Create whip client
-      const whip = new WHIPClient();
-
-      const url = "http://localhost:8888/accept";
-      //Start publishing
-      whip.connect(pc, url);
+      c.handle("test", {
+        onopen: (s, event)=>{
+          console.log("Data channel open", event);
+          s.send(JSON.stringify({hello: context.texts[0], count: 0, ts: Date.now()}));
+          return context;
+        },
+        onclose: (s, event)=>{
+          console.log("Data channel close", event);
+          c.openStream("test2");
+        },
+        onmessage: (s, event)=>{
+          const now = Date.now();
+          const resp = JSON.parse(event.data);
+          console.log("Data channel message", resp);
+          if (resp.hello != ("test:" + s.context.texts[resp.count])) {
+            showError("Data channel message hello wrong: [" + resp.hello + "] should be [", s.context.texts[resp.count] + "]");
+            return;
+          }
+          if (resp.count < 2) {
+            console.log("Data channel latency", now - resp.ts);
+            s.send(JSON.stringify({hello: s.context.texts[resp.count + 1], count: resp.count + 1, ts: now}));
+          } else {
+            s.close();
+          }
+        }
+      });
+      c.handle("test2", {
+        onopen: (s, event)=>{
+          console.log("Data channel2 open", s.label, s.readyState);
+          s.send(JSON.stringify({streamName: "recv"})); //will create stream which name is "recv"
+          return false; // close stream
+        },
+        onmessage: (s, event)=>{
+          showError("test2.onmessage should not be called");
+        }
+      });
+      c.handle("test3", {
+        onopen: (s, event)=>{
+          console.log("Data channel4 open", s.label, s.readyState);
+          s.send(JSON.stringify({count: 0}));
+          return {count: 0};
+        },
+        onclose: (s, event)=>{
+          if (s.context.count != 2) {
+            showError("test3.onclose count should be 2");
+          }
+          console.log("Data channel4 close");
+        },
+        onmessage: (s, event)=>{
+          const resp = JSON.parse(event.data);
+          console.log("Data channel4 message", resp);
+          s.context.count = resp.count + 1;
+          s.send(JSON.stringify({count: s.context.count}));
+        }
+      });
+      c.handle("recv", {
+        onopen: (s, event)=>{
+          console.log("Data channel3 open", s.label, closed, closed < MAX_RECONNECT);
+          // die is true, server close connection.
+          s.send(JSON.stringify({die: closed < MAX_RECONNECT}));
+        },
+        onmessage: (s, event)=>{
+          const resp = JSON.parse(event.data);
+          if (resp.msg != "byebye") {
+            showError("Data channel3 message msg wrong: [" + resp.msg + "] should be [byebye]");
+            return;
+          }
+          console.log("Data channel3 message", resp);
+          c.close();
+        }
+      });
+      c.connect();
     </script>
   </body>
 </html>

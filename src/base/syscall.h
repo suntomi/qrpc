@@ -14,6 +14,8 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 
 #include "base/address.h"
 #include "base/defs.h"
@@ -509,6 +511,25 @@ public:
     if (fp != nullptr) { fclose(fp); }
     return result;
   }
-
+  static std::vector<Address> &GetIfAddrs() {
+    thread_local static std::vector<Address> addrs;
+    if (addrs.size() == 0) {
+      struct ifaddrs *ifaddrs;
+      if (getifaddrs(&ifaddrs) != 0) {
+        logger::die({{"ev","getifaddrs() fails"},{"errno",Errno()}});
+        return addrs;
+      }
+      for (auto p = ifaddrs; p != nullptr; p = p->ifa_next) {
+        if (p->ifa_addr == nullptr) { continue; }
+        if (p->ifa_flags & IFF_LOOPBACK) { continue; }
+        if ((p->ifa_flags & (IFF_UP|IFF_RUNNING)) != (IFF_UP|IFF_RUNNING)) { continue; }
+        auto a = Address(*p->ifa_addr);
+        if (!a.inet_family()) { continue; }
+        logger::info({{"ev","found interface"},{"ifname",p->ifa_name},{"address",a.hostip()}});
+        addrs.push_back(a);
+      }
+    }
+    return addrs;
+  }
 };
 }

@@ -6,12 +6,16 @@
 #define DISALLOW_COPY(TypeName) \
   TypeName(const TypeName&) = delete
 
+#define DISALLOW_MOVE(TypeName) \
+  TypeName(TypeName&&) = delete
+
 // Put this in the declarations for a class to be unassignable.
 #define DISALLOW_ASSIGN(TypeName) TypeName& operator=(const TypeName&) = delete
 
 // Put this in the declarations for a class to be uncopyable and unassignable.
-#define DISALLOW_COPY_AND_ASSIGN(TypeName) \
+#define DISALLOW_COPY_MOVE_ASSIGN(TypeName) \
   DISALLOW_COPY(TypeName);                 \
+  DISALLOW_MOVE(TypeName);                 \
   DISALLOW_ASSIGN(TypeName)
 
 // A macro to disallow all the implicit constructors, namely the
@@ -19,7 +23,7 @@
 // This is especially useful for classes containing only static methods.
 #define DISALLOW_IMPLICIT_CONSTRUCTORS(TypeName) \
   TypeName() = delete;                           \
-  DISALLOW_COPY_AND_ASSIGN(TypeName)
+  DISALLOW_COPY_MOVE_ASSIGN(TypeName)
 
 // The arraysize(arr) macro returns the # of elements in an array arr.  The
 // expression is a compile-time constant, and therefore can be used in defining

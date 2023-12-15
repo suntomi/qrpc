@@ -38,7 +38,7 @@ namespace base {
                 if (!closed()) {
                     logger::info({
                         {"ev", "close"},{"fd",fd()},{"addr", addr().str()},
-                        {"rc", reason.code},{"dc", reason.detail_code},{"rmsg", reason.msg}
+                        {"code", reason.code},{"dcode", reason.detail_code},{"rmsg", reason.msg}
                     });
                     SetCloseReason(reason);
                     factory_.Close(*this);
@@ -120,7 +120,7 @@ namespace base {
                 if (Loop::Readable(e)) {
                     while (LIKELY(!closed())) {
                         char buffer[4096];
-                        size_t sz = sizeof(buffer);
+                        int sz = sizeof(buffer);
                         if ((sz = Syscall::Read(fd, buffer, sz)) < 0) {
                             int err = Syscall::Errno();
                             if (Syscall::WriteMayBlocked(err, false)) {

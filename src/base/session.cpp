@@ -142,6 +142,8 @@ namespace base {
       }
     }
     if (Syscall::SendTo(fd_, mmsg, count) < 0) {
+      // TODO: handle error correctly and try to send again
+      ASSERT(false);
       logger::die({{"ev", "Syscall::SendTo fails"}, {"errno", Syscall::Errno()}});
     }
     for (auto kv : sessions_) {

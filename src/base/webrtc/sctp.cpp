@@ -1,5 +1,5 @@
 #define MS_CLASS "SctpAssociation"
-#define MS_LOG_DEV_LEVEL 3
+// #define MS_LOG_DEV_LEVEL 3
 
 #include "base/assert.h"
 #include "base/logger.h"
@@ -551,6 +551,8 @@ namespace base {
 		{
 			MS_WARN_TAG(sctp, "usrsctp_setsockopt(SCTP_RESET_STREAMS) failed: %s", std::strerror(errno));
 		}
+
+		this->listener->OnSctpStreamReset(this, streamId);
 
 		std::free(srs);
 	}

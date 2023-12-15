@@ -53,27 +53,63 @@ int main(int argc, char *argv[]) {
     HttpServer s(l);
     AdhocWebRTCServer w(l, WebRTCServer::Config {
         .ports = {
-            {.protocol = WebRTCServer::Port::UDP, .ip = "", .port = 11111, .priority = 1},
-            {.protocol = WebRTCServer::Port::TCP, .ip = "", .port = 11111, .priority = 100}
+            {.protocol = WebRTCServer::Port::UDP, .port = 11111},
+            {.protocol = WebRTCServer::Port::TCP, .port = 11111}
         },
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .sctp_send_buffer_size = 256 * 1024,
-        .udp_session_timeout = qrpc_time_sec(30),
+        .udp_session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
+        .fingerprint_algorithm = "sha-256",
         .alarm_processor = t,
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
-        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"pl", pl}});
-        auto data = s.label() + ":" + pl;
-        return s.Send(data.c_str(), data.length()); // echo
+        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
+        auto req = json::parse(pl);
+        if (s.label() == "test") {
+            // echo + label name
+            return s.Send({
+                {"hello", s.label() + ":" + req["hello"].get<std::string>()},
+                {"ts", req["ts"].get<uint64_t>()},
+                {"count", req["count"].get<uint64_t>()}
+            }); // echo
+        } else if (s.label() == "test2") {
+            auto stream_name = req["streamName"].get<std::string>();
+            auto ns = s.processor().OpenStream({
+                .label = stream_name
+            });
+            ASSERT(ns != nullptr);
+        } else if (s.label() == "test3") {
+            auto count = req["count"].get<uint64_t>();
+            if (count >= 2) {
+                s.Close(QRPC_CLOSE_REASON_LOCAL, 0, "byebye");
+            } else {
+                return s.Send({{"count", count}});
+            }
+        } else if (s.label() == "recv") {
+            auto die = req["die"].get<bool>();
+            if (die) {
+                logger::info({{"ev","recv die"}});
+                s.processor().CloseConnection();
+            } else {
+                return s.Send({{"msg", "byebye"}});
+            }
+        }
+        return 0;
+    }, [](Stream &s) {
+        logger::info({{"ev","stream opened"},{"l",s.label()},{"sid",s.id()}});
+        return QRPC_OK;
+    }, [](Stream &s, const Stream::CloseReason &reason) {
+        logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
     });
     if (w.Init() < 0) {
         DIE("fail to init webrtc");
     }
     std::filesystem::path p(__FILE__);
-    auto htmlpath = p.parent_path().string() + "/resources/client.html";
+    auto rootpath = p.parent_path().string();
+    auto htmlpath = rootpath + "/resources/client.html";
     HttpRouter r = HttpRouter().
-    Route(std::regex("/"), [&htmlpath](HttpSession &s) {
+    Route(std::regex("/"), [&htmlpath](HttpSession &s, std::cmatch &) {
         size_t htmlsz;
         auto html = Syscall::ReadFile(htmlpath, &htmlsz);
         if (html == nullptr) {
@@ -87,12 +123,38 @@ int main(int argc, char *argv[]) {
         s.Write(HRC_OK, h, 2, html.get(), htmlsz);
         return nullptr;
     }).
-    Route(std::regex("/accept"), [&w](HttpSession &s) {
+    Route(std::regex("/(.*)\\.(.*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
+        size_t filesz;
+        auto path = rootpath + "/resources/" + m[1].str() + "." + m[2].str();
+        auto file = Syscall::ReadFile(path, &filesz);
+        if (file == nullptr) {
+            QRPC_LOG(warn, "fail to read html at " + path);
+            s.NotFound("fail to read file at " + path);
+            return nullptr;
+        }
+        auto flen = std::to_string(filesz);
+        std::map<std::string, std::string> ctypes = {
+            {"js", "text/javascript"},
+            {"css", "text/css"},
+            {"png", "image/png"},
+            {"jpg", "image/jpeg"},
+            {"jpeg", "image/jpeg"},
+            {"gif", "image/gif"},
+            {"ico", "image/x-icon"}
+        };
+        HttpHeader h[] = {
+            {.key = "Content-Type", .val = ctypes[m[2].str()].c_str()},
+            {.key = "Content-Length", .val = flen.c_str()}
+        };
+        s.Write(HRC_OK, h, 2, file.get(), filesz);
+        return nullptr;
+    }).
+    Route(std::regex("/accept"), [&w](HttpSession &s, std::cmatch &) {
         int r;
         std::string sdp;
         if ((r = w.NewConnection(s.fsm().body(), sdp)) < 0) {
             logger::error("fail to create connection");
-            s.ServerError("server error %s", r);
+            s.ServerError("server error %d", r);
         }
         std::string sdplen = std::to_string(sdp.length());
         HttpHeader h[] = {
@@ -102,7 +164,7 @@ int main(int argc, char *argv[]) {
         s.Write(HRC_OK, h, 2, sdp.c_str(), sdp.length());
 	    return nullptr;
     }).
-    Route(std::regex("/test"), [](HttpSession &s) {
+    Route(std::regex("/test"), [](HttpSession &s, std::cmatch &) {
         json j = {
             {"sdp", "hoge"}
         };
@@ -115,7 +177,7 @@ int main(int argc, char *argv[]) {
         s.Write(HRC_OK, h, 2, body.c_str(), body.length());
 	    return nullptr;
     }).
-    Route(std::regex("/ws"), [](HttpSession &s) {
+    Route(std::regex("/ws"), [](HttpSession &s, std::cmatch &) {
         return WebSocketServer::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
             // echo server
             return ws.Send(p, sz);

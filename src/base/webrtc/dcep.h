@@ -82,7 +82,7 @@ namespace base {
       r->msg_type = h->msg_type;
       if (r->msg_type != DATA_CHANNEL_OPEN) {
         // because we already check msg type before calling the method, this should not happen
-        logger::die({{"ev","invalid dcep packet"},{"reason", "invalid msg type"},{"msg_type",r->msg_type}});
+        logger::error({{"ev","invalid dcep packet"},{"reason", "invalid msg type"},{"msg_type",r->msg_type}});
         return nullptr;
       }
       r->channel_type = h->channel_type;
@@ -109,10 +109,10 @@ namespace base {
       r->priority = Endian::NetToHost(h->priority);
       auto llen = Endian::NetToHost(h->label_length);
       auto plen = Endian::NetToHost(h->protocol_length);
-      if (llen > 0) {
+      if (h->label_length > 0) {
         r->label.assign(reinterpret_cast<const char *>(p) + sizeof(Header), llen);
       }
-      if (plen > 0) {
+      if (h->protocol_length > 0) {
         r->protocol.assign(reinterpret_cast<const char *>(p) + sizeof(Header) + llen, plen);
         logger::error({{"ev","invalid dcep packet"},{"reason", "protocol field of dcep request is not supported"},{"proto",r->protocol}});
         return nullptr;
@@ -122,6 +122,10 @@ namespace base {
     const uint8_t *ToPaylod(uint8_t *buffer, size_t sz) {
       if (sz < PayloadSize()) {
         logger::error({{"ev","invalid dcep packet"},{"reason", "buffer size is too small"},{"sz",sz},{"payload_size",PayloadSize()}});
+        return nullptr;
+      }
+      if (label.length() > UINT16_MAX || protocol.length() > UINT16_MAX) {
+        logger::error({{"ev","invalid dcep packet"},{"reason", "protocol or label length too long"},{"llen",label.length()},{"plen",protocol.length()}});
         return nullptr;
       }
       Header *h = reinterpret_cast<Header *>(buffer);
@@ -139,8 +143,10 @@ namespace base {
           h->reliability_params = 0;
           break;
       }
-      h->label_length = Endian::HostToNet(label.length());
-      h->protocol_length = Endian::HostToNet(protocol.length());
+      uint16_t llen = label.length();
+      uint16_t plen = protocol.length();
+      h->label_length = Endian::HostToNet(llen);
+      h->protocol_length = Endian::HostToNet(plen);
       Syscall::MemCopy(buffer + sizeof(Header), label.c_str(), label.length());
       Syscall::MemCopy(buffer + sizeof(Header) + label.length(), protocol.c_str(), protocol.length());
       return buffer;

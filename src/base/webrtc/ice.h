@@ -45,6 +45,7 @@ namespace base
 			virtual void OnIceServerConnected(const IceServer *iceServer)    = 0;
 			virtual void OnIceServerCompleted(const IceServer *iceServer)    = 0;
 			virtual void OnIceServerDisconnected(const IceServer *iceServer) = 0;
+			virtual bool OnIceServerCheckClosed(const IceServer *iceServer) = 0;
 		};
 
 	public:

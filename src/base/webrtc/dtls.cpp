@@ -13,6 +13,7 @@
 
 // need to put last for overriding MS_XXX macro (because Logger.hpp also undef MS_XXX macro)
 #define QRPC_DISABLE_MS_TRACK
+#define QRPC_DISABLE_MS_DEBUG
 #include "base/webrtc/mpatch.h"
 
 #define LOG_OPENSSL_ERROR(desc)                                                                    \
@@ -824,7 +825,7 @@ namespace base
 		SendPendingOutgoingDtlsData();
 	}
 
-	void DtlsTransport::Reset()
+	void DtlsTransport::Reset(bool closeNotify)
 	{
 		MS_TRACE();
 
@@ -842,6 +843,9 @@ namespace base
 		// don't want to send a Close Alert to the peer, so just don't call
 		// SendPendingOutgoingDTLSData().
 		SSL_shutdown(this->ssl);
+		if (closeNotify) {
+			SendPendingOutgoingDtlsData();
+		}
 
 		this->localRole        = Role::NONE;
 		this->state            = DtlsState::NEW;

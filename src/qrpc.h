@@ -217,10 +217,6 @@ QRPC_DECL_CLOSURE(void, qrpc_on_client_conn_open_t, void *, qrpc_conn_t, void **
 //if this function returns positive value,
 //connection automatically reconnect with back off which equals to returned value.
 QRPC_DECL_CLOSURE(qrpc_time_t, qrpc_on_client_conn_close_t, void *, qrpc_conn_t, const qrpc_close_reason_t*, bool);
-//client connection finalized. just after this callback is done, memory corresponding to the qrpc_conn_t, will be freed. 
-//because qrpc_conn_t is already invalidate when this callback invokes, almost qrpc_conn_* API returns invalid value in this callback.
-//so the callback is basically for cleanup user defined resourse, like closure arg pointer (1st arg) or user context (3rd arg).
-QRPC_DECL_CLOSURE(void, qrpc_on_client_conn_finalize_t, void *, qrpc_conn_t, void *);
 
 
 /* server */
@@ -334,7 +330,6 @@ typedef struct {
   //connection open/close/finalize watcher
   qrpc_on_client_conn_open_t on_open;
   qrpc_on_client_conn_close_t on_close;
-  qrpc_on_client_conn_finalize_t on_finalize;
 
   //protocol type/version
   qrpc_wire_proto_t protocol;
@@ -455,12 +450,10 @@ QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t
 // conn API
 //
 // --------------------------
-//returns application protocol that nagotiated by ALPN
-QAPI_THREADSAFE bool qrpc_conn_app_proto(qrpc_conn_t conn, const uint8_t **pp_proto, qrpc_size_t *p_proto_len);
 //can modify handler map of connection, which is usually inherit from qrpc_client_t or qrpc_server_t.
 //if you use this API in callback functions of qrpc_conn_t (eg. qrpc_on_client/server_conn_open_t) are called, 
-//all modification of hdmap will be immediately finished.
-//but if it called from outside of callback functions for qrpc_conn_t, it will be queued
+//all modification of hdmap will be immediately finished. (this is recommended usage)
+//if it called from outside of callback functions for qrpc_conn_t, it will be queued
 //and actual modification will not immediately take place.
 QAPI_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modify_hdmap_t modifier);
 //close connection with reason_code and reason_detail through close frame.

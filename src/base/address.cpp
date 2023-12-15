@@ -2,7 +2,7 @@
 #include "base/resolver.h"
 
 namespace base {
-  std::string Address::host() const {
+  std::string Address::hostip() const {
     char buff[128];
     AsyncResolver::NtoP(c_str(), length(), buff, sizeof(buff));
     return std::string(buff);

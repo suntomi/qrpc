@@ -156,6 +156,13 @@ namespace base
 	public:
 		void Dump() const;
 		void Run(Role localRole);
+		// this causes next DTLS packet receive fails with SSL_ERROR_SYSCALL in DtlsTransport::CheckStatus
+		// which calls OnDtlsTransportFailed (calls OnDtlsTransportClosed)
+		void Close() {
+			// Send close alert to the peer.
+			SSL_shutdown(this->ssl);
+			SendPendingOutgoingDtlsData();
+		}
 		static inline std::vector<Fingerprint>& GetLocalFingerprints()
 		{
 			return DtlsTransport::localFingerprints;
@@ -190,7 +197,7 @@ namespace base
 			// Make GCC 4.9 happy.
 			return false;
 		}
-		void Reset();
+		void Reset(bool closeNotify = false);
 		bool CheckStatus(int returnCode);
 		void SendPendingOutgoingDtlsData();
 		bool SetTimeout();
