@@ -79,6 +79,13 @@ int main(int argc, char *argv[]) {
                 .label = stream_name
             });
             ASSERT(ns != nullptr);
+        } else if (s.label() == "test3") {
+            auto count = req["count"].get<uint64_t>();
+            if (count >= 2) {
+                s.Close(QRPC_CLOSE_REASON_LOCAL, 0, "byebye");
+            } else {
+                return s.Send({{"count", count}});
+            }
         } else if (s.label() == "recv") {
             auto die = req["die"].get<bool>();
             if (die) {

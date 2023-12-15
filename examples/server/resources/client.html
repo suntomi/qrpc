@@ -6,27 +6,42 @@
   <body>
     <script src="http://localhost:8888/client.js"></script>
     <script>
+      showError = (err) => {
+        showResult("error:" + err);
+        throw new Error(err);
+      }
+      showResult = (result) => {
+        let div = document.getElementById("result");
+        if (!div) {
+          div = document.createElement("div");
+          div.id = "result";
+          document.body.appendChild(div);
+        }
+        div.innerText = result;
+      };
       //Create whip client
       const url = "http://localhost:8888/accept";
       const c = new QRPClient(url);
       const context = { texts: ["aaaa", "bbbb", "cccc"] };
-      const MAX_RECONNECT = 1;
+      const MAX_RECONNECT = 2;
       let closed = 0;
       c.onopen = () => {
         console.log("client onopen called");
         c.openStream("test");
+        c.openStream("test3");
       };
       c.onclose = () => {
         console.log("client onclose called", closed);
-        if (closed <= MAX_RECONNECT) {
+        if (closed < MAX_RECONNECT) {
           closed++;
           return 2000 * 1000 * 1000;
         } else {
           // stop reconnection
+          showResult("success");
           return;
         }
       };
-      c.handler("test", {
+      c.handle("test", {
         onopen: (s, event)=>{
           console.log("Data channel open", event);
           s.send(JSON.stringify({hello: context.texts[0], count: 0, ts: Date.now()}));
@@ -41,7 +56,7 @@
           const resp = JSON.parse(event.data);
           console.log("Data channel message", resp);
           if (resp.hello != ("test:" + s.context.texts[resp.count])) {
-            console.log("Data channel message hello wrong", resp.hello, "should be", s.context.texts[resp.count]);
+            showError("Data channel message hello wrong: [" + resp.hello + "] should be [", s.context.texts[resp.count] + "]");
             return;
           }
           if (resp.count < 2) {
@@ -52,29 +67,51 @@
           }
         }
       });
-      c.handler("test2", {
+      c.handle("test2", {
         onopen: (s, event)=>{
           console.log("Data channel2 open", s.label, s.readyState);
           s.send(JSON.stringify({streamName: "recv"})); //will create stream which name is "recv"
           return false; // close stream
         },
         onmessage: (s, event)=>{
-          throw new Error("should not be called");
+          showError("test2.onmessage should not be called");
         }
       });
-      c.handler("recv", {
+      c.handle("test3", {
         onopen: (s, event)=>{
-          console.log("Data channel3 open", s.label, closed, closed <= MAX_RECONNECT);
-          // die is true, server close connection.
-          s.send(JSON.stringify({die: closed <= MAX_RECONNECT}));
+          console.log("Data channel4 open", s.label, s.readyState);
+          s.send(JSON.stringify({count: 0}));
+          return {count: 0};
+        },
+        onclose: (s, event)=>{
+          if (s.context.count != 2) {
+            showError("test3.onclose count should be 2");
+          }
+          console.log("Data channel4 close");
         },
         onmessage: (s, event)=>{
           const resp = JSON.parse(event.data);
+          console.log("Data channel4 message", resp);
+          s.context.count = resp.count + 1;
+          s.send(JSON.stringify({count: s.context.count}));
+        }
+      });
+      c.handle("recv", {
+        onopen: (s, event)=>{
+          console.log("Data channel3 open", s.label, closed, closed < MAX_RECONNECT);
+          // die is true, server close connection.
+          s.send(JSON.stringify({die: closed < MAX_RECONNECT}));
+        },
+        onmessage: (s, event)=>{
+          const resp = JSON.parse(event.data);
+          if (resp.msg != "byebye") {
+            showError("Data channel3 message msg wrong: [" + resp.msg + "] should be [byebye]");
+            return;
+          }
           console.log("Data channel3 message", resp);
           c.close();
         }
       });
-
       c.connect();
     </script>
   </body>

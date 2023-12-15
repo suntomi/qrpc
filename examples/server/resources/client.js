@@ -4,7 +4,7 @@ class QRPClient {
     this.url = url;
     this.streams = {};
     this.hdmap = {};
-    this.handler(QRPClient.SYSCALL_STREAM, {
+    this.handle(QRPClient.SYSCALL_STREAM, {
       onmessage: (s, event) => {
         const data = JSON.parse(event.data);
         if (data.fn === "close") {
@@ -159,7 +159,7 @@ class QRPClient {
       console.log("no reconnect. bye!");
     }
   }
-  handler(label, callbacks) {
+  handle(label, callbacks) {
     if (typeof callbacks.onmessage !== "function") {
       throw new Error("onmessage is mandatory and should be function");
     }
