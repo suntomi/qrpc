@@ -111,6 +111,15 @@ namespace base
 		{
 			case RTC::StunPacket::Class::REQUEST:
 			{
+				if (this->listener->OnIceServerCheckClosed(this)) {
+						RTC::StunPacket* response = packet->CreateErrorResponse(400);
+
+						response->Serialize(StunSerializeBuffer);
+						this->listener->OnIceServerSendStunPacket(this, response, session);
+
+						delete response;
+						return;
+				}
 				// USERNAME, MESSAGE-INTEGRITY and PRIORITY are required.
 				if (!packet->HasMessageIntegrity() || (packet->GetPriority() == 0u) || packet->GetUsername().empty())
 				{

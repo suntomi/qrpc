@@ -45,6 +45,8 @@ namespace base
 			virtual void OnSctpAssociationClosed(SctpAssociation* sctpAssociation)     = 0;
 			virtual void OnSctpAssociationSendData(
 			  SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) = 0;
+			virtual void OnSctpStreamReset(
+			  SctpAssociation* sctpAssociation, uint16_t streamId) = 0;
 			virtual void OnSctpWebRtcDataChannelControlDataReceived(
 			  SctpAssociation* sctpAssociation,
 			  uint16_t streamId,

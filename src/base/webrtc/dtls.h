@@ -156,9 +156,13 @@ namespace base
 	public:
 		void Dump() const;
 		void Run(Role localRole);
-		void Close() { 
-			Reset();
-			SendPendingOutgoingDtlsData();
+		void Close() {
+			if (this->state == DtlsState::CLOSED) {
+					return;
+			}
+			Reset(true);
+			this->state = DtlsState::CLOSED;
+			// this->listener->OnDtlsTransportClosed(this);
 		}
 		static inline std::vector<Fingerprint>& GetLocalFingerprints()
 		{
@@ -194,7 +198,7 @@ namespace base
 			// Make GCC 4.9 happy.
 			return false;
 		}
-		void Reset();
+		void Reset(bool closeNotify = false);
 		bool CheckStatus(int returnCode);
 		void SendPendingOutgoingDtlsData();
 		bool SetTimeout();

@@ -71,7 +71,7 @@ void WebRTCServer::Fin() {
 void WebRTCServer::CloseConnection(Connection &c) {
   // how to close?
   logger::info({{"ev","close webrtc connection"},{"uflag",c.ice_server().GetUsernameFragment()}});
-  c.Close();
+  c.Close(); // close connection if not closed yet
   connections_.erase(c.ice_server().GetUsernameFragment());
   // c might be freed here
 }
@@ -220,7 +220,7 @@ int WebRTCServer::UdpSession::OnRead(const char *p, size_t sz) {
   if (connection_ == nullptr) {
     connection_ = factory().to<UdpPort>().webrtc_server().FindFromStunRequest(up, sz);
     if (connection_ == nullptr) {
-      QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}})
+      QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}});
       return QRPC_EINVAL;
     }
   }
@@ -313,21 +313,25 @@ std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(const Stream::Confi
   // TODO: send DCEP OPEN messsage to peer
   if ((r = s->Open()) < 0) {
     logger::info({{"ev","new stream creation blocked"},{"sid",s->id()},{"rc",r}});
-    s->Close(QRPC_CLOSE_REASON_SYSCALL, r, "dcep open failed");
+    s->Close(QRPC_CLOSE_REASON_LOCAL, r, "DCEP OPEN failed");
     return nullptr;
   }
   logger::info({{"ev","new stream opened"},{"sid",s->id()},{"l",s->label()}});
   return s;
 }
 void WebRTCServer::Connection::Close() {
+  if (closed()) {
+    return;
+  }
+  closed_ = true;
   if (dtls_transport_ != nullptr) {
     dtls_transport_->Close();
   }
   for (auto &s : streams_) {
     s.second->OnShutdown();
   }
-  streams_.clear();
   OnShutdown();
+  streams_.clear();
 }
 int WebRTCServer::Connection::RunDtlsTransport() {
   TRACK();
@@ -559,14 +563,14 @@ void WebRTCServer::Connection::Close(Stream &s) {
   streams_.erase(s.id()); // s might destroyed
 }
 int WebRTCServer::Connection::Open(Stream &s) {
+  int r;
   auto &c = s.config();
   DcepRequest req(c);
   uint8_t buff[req.PayloadSize()];
-  if (sctp_association_->SendSctpMessage(
+  if ((r = sctp_association_->SendSctpMessage(
       &s, PPID::WEBRTC_DCEP, req.ToPaylod(buff, sizeof(buff)), req.PayloadSize()
-  ) < 0) {
-    logger::error({{"proto","sctp"},{"ev","fail to send DCEP ACK"},{"stream_id",s.id()}});
-    Close(s);
+  )) < 0) {
+    logger::error({{"proto","sctp"},{"ev","fail to send DCEP OPEN"},{"stream_id",s.id()}});
     return QRPC_EALLOC;
   }
   return QRPC_OK;
@@ -671,8 +675,7 @@ void WebRTCServer::Connection::OnDtlsTransportFailed(const DtlsTransport* dtlsTr
 }
 // The DTLS connection has been closed due to receipt of a close_notify alert.
 void WebRTCServer::Connection::OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) {
-  logger::info({{"ev","tls cloed"}});
-  OnShutdown();
+  logger::info({{"ev","tls closed"}});
   // Tell the parent class. (if we handle srtp, need to implement equivalent)
   // RTC::Transport::Disconnected();
   // above notifies TransportCongestionControlClient and TransportCongestionControlServer
@@ -688,6 +691,7 @@ void WebRTCServer::Connection::OnDtlsTransportSendData(
     logger::warn({{"proto","dtls"},{"ev","no selected tuple set, cannot send DTLS packet"}});
     return;
   }
+  logger::info({{"ev","send dtls packet"},{"sz",len},{"to",session->addr().str()}});
   session->Send(reinterpret_cast<const char *>(data), len);
   // may need to implement equivalent
   // RTC::Transport::DataSent(len);
@@ -718,6 +722,15 @@ void WebRTCServer::Connection::OnSctpAssociationClosed(SctpAssociation* sctpAsso
   sctp_connected_ = false;
   // TODO: notify app
 }
+void WebRTCServer::Connection::OnSctpStreamReset(
+  SctpAssociation* sctpAssociation, uint16_t streamId) {
+  auto s = streams_.find(streamId);
+  if (s == streams_.end()) {
+    logger::error({{"proto","sctp"},{"ev","reset stream not found"},{"sid",streamId}});
+    return;
+  }
+  s->second->Close(QRPC_CLOSE_REASON_REMOTE);
+}
 void WebRTCServer::Connection::OnSctpAssociationSendData(
   SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) {
   TRACK();
@@ -745,7 +758,7 @@ void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
     }
     if ((r = s->second->OnConnect()) < 0) {
       logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_ACK blocked for application reason"},{"rc",r}});
-      s->second->Close(QRPC_CLOSE_REASON_LOCAL, r);
+      s->second->Close(QRPC_CLOSE_REASON_LOCAL, r, "stream closed by application OnConnect");
       return;
     }
   } break;
@@ -768,7 +781,7 @@ void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
         s.get(), PPID::WEBRTC_DCEP, ack.ToPaylod(buff, sizeof(buff)), ack.PayloadSize()
     )) < 0) {
       logger::error({{"proto","sctp"},{"ev","fail to send DCEP ACK"},{"stream_id",streamId},{"rc",r}});
-      s->Close(QRPC_CLOSE_REASON_LOCAL, r);
+      s->Close(QRPC_CLOSE_REASON_LOCAL, r, "fail to send DCEP ACK");
       return;
     }
   } break;
@@ -790,7 +803,7 @@ void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
   int r;
   if ((r = it->second->OnRead(reinterpret_cast<const char *>(msg), len)) < 0) {
     logger::info({{"ev", "application close stream"},{"sid",streamId},{"rc",r}});
-    it->second->Close(QRPC_CLOSE_REASON_LOCAL, r);
+    it->second->Close(QRPC_CLOSE_REASON_LOCAL, r, "stream closed by application OnRead");
   }
 }
 void WebRTCServer::Connection::OnSctpAssociationBufferedAmount(

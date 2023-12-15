@@ -82,6 +82,7 @@ int main(int argc, char *argv[]) {
         } else if (s.label() == "recv") {
             auto die = req["die"].get<bool>();
             if (die) {
+                logger::info({{"ev","recv die"}});
                 s.processor().CloseConnection();
             } else {
                 return s.Send({{"msg", "byebye"}});

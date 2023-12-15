@@ -66,8 +66,8 @@ namespace base {
       Connection(WebRTCServer &sv, DtlsTransport::Role dtls_role) :
         sv_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr),
-        srtp_send_(nullptr), srtp_recv_(nullptr), sctp_connected_(false),
-        streams_(), stream_id_factory_() {
+        srtp_send_(nullptr), srtp_recv_(nullptr), streams_(), stream_id_factory_(),
+        sctp_connected_(false), closed_(false) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case DtlsTransport::Role::CLIENT:
@@ -88,10 +88,11 @@ namespace base {
       void Close();
     public:
       bool connected() const;
-      WebRTCServer &server() { return sv_; }
-      const WebRTCServer &server() const { return sv_; }
-      const IceServer &ice_server() const { return *ice_server_.get(); }
-      DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
+      inline bool closed() const { return closed_; }
+      inline WebRTCServer &server() { return sv_; }
+      inline const WebRTCServer &server() const { return sv_; }
+      inline const IceServer &ice_server() const { return *ice_server_.get(); }
+      inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
     public:
       int Init(std::string &uflag, std::string &pwd);
       void Touch(qrpc_time_t now) { last_active_ = now; }
@@ -134,6 +135,7 @@ namespace base {
 			void OnIceServerConnected(const IceServer *iceServer)    override;
 			void OnIceServerCompleted(const IceServer *iceServer)    override;
 			void OnIceServerDisconnected(const IceServer *iceServer) override;
+      bool OnIceServerCheckClosed(const IceServer *) override { return closed(); }
 
       // implements DtlsTransport::Listener
 			void OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) override;
@@ -164,6 +166,8 @@ namespace base {
 			void OnSctpAssociationClosed(SctpAssociation* sctpAssociation)     override;
 			void OnSctpAssociationSendData(
 			  SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) override;
+			void OnSctpStreamReset(
+			  SctpAssociation* sctpAssociation, uint16_t streamId) override;        
 			void OnSctpWebRtcDataChannelControlDataReceived(
 			  SctpAssociation* sctpAssociation,
 			  uint16_t streamId,
@@ -185,9 +189,9 @@ namespace base {
       std::unique_ptr<DtlsTransport> dtls_transport_; // DTLS
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
-      bool sctp_connected_;
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       IdFactory<Stream::Id> stream_id_factory_;
+      bool sctp_connected_, closed_;
     };
     struct Port {
       enum Protocol {

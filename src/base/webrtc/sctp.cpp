@@ -552,6 +552,8 @@ namespace base {
 			MS_WARN_TAG(sctp, "usrsctp_setsockopt(SCTP_RESET_STREAMS) failed: %s", std::strerror(errno));
 		}
 
+		this->listener->OnSctpStreamReset(this, streamId);
+
 		std::free(srs);
 	}
 

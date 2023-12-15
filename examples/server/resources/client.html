@@ -45,6 +45,9 @@
           };
           
           //Listen for state change events
+          pc.oniceconnectionstatechange = (event) => {
+            console.log("ICE connection state change", pc.iceConnectionState);
+          };
           pc.onconnectionstatechange = (event) =>{
             console.log("Connection state change", pc.connectionState);
             switch(pc.connectionState) {
@@ -179,7 +182,7 @@
         closeStream(label) {
           const s = this.streams[label];
           if (!s) {
-            console.log("No stream callbacks for label " + label);
+            console.log("No stream for label " + label);
             return;
           }
           s.close();
@@ -236,9 +239,15 @@
           console.log("Data channel close", event);
           c.openStream("test2");
         },
-        onmessage: (s, event)=>{
+        onmessage: async (s, event)=>{
           const now = Date.now();
-          const resp = JSON.parse(decoder.decode(event.data));
+          let data;
+          if (event.data.constructor.name === "Blob") {
+            data = await event.data.arrayBuffer();
+          } else {
+            data = event.data;
+          }
+          const resp = JSON.parse(decoder.decode(data));
           console.log("Data channel message", resp);
           if (resp.hello != ("test:" + s.context.texts[resp.count])) {
             console.log("Data channel message hello wrong", resp.hello, "should be", s.context.texts[resp.count]);
@@ -254,7 +263,7 @@
       });
       c.handler("test2", {
         onopen: (s, event)=>{
-          console.log("Data channel2 open", s.label);
+          console.log("Data channel2 open", s.label, s.readyState);
           s.send(JSON.stringify({streamName: "recv"})); //will create stream which name is "recv"
           return false; // close stream
         },
