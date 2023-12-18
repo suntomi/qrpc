@@ -13,11 +13,6 @@ using namespace base;
 
 int main(int argc, char *argv[]) {
     bool alive = true;
-    // if (!SDP::Test()) {
-    //     exit(0);
-    // }
-    // loop and timerscheduler must be live longer than other objects
-    // and loop must be more longer than timerscheduler
     Loop l; {
     if (l.Open(1024) < 0) {
         DIE("fail to init loop");

@@ -113,35 +113,5 @@ a=max-message-size:%u
       c.factory().config().send_buffer_size
     );
   }
-  bool SDP::Test() {
-    auto text = R"sdp(v=0
-o=- 2079181553264408257 2 IN IP4 127.0.0.1
-s=-
-t=0 0
-a=group:BUNDLE 0
-a=extmap-allow-mixed
-a=msid-semantic: WMS
-m=application 9 UDP/DTLS/SCTP webrtc-datachannel
-c=IN IP4 0.0.0.0
-b=AS:30
-a=ice-ufrag:5xf5
-a=ice-pwd:RaGh41Km50SazV5xD4cU0KNL
-a=ice-options:trickle
-a=fingerprint:sha-256 82:1E:F4:77:79:BF:31:AC:90:F6:0C:91:FB:FE:C5:0A:39:47:63:2E:18:A4:0F:36:7C:53:7A:D2:B8:91:42:A3
-a=setup:active
-a=mid:0
-a=sctp-port:5000
-a=max-message-size:262144
-)sdp";
-    SDP sdp(text);
-    logger::info(sdp);
-    auto m = sdp.find("media");
-    for (auto it = m->begin(); it != m->end(); ++it) {
-      logger::info({{"ev","media"}, {"media", *it}});
-      auto p = it->find("protocol");
-      logger::info({{"ev","media protocol"}, {"protocol", *p}});
-    }
-    return false;
-  }
 } // namespace webrtc
 } // namespace base
