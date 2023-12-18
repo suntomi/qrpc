@@ -82,7 +82,7 @@ namespace base {
         Loop &loop() { return loop_; }
         template <class F> F &to() { return static_cast<F&>(*this); }
         template <class F> const F &to() const { return static_cast<const F&>(*this); }
-        Session *Open(const Address &a, FactoryMethod m) {
+        virtual Session *Open(const Address &a, FactoryMethod m) {
             Fd fd = Syscall::Connect(a.sa(), a.salen());
             return Create(fd, a, m);
         }
@@ -102,7 +102,8 @@ namespace base {
         FactoryMethod factory_method_;
         Loop &loop_;
     };
-    class TcpListener : public SessionFactory, public IoProcessor {
+    typedef SessionFactory TcpSessionFactory;
+    class TcpListener : public TcpSessionFactory, public IoProcessor {
     public:
         class TcpSession : public Session, public IoProcessor {
         public:
@@ -152,9 +153,9 @@ namespace base {
         };        
     public:
         TcpListener(Loop &l, FactoryMethod m) : 
-            SessionFactory(l, m), fd_(INVALID_FD), port_(0) {}
+            TcpSessionFactory(l, m), fd_(INVALID_FD), port_(0) {}
         TcpListener(TcpListener &&rhs) : 
-            SessionFactory(rhs.loop(), rhs.factory_method_), fd_(rhs.fd_), port_(rhs.port_) {
+            TcpSessionFactory(rhs.loop(), rhs.factory_method_), fd_(rhs.fd_), port_(rhs.port_) {
             rhs.fd_ = INVALID_FD;
             rhs.port_ = 0;
         }
@@ -234,15 +235,15 @@ namespace base {
         int port_;
     };
     template <class S>
-    class TcpServer : public TcpListener {
+    class TcpListenerOf : public TcpListener {
     public:
-        TcpServer(Loop &l, FactoryMethod m) : TcpListener(l, m) {}
-        TcpServer(Loop &l) : TcpListener(l, [this](Fd fd, const Address &a) {
+        TcpListenerOf(Loop &l, FactoryMethod m) : TcpListener(l, m) {}
+        TcpListenerOf(Loop &l) : TcpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<TcpSession, S>(), "S must be a descendant of TcpSession");
             return new S(*this, fd, a);
         }) {}
     };
-    class UdpListener : public SessionFactory, public IoProcessor {
+    class UdpSessionFactory : public SessionFactory, public IoProcessor {
     public:
         #if !defined(__QRPC_USE_RECVMMSG__)
         struct mmsghdr {
@@ -271,11 +272,11 @@ namespace base {
     public:
         class UdpSession : public Session {
         public:
-            UdpSession(UdpListener &f, Fd fd, const Address &addr) : 
+            UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : 
                 Session(f, fd, addr), last_active_(qrpc_time_now()) { AllocIovec(); }
             ~UdpSession() override {}
-            UdpListener &listener() { return factory().to<UdpListener>(); }
-            const UdpListener &listener() const { return factory().to<UdpListener>(); }
+            UdpSessionFactory &listener() { return factory().to<UdpSessionFactory>(); }
+            const UdpSessionFactory &listener() const { return factory().to<UdpSessionFactory>(); }
             bool timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
                 return CheckTimeout(last_active_, qrpc_time_now(), timeout, next_check);
             }
@@ -357,7 +358,7 @@ namespace base {
             qrpc_time_t last_active_;
         };
     public:
-        UdpListener(Loop &l, FactoryMethod m, const Config config = Config::Default()) :
+        UdpSessionFactory(Loop &l, FactoryMethod m, const Config config = Config::Default()) :
             SessionFactory(l, m), fd_(INVALID_FD), port_(0),
             #if defined(__QRPC_USE_RECVMMSG__)
                 batch_size_(256),
@@ -371,7 +372,7 @@ namespace base {
             write_buffers_(batch_size_) {
             SetupPacket();
         }
-        UdpListener(UdpListener &&rhs) : 
+        UdpSessionFactory(UdpSessionFactory &&rhs) : 
             SessionFactory(rhs.loop(), rhs.factory_method_), fd_(rhs.fd_), port_(rhs.port_),
             batch_size_(rhs.batch_size_), alarm_processor_(rhs.alarm_processor_), 
             timeout_(rhs.timeout_), factory_method_(rhs.factory_method_),
@@ -384,12 +385,18 @@ namespace base {
             rhs.timeout_ = 0;
             rhs.factory_method_ = nullptr;
         }
-        ~UdpListener() override { Close(); }
+        ~UdpSessionFactory() override { Close(); }
         Fd fd() const { return fd_; }
         int port() const { return port_; }
         qrpc_time_t timeout() const { return timeout_; }
         AlarmProcessor &alarm_processor() { return alarm_processor_; }
-        bool Listen(int port) {
+        bool Bind() { return Init(0); } //automatically allocate available port
+        bool Init(int port) {
+            if (fd_ != INVALID_FD) {
+                ASSERT(port_ != 0);
+                logger::warn({{"ev","already initialized"},{"fd",fd_},{"port",port_}});
+                return true;
+            }
             port_ = port;
             // create udp socket
             if ((fd_ = Syscall::CreateUDPSocket(AF_INET, &overflow_supported_)) < 0) {
@@ -412,6 +419,9 @@ namespace base {
                 );
             }
             return true;
+        }
+        Session *Open(const Address &a, FactoryMethod m) override {
+            return Create(fd_, a, m);
         }
         void Close() {
             if (fd_ != INVALID_FD) {
@@ -477,20 +487,25 @@ namespace base {
         std::vector<ReadPacketBuffer> read_buffers_;
         Allocator<WritePacketBuffer> write_buffers_;
     };
-    class AdhocUdpServer : public UdpListener {
+    class UdpListener : public UdpSessionFactory {
+    public:
+        UdpListener(Loop &l, FactoryMethod m, const Config c = Config::Default()) : UdpSessionFactory(l, m, c) {}
+        bool Listen(int port) { return Init(port); }
+    };
+    class AdhocUdpListener : public UdpListener {
     public:
         class AdhocUdpSession : public UdpSession {
         public:
-            AdhocUdpSession(AdhocUdpServer &f, Fd fd, const Address &addr) : 
+            AdhocUdpSession(AdhocUdpListener &f, Fd fd, const Address &addr) : 
                 UdpSession(f, fd, addr) {}
             ~AdhocUdpSession() override {}
             int OnRead(const char *p, size_t sz) override {
-                return factory().to<AdhocUdpServer>().handler()(*this, p, sz);
+                return factory().to<AdhocUdpListener>().handler()(*this, p, sz);
             }
         };
     public:
         typedef std::function<int (AdhocUdpSession &, const char *, size_t)> Handler;
-        AdhocUdpServer(Loop &l, Handler h, const Config config = Config::Default()) :
+        AdhocUdpListener(Loop &l, Handler h, const Config config = Config::Default()) :
             UdpListener(l, [this](Fd fd, const Address &a) {
                 return new AdhocUdpSession(*this, fd, a);
             }, config), handler_(h) {}
@@ -498,12 +513,12 @@ namespace base {
     private:
        Handler handler_;
     };
-    typedef AdhocUdpServer::AdhocUdpSession AdhocUdpSession;
+    typedef AdhocUdpListener::AdhocUdpSession AdhocUdpSession;
     template <class S>
-    class UdpServer : public UdpListener {
+    class UdpListenerOf : public UdpListener {
     public:
-        UdpServer(Loop &l, FactoryMethod m, const Config c = Config::Default()) : UdpListener(l, m, c) {}
-        UdpServer(Loop &l, const Config c = Config::Default()) : UdpListener(l, [this](Fd fd, const Address &a) {
+        UdpListenerOf(Loop &l, FactoryMethod m, const Config c = Config::Default()) : UdpListener(l, m, c) {}
+        UdpListenerOf(Loop &l, const Config c = Config::Default()) : UdpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<Session, S>(), "S must be a descendant of Session");
             return new S(*this, fd, a);
         }, c) {}

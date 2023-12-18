@@ -22,8 +22,8 @@
 namespace base {
 namespace webrtc {
 
-// WebRTCServer
-int WebRTCServer::Init() {
+// ConnectionFactory
+int ConnectionFactory::Init() {
   int r;
   if ((r = GlobalInit(config_.alarm_processor)) < 0) {
     return r;
@@ -61,7 +61,7 @@ int WebRTCServer::Init() {
   }
   return QRPC_OK;
 }
-void WebRTCServer::Fin() {
+void ConnectionFactory::Fin() {
   GlobalFin();
   if (alarm_id_ != AlarmProcessor::INVALID_ID) {
     alarm_processor().Cancel(alarm_id_);
@@ -69,37 +69,19 @@ void WebRTCServer::Fin() {
   }
   // cleanup TCP/UDP ports
 }
-void WebRTCServer::CloseConnection(Connection &c) {
+void ConnectionFactory::CloseConnection(Connection &c) {
   // how to close?
   logger::info({{"ev","close webrtc connection"},{"uflag",c.ice_server().GetUsernameFragment()}});
   c.Fin(); // cleanup resources if not yet
   connections_.erase(c.ice_server().GetUsernameFragment());
   // c might be freed here
 }
-int WebRTCServer::NewConnection(const std::string &client_sdp, std::string &server_sdp) {
-  logger::info({{"ev","new connection"},{"client_sdp", client_sdp}});
-  // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
-  // even if sdp anwser ask to do it.
-  auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::CLIENT));
-  if (c == nullptr) {
-    logger::error({{"ev","fail to allocate connection"}});
-    return QRPC_EALLOC;
-  }
-  int r;
-  std::string uflag, pwd;
-  if ((r = c->Init(uflag, pwd)) < 0) {
-    logger::error({{"ev","fail to init connection"},{"rc",r}});
-    return QRPC_EINVAL;
-  }
-  SDP sdp(client_sdp);
-  if (!sdp.Answer(*c, server_sdp)) {
-    logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
-    return QRPC_EINVAL;
-  }
-  connections_.emplace(std::move(uflag), c);
-  return QRPC_OK;
+bool ConnectionFactory::Connect(const std::string &host, int port, const std::string &path) {
+  ASSERT(false);
+  return false;
 }
-static inline WebRTCServer::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* packet) {
+
+static inline ConnectionFactory::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* packet) {
 		TRACK();
 
 		// Here we inspect the USERNAME attribute of a received STUN request and
@@ -112,12 +94,12 @@ static inline WebRTCServer::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* packe
 
 		// If no colon is found just return the whole USERNAME attribute anyway.
 		if (colonPos == std::string::npos) {
-			return WebRTCServer::IceUFlag{username};
+			return ConnectionFactory::IceUFlag{username};
     }
 
-		return WebRTCServer::IceUFlag{username.substr(0, colonPos)};
+		return ConnectionFactory::IceUFlag{username.substr(0, colonPos)};
 }
-std::shared_ptr<WebRTCServer::Connection> WebRTCServer::FindFromStunRequest(const uint8_t *p, size_t sz) {
+std::shared_ptr<ConnectionFactory::Connection> ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
   RTC::StunPacket* packet = RTC::StunPacket::Parse(p, sz);
   if (packet == nullptr) {
     QRPC_LOG(warn, "ignoring wrong STUN packet received");
@@ -138,7 +120,7 @@ std::shared_ptr<WebRTCServer::Connection> WebRTCServer::FindFromStunRequest(cons
   return it->second;
 }
 
-int WebRTCServer::GlobalInit(AlarmProcessor &a) {
+int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 	try
 	{
 		// Initialize static stuff.
@@ -157,7 +139,7 @@ int WebRTCServer::GlobalInit(AlarmProcessor &a) {
 		return QRPC_EDEPS;
 	}
 }
-void WebRTCServer::GlobalFin() {
+void ConnectionFactory::GlobalFin() {
 	try
 	{
     // Free static stuff.
@@ -173,8 +155,8 @@ void WebRTCServer::GlobalFin() {
 	}
 }
 
-// WebRTCServer::Config
-int WebRTCServer::Config::Derive(AlarmProcessor &ap) {
+// ConnectionFactory::Config
+int ConnectionFactory::Config::Derive(AlarmProcessor &ap) {
   for (auto fp : DtlsTransport::GetLocalFingerprints()) {
     // TODO: SHA256 is enough?
     if (fp.algorithm == DtlsTransport::GetFingerprintAlgorithm(fingerprint_algorithm)) {
@@ -199,8 +181,8 @@ int WebRTCServer::Config::Derive(AlarmProcessor &ap) {
   return QRPC_OK;
 }
 
-// WebRTCServer::UdpSession/TcpSession
-int WebRTCServer::TcpSession::OnRead(const char *p, size_t sz) {
+// ConnectionFactory::UdpSession/TcpSession
+int ConnectionFactory::TcpSession::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
   if (connection_ == nullptr) {
     connection_ = factory().to<TcpPort>().webrtc_server().FindFromStunRequest(up, sz);
@@ -214,12 +196,12 @@ int WebRTCServer::TcpSession::OnRead(const char *p, size_t sz) {
   }
   return connection_->OnPacketReceived(this, up, sz);
 }
-void WebRTCServer::TcpSession::OnShutdown() {
+void ConnectionFactory::TcpSession::OnShutdown() {
   if (connection_ != nullptr) {
     connection_->OnTcpSessionShutdown(this);
   }
 }
-int WebRTCServer::UdpSession::OnRead(const char *p, size_t sz) {
+int ConnectionFactory::UdpSession::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
   if (connection_ == nullptr) {
     connection_ = factory().to<UdpPort>().webrtc_server().FindFromStunRequest(up, sz);
@@ -230,15 +212,15 @@ int WebRTCServer::UdpSession::OnRead(const char *p, size_t sz) {
   }
   return connection_->OnPacketReceived(this, up, sz);
 }
-void WebRTCServer::UdpSession::OnShutdown() {
+void ConnectionFactory::UdpSession::OnShutdown() {
   if (connection_ != nullptr) {
     connection_->OnUdpSessionShutdown(this);
   }
 }
 
 
-/* WebRTCServer::Connection */
-bool WebRTCServer::Connection::connected() const {
+/* ConnectionFactory::Connection */
+bool ConnectionFactory::Connection::connected() const {
   return (
     (
       ice_server_->GetState() == IceServer::IceState::CONNECTED ||
@@ -246,7 +228,7 @@ bool WebRTCServer::Connection::connected() const {
     ) && dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED
   );
 }
-int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
+int ConnectionFactory::Connection::Init(std::string &uflag, std::string &pwd) {
   if (ice_server_ != nullptr) {
     logger::warn({{"ev","already init"}});
     return QRPC_OK;
@@ -261,7 +243,7 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
   }
   // create DTLS transport
   try {
-    dtls_transport_.reset(new DtlsTransport(this, server().alarm_processor()));
+    dtls_transport_.reset(new DtlsTransport(this, factory().alarm_processor()));
   } catch (const MediaSoupError &error) {
     logger::error({{"ev","fail to create DTLS transport"},{"reason",error.what()}});
     return QRPC_EALLOC;
@@ -270,10 +252,10 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
   sctp_association_.reset(
     new SctpAssociation(
       this, 
-      server().config().max_outgoing_stream_size,
-      server().config().initial_incoming_stream_size,
-      server().config().sctp_send_buffer_size,
-      server().config().sctp_send_buffer_size,
+      factory().config().max_outgoing_stream_size,
+      factory().config().initial_incoming_stream_size,
+      factory().config().send_buffer_size,
+      factory().config().send_buffer_size,
       true)
   );
   if (sctp_association_ == nullptr) {
@@ -282,7 +264,7 @@ int WebRTCServer::Connection::Init(std::string &uflag, std::string &pwd) {
   }
   return QRPC_OK;
 }
-std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(
+std::shared_ptr<Stream> ConnectionFactory::Connection::NewStream(
   const Stream::Config &c, const StreamFactory &sf
 ) {
   if (streams_.find(c.params.streamId) != streams_.end()) {
@@ -300,7 +282,7 @@ std::shared_ptr<Stream> WebRTCServer::Connection::NewStream(
   streams_.emplace(s->id(), s);
   return s;
 }
-std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(
+std::shared_ptr<Stream> ConnectionFactory::Connection::OpenStream(
   const Stream::Config &c, const StreamFactory &sf
 ) {
   int r;
@@ -327,7 +309,7 @@ std::shared_ptr<Stream> WebRTCServer::Connection::OpenStream(
   logger::info({{"ev","new stream opened"},{"sid",s->id()},{"l",s->label()}});
   return s;
 }
-void WebRTCServer::Connection::Fin() {
+void ConnectionFactory::Connection::Fin() {
   if (dtls_transport_ != nullptr) {
     dtls_transport_->Close();
   }
@@ -337,7 +319,7 @@ void WebRTCServer::Connection::Fin() {
   OnShutdown();
   streams_.clear();
 }
-void WebRTCServer::Connection::Close() {
+void ConnectionFactory::Connection::Close() {
   if (closed()) {
     return;
   }
@@ -350,7 +332,7 @@ void WebRTCServer::Connection::Close() {
     });
   });
 }
-int WebRTCServer::Connection::RunDtlsTransport() {
+int ConnectionFactory::Connection::RunDtlsTransport() {
   TRACK();
 
   // Do nothing if we have the same local DTLS role as the DTLS transport.
@@ -413,22 +395,22 @@ int WebRTCServer::Connection::RunDtlsTransport() {
   }
   return QRPC_OK;
 }
-void WebRTCServer::Connection::OnDtlsEstablished() {
+void ConnectionFactory::Connection::OnDtlsEstablished() {
   sctp_association_->TransportConnected();
   int r;
   if ((r = OnConnect()) < 0) {
     logger::error({{"ev","application reject connection"},{"rc",r}});
-    server().CloseConnection(*this);
+    factory().Close(*this);
   }
 }
-void WebRTCServer::Connection::OnTcpSessionShutdown(Session *s) {
+void ConnectionFactory::Connection::OnTcpSessionShutdown(Session *s) {
   ice_server_->RemoveTuple(s);
 }
-void WebRTCServer::Connection::OnUdpSessionShutdown(Session *s) {
+void ConnectionFactory::Connection::OnUdpSessionShutdown(Session *s) {
   ice_server_->RemoveTuple(s);
 }
 
-int WebRTCServer::Connection::OnPacketReceived(Session *session, const uint8_t *p, size_t sz) {
+int ConnectionFactory::Connection::OnPacketReceived(Session *session, const uint8_t *p, size_t sz) {
   // Check if it's STUN.
   if (RTC::StunPacket::IsStun(p, sz)) {
     return OnStunDataReceived(session, p, sz);
@@ -446,7 +428,7 @@ int WebRTCServer::Connection::OnPacketReceived(Session *session, const uint8_t *
     return QRPC_OK;
   }
 }
-int WebRTCServer::Connection::OnStunDataReceived(Session *session, const uint8_t *p, size_t sz) {
+int ConnectionFactory::Connection::OnStunDataReceived(Session *session, const uint8_t *p, size_t sz) {
   RTC::StunPacket* packet = RTC::StunPacket::Parse(p, sz);
   if (packet == nullptr) {
     logger::warn({{"ev","ignoring wrong STUN packet received"},{"proto","stun"}});
@@ -456,7 +438,7 @@ int WebRTCServer::Connection::OnStunDataReceived(Session *session, const uint8_t
   delete packet;
   return QRPC_OK;
 }
-int WebRTCServer::Connection::OnDtlsDataReceived(Session *session, const uint8_t *p, size_t sz) {
+int ConnectionFactory::Connection::OnDtlsDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure it comes from a valid tuple.
   if (!ice_server_->IsValidTuple(session)) {
@@ -481,7 +463,7 @@ int WebRTCServer::Connection::OnDtlsDataReceived(Session *session, const uint8_t
   }  
   return QRPC_OK;
 }
-int WebRTCServer::Connection::OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz) {
+int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure DTLS is connected.
   if (dtls_transport_->GetState() != DtlsTransport::DtlsState::CONNECTED) {
@@ -517,7 +499,7 @@ int WebRTCServer::Connection::OnRtcpDataReceived(Session *session, const uint8_t
   ASSERT(false);
   return QRPC_ENOTSUPPORT;
 }
-int WebRTCServer::Connection::OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz) {
+int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure DTLS is connected.
   if (dtls_transport_->GetState() != DtlsTransport::DtlsState::CONNECTED) {
@@ -568,18 +550,18 @@ int WebRTCServer::Connection::OnRtpDataReceived(Session *session, const uint8_t 
 }
 
 // implements Stream::Processor
-int WebRTCServer::Connection::Send(Stream &s, const char *p, size_t sz, bool binary) {
+int ConnectionFactory::Connection::Send(Stream &s, const char *p, size_t sz, bool binary) {
   PPID ppid = binary ? 
     (sz > 0 ? PPID::BINARY : PPID::BINARY_EMPTY) : 
     (sz > 0 ? PPID::STRING : PPID::STRING_EMPTY);
   sctp_association_->SendSctpMessage(&s, ppid, reinterpret_cast<const uint8_t *>(p), sz);
   return QRPC_OK;
 }
-void WebRTCServer::Connection::Close(Stream &s) {
+void ConnectionFactory::Connection::Close(Stream &s) {
   sctp_association_->DataConsumerClosed(&s);
   streams_.erase(s.id()); // s might destroyed
 }
-int WebRTCServer::Connection::Open(Stream &s) {
+int ConnectionFactory::Connection::Open(Stream &s) {
   int r;
   auto &c = s.config();
   DcepRequest req(c);
@@ -594,50 +576,50 @@ int WebRTCServer::Connection::Open(Stream &s) {
 }
 
 // implements IceServer::Listener
-void WebRTCServer::Connection::OnIceServerSendStunPacket(
+void ConnectionFactory::Connection::OnIceServerSendStunPacket(
   const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) {
   // TRACK();
   session->Send(reinterpret_cast<const char *>(packet->GetData()), packet->GetSize());
   // may need to implement equivalent
   // RTC::Transport::DataSent(packet->GetSize());
 }
-void WebRTCServer::Connection::OnIceServerLocalUsernameFragmentAdded(
+void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentAdded(
   const IceServer *iceServer, const std::string& usernameFragment) {
   logger::info({{"ev","OnIceServerLocalUsernameFragmentAdded"},{"uflag",usernameFragment}});
-  // mediasoup seems to add Connection itself to WebRTCServer's map here.
+  // mediasoup seems to add Connection itself to ConnectionFactory's map here.
   // and OnIceServerLocalUsernameFragmentAdded is called from WebRtcTransport::ctor
   // thus, if mediasoup creates WebRtcTransport, it will be added to the map automatically
   // but it is too implicit. I rather prefer to add it manualy, in NewConnection
 }
-void WebRTCServer::Connection::OnIceServerLocalUsernameFragmentRemoved(
+void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
   logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"uflag",usernameFragment}});
   auto uflag = IceUFlag{usernameFragment};
   sv_.RemoveUFlag(uflag);
 }
-void WebRTCServer::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
+void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
   // used for synching server's session/address map. 
   // use OnIceServerTupleAdded to search mediasoup's example
 }
-void WebRTCServer::Connection::OnIceServerSessionRemoved(
+void ConnectionFactory::Connection::OnIceServerSessionRemoved(
   const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
   // used for synching server's session/address map. 
   // use OnIceServerTupleRemoved to search mediasoup's example
 }
-void WebRTCServer::Connection::OnIceServerSelectedSession(
+void ConnectionFactory::Connection::OnIceServerSelectedSession(
   const IceServer *iceServer, Session *session) {
   TRACK();
   // just notify the app
   // use OnIceServerSelectedTuple to search mediasoup's example
 }
-void WebRTCServer::Connection::OnIceServerConnected(const IceServer *iceServer) {
+void ConnectionFactory::Connection::OnIceServerConnected(const IceServer *iceServer) {
   TRACK();
   // If ready, run the DTLS handler.
   if (RunDtlsTransport() < 0) {
     logger::error({{"ev","fail to run DTLS transport"}});
-    server().CloseConnection(*this);
+    factory().Close(*this);
     return;
   }
 
@@ -646,19 +628,19 @@ void WebRTCServer::Connection::OnIceServerConnected(const IceServer *iceServer) 
     OnDtlsEstablished();
   }
 }
-void WebRTCServer::Connection::OnIceServerCompleted(const IceServer *iceServer) {
+void ConnectionFactory::Connection::OnIceServerCompleted(const IceServer *iceServer) {
   TRACK();
   OnIceServerConnected(iceServer);
 }
-void WebRTCServer::Connection::OnIceServerDisconnected(const IceServer *iceServer) {
+void ConnectionFactory::Connection::OnIceServerDisconnected(const IceServer *iceServer) {
   TRACK();
 }
 
 // implements IceServer::Listener
-void WebRTCServer::Connection::OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) {
+void ConnectionFactory::Connection::OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) {
   TRACK();
 }
-void WebRTCServer::Connection::OnDtlsTransportConnected(
+void ConnectionFactory::Connection::OnDtlsTransportConnected(
   const DtlsTransport* dtlsTransport,
   RTC::SrtpSession::CryptoSuite srtpCryptoSuite,
   uint8_t* srtpLocalKey,
@@ -686,21 +668,21 @@ void WebRTCServer::Connection::OnDtlsTransportConnected(
 }
 // The DTLS connection has been closed as the result of an error (such as a
 // DTLS alert or a failure to validate the remote fingerprint).
-void WebRTCServer::Connection::OnDtlsTransportFailed(const DtlsTransport* dtlsTransport) {
+void ConnectionFactory::Connection::OnDtlsTransportFailed(const DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls failed"}});
   OnDtlsTransportClosed(dtlsTransport);
 }
 // The DTLS connection has been closed due to receipt of a close_notify alert.
-void WebRTCServer::Connection::OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) {
+void ConnectionFactory::Connection::OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls closed"}});
   // Tell the parent class. (if we handle srtp, need to implement equivalent)
   // RTC::Transport::Disconnected();
   // above notifies TransportCongestionControlClient and TransportCongestionControlServer
   // may need to implement equivalent for performance
-  server().CloseConnection(*this); // this might be freed here, so don't touch after the line
+  factory().Close(*this); // this might be freed here, so don't touch after the line
 }
 // Need to send DTLS data to the peer.
-void WebRTCServer::Connection::OnDtlsTransportSendData(
+void ConnectionFactory::Connection::OnDtlsTransportSendData(
   const DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) {
   TRACK();
   auto *session = ice_server_->GetSelectedSession();
@@ -714,32 +696,32 @@ void WebRTCServer::Connection::OnDtlsTransportSendData(
   // RTC::Transport::DataSent(len);
 }
 // DTLS application data received.
-void WebRTCServer::Connection::OnDtlsTransportApplicationDataReceived(
+void ConnectionFactory::Connection::OnDtlsTransportApplicationDataReceived(
   const DtlsTransport*, const uint8_t* data, size_t len) {
   TRACK();
   sctp_association_->ProcessSctpData(data, len);
 }
 
 // implements SctpAssociation::Listener
-void WebRTCServer::Connection::OnSctpAssociationConnecting(SctpAssociation* sctpAssociation) {
+void ConnectionFactory::Connection::OnSctpAssociationConnecting(SctpAssociation* sctpAssociation) {
   TRACK();
   // only notify
 }
-void WebRTCServer::Connection::OnSctpAssociationConnected(SctpAssociation* sctpAssociation) {
+void ConnectionFactory::Connection::OnSctpAssociationConnected(SctpAssociation* sctpAssociation) {
   TRACK();
   sctp_connected_ = true;
 }
-void WebRTCServer::Connection::OnSctpAssociationFailed(SctpAssociation* sctpAssociation) {
+void ConnectionFactory::Connection::OnSctpAssociationFailed(SctpAssociation* sctpAssociation) {
   TRACK();
   sctp_connected_ = false;
   // TODO: notify app
 }
-void WebRTCServer::Connection::OnSctpAssociationClosed(SctpAssociation* sctpAssociation) {
+void ConnectionFactory::Connection::OnSctpAssociationClosed(SctpAssociation* sctpAssociation) {
   TRACK();
   sctp_connected_ = false;
   // TODO: notify app
 }
-void WebRTCServer::Connection::OnSctpStreamReset(
+void ConnectionFactory::Connection::OnSctpStreamReset(
   SctpAssociation* sctpAssociation, uint16_t streamId) {
   auto s = streams_.find(streamId);
   if (s == streams_.end()) {
@@ -748,7 +730,7 @@ void WebRTCServer::Connection::OnSctpStreamReset(
   }
   s->second->Close(QRPC_CLOSE_REASON_REMOTE);
 }
-void WebRTCServer::Connection::OnSctpAssociationSendData(
+void ConnectionFactory::Connection::OnSctpAssociationSendData(
   SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) {
   TRACK();
   if (!connected()) {
@@ -758,7 +740,7 @@ void WebRTCServer::Connection::OnSctpAssociationSendData(
   }
   dtls_transport_->SendApplicationData(data, len);
 }
-void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
+void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
   SctpAssociation* sctpAssociation,
   uint16_t streamId,
   const uint8_t* msg,
@@ -786,7 +768,7 @@ void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       return;
     }
     auto c = req->ToStreamConfig();
-    auto s = NewStream(c, server().stream_factory());
+    auto s = NewStream(c, factory().stream_factory());
     if (s == nullptr) {
       logger::error({{"proto","sctp"},{"ev","fail to create stream"},{"stream_id",streamId}});
       return;
@@ -804,7 +786,7 @@ void WebRTCServer::Connection::OnSctpWebRtcDataChannelControlDataReceived(
   } break;
   }
 }
-void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
+void ConnectionFactory::Connection::OnSctpAssociationMessageReceived(
   SctpAssociation* sctpAssociation,
   uint16_t streamId,
   uint32_t ppid,
@@ -823,9 +805,71 @@ void WebRTCServer::Connection::OnSctpAssociationMessageReceived(
     it->second->Close(QRPC_CLOSE_REASON_LOCAL, r, "stream closed by application OnRead");
   }
 }
-void WebRTCServer::Connection::OnSctpAssociationBufferedAmount(
+void ConnectionFactory::Connection::OnSctpAssociationBufferedAmount(
   SctpAssociation* sctpAssociation, uint32_t len) {
   TRACK();
+}
+
+// Server
+bool Server::Listen(
+  int signaling_port, int port,
+  const std::string &listen_ip, const std::string &path
+) {
+  int r;
+  if (signaling_port <= 0) {
+    DIE("signaling port must be positive");
+  }
+  config_.ports = {
+    {.protocol = ConnectionFactory::Port::UDP, .port = port},
+    {.protocol = ConnectionFactory::Port::TCP, .port = port}
+  };
+  if ((r = Init()) < 0) {
+    logger::error({{"ev","fail to init server"},{"rc",r}});
+    return false;
+  }
+  router_.Route(std::regex(path), [this](HttpSession &s, std::cmatch &) {
+    int r;
+    std::string sdp;
+    if ((r = Accept(s.fsm().body(), sdp)) < 0) {
+        logger::error("fail to create connection");
+        s.ServerError("server error %d", r);
+    }
+    std::string sdplen = std::to_string(sdp.length());
+    HttpHeader h[] = {
+        {.key = "Content-Type", .val = "application/sdp"},
+        {.key = "Content-Length", .val = sdplen.c_str()}
+    };
+    s.Write(HRC_OK, h, 2, sdp.c_str(), sdp.length());
+    return nullptr;
+  });
+  if (!http_listener_.Listen(signaling_port, router_)) {
+    logger::error({{"ev","fail to listen on signaling port"},{"port",signaling_port}});
+    return false;
+  }
+  return true;
+}
+int Server::Accept(const std::string &client_sdp, std::string &server_sdp) {
+  logger::info({{"ev","new connection"},{"client_sdp", client_sdp}});
+  // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
+  // even if sdp anwser ask to do it.
+  auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::CLIENT));
+  if (c == nullptr) {
+    logger::error({{"ev","fail to allocate connection"}});
+    return QRPC_EALLOC;
+  }
+  int r;
+  std::string uflag, pwd;
+  if ((r = c->Init(uflag, pwd)) < 0) {
+    logger::error({{"ev","fail to init connection"},{"rc",r}});
+    return QRPC_EINVAL;
+  }
+  SDP sdp(client_sdp);
+  if (!sdp.Answer(*c, server_sdp)) {
+    logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
+    return QRPC_EINVAL;
+  }
+  connections_.emplace(std::move(uflag), c);
+  return QRPC_OK;
 }
 } //namespace webrtc
 } //namespace base

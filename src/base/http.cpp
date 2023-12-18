@@ -517,7 +517,7 @@ namespace base {
             return QRPC_OK; //not close connection
         case HttpFSM::state_websocket_establish:
         case HttpFSM::state_recv_finish: {
-            auto newsession = factory_.to<HttpServer>().cb()(*this);
+            auto newsession = factory_.to<HttpListener>().cb()(*this);
             if (newsession != nullptr) {
                 ASSERT(newsession->fd() == fd_);
                 if (newsession == this) {
@@ -550,7 +550,7 @@ namespace base {
         char out[base64::buffsize(sizeof(m_key_ptr))], origin[256];
         base64::encode(m_key_ptr, sizeof(m_key_ptr), out, sizeof(out));
         str::Vprintf(origin, sizeof(origin), "http://%s", host);
-        auto r = WebSocketServer::send_handshake_request(fd(), host, out, origin, NULL);
+        auto r = WebSocketListener::send_handshake_request(fd(), host, out, origin, NULL);
         if (r < 0) { return Syscall::WriteMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
         return r;
     }
@@ -559,7 +559,7 @@ namespace base {
         if (!(p = init_accept_key_from_header(buffer, sizeof(buffer)))) {
             return QRPC_EINVAL;
         }
-        auto r = WebSocketServer::send_handshake_response(fd(), buffer);
+        auto r = WebSocketListener::send_handshake_response(fd(), buffer);
         if (r < 0) { return Syscall::WriteMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
         return r;
     }

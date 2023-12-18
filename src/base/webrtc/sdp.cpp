@@ -4,7 +4,7 @@
 
 namespace base {
 namespace webrtc {
-  bool SDP::Answer(WebRTCServer::Connection &c, std::string &answer) const {
+  bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
     auto mit = find("media");
     if (mit == end()) {
       answer = "no media found";
@@ -70,12 +70,12 @@ namespace webrtc {
     return 2113929216 + 16776960 + (256 - component_id);
   }
 
-  std::string SDP::AnswerAs(const std::string &proto, const WebRTCServer::Connection &c) const {
+  std::string SDP::AnswerAs(const std::string &proto, const ConnectionFactory::Connection &c) const {
     auto now = qrpc_time_now();
-    auto port = proto == "UDP" ? c.server().udp_port() : c.server().tcp_port();
+    auto port = proto == "UDP" ? c.factory().udp_port() : c.factory().tcp_port();
     auto candidates = std::string("");
     size_t idx = 0;
-    for (auto &a : c.server().config().ifaddrs) {
+    for (auto &a : c.factory().config().ifaddrs) {
       candidates += str::Format(
         "%sa=candidate:0 %u %s %u %s %u typ host",
         idx == 0 ? "" : "\n",
@@ -109,8 +109,8 @@ a=max-message-size:%u
       candidates.c_str(),
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
-      c.server().fingerprint_algorithm().c_str(), c.server().fingerprint().c_str(),
-      c.server().config().sctp_send_buffer_size
+      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
+      c.factory().config().send_buffer_size
     );
   }
   bool SDP::Test() {

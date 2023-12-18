@@ -50,14 +50,9 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    HttpServer s(l);
-    webrtc::AdhocWebRTCServer w(l, webrtc::WebRTCServer::Config {
-        .ports = {
-            {.protocol = webrtc::WebRTCServer::Port::UDP, .port = 11111},
-            {.protocol = webrtc::WebRTCServer::Port::TCP, .port = 11111}
-        },
+    webrtc::AdhocServer w(l, webrtc::ConnectionFactory::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
-        .sctp_send_buffer_size = 256 * 1024,
+        .send_buffer_size = 256 * 1024,
         .udp_session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
@@ -102,13 +97,12 @@ int main(int argc, char *argv[]) {
     }, [](Stream &s, const Stream::CloseReason &reason) {
         logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
     });
-    if (w.Init() < 0) {
-        DIE("fail to init webrtc");
-    }
+    // signaling: 8888(http), webrtc: 11111(udp/tcp)
+    base::Server &bsv = w;
     std::filesystem::path p(__FILE__);
     auto rootpath = p.parent_path().string();
     auto htmlpath = rootpath + "/resources/client.html";
-    HttpRouter r = HttpRouter().
+    bsv.RestRouter().
     Route(std::regex("/"), [&htmlpath](HttpSession &s, std::cmatch &) {
         size_t htmlsz;
         auto html = Syscall::ReadFile(htmlpath, &htmlsz);
@@ -149,21 +143,6 @@ int main(int argc, char *argv[]) {
         s.Write(HRC_OK, h, 2, file.get(), filesz);
         return nullptr;
     }).
-    Route(std::regex("/accept"), [&w](HttpSession &s, std::cmatch &) {
-        int r;
-        std::string sdp;
-        if ((r = w.NewConnection(s.fsm().body(), sdp)) < 0) {
-            logger::error("fail to create connection");
-            s.ServerError("server error %d", r);
-        }
-        std::string sdplen = std::to_string(sdp.length());
-        HttpHeader h[] = {
-            {.key = "Content-Type", .val = "application/sdp"},
-            {.key = "Content-Length", .val = sdplen.c_str()}
-        };
-        s.Write(HRC_OK, h, 2, sdp.c_str(), sdp.length());
-	    return nullptr;
-    }).
     Route(std::regex("/test"), [](HttpSession &s, std::cmatch &) {
         json j = {
             {"sdp", "hoge"}
@@ -178,15 +157,15 @@ int main(int argc, char *argv[]) {
 	    return nullptr;
     }).
     Route(std::regex("/ws"), [](HttpSession &s, std::cmatch &) {
-        return WebSocketServer::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
+        return WebSocketListener::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
             // echo server
             return ws.Send(p, sz);
         });
     });
-    if (!s.Listen(8888, r)) {
-        DIE("fail to listen on http");
+    if (!bsv.Listen(8888, 11111)) {
+        DIE("fail to listen webrtc");
     }
-    AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
+    AdhocUdpListener us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);

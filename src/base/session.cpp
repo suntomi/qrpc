@@ -76,7 +76,7 @@ namespace base {
     return true;
   }
 
-  void UdpListener::SetupPacket() {
+  void UdpSessionFactory::SetupPacket() {
     for (int i = 0; i < batch_size_; i++) {
       auto &h = read_packets_[i].msg_hdr;
       h.msg_name = &read_buffers_[i].sa;
@@ -91,7 +91,7 @@ namespace base {
     }
   }
 
-  void UdpListener::ProcessPackets(int size) {
+  void UdpSessionFactory::ProcessPackets(int size) {
     int r;
     auto now = qrpc_time_now();
     for (int i = 0; i < size; i++) {
@@ -153,7 +153,7 @@ namespace base {
   #endif
   }
 
-  int UdpListener::Read() {
+  int UdpSessionFactory::Read() {
     for (int i = 0; i < batch_size_; i++) {
       auto &h = read_packets_[i].msg_hdr;
       h.msg_namelen = sizeof(read_buffers_[i].sa);

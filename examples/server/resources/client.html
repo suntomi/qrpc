@@ -20,7 +20,7 @@
         div.innerText = result;
       };
       //Create whip client
-      const url = "http://localhost:8888/accept";
+      const url = "http://localhost:8888/qrpc";
       const c = new QRPClient(url);
       const context = { texts: ["aaaa", "bbbb", "cccc"] };
       const MAX_RECONNECT = 2;

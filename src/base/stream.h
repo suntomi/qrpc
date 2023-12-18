@@ -1,16 +1,21 @@
 #pragma once
 
 #include "base/session.h"
-#include "base/conn.h"
+
+#include "RTC/SctpDictionaries.hpp"
 
 #include <stdint.h>
 #include <functional>
 
 namespace base {
+  class Connection;
   class Stream {
   public:
-    typedef ConnectionFactory::Connection Connection;
-    typedef StreamConfig Config;
+    typedef struct {
+      RTC::SctpStreamParameters params;
+      std::string label;
+      std::string protocol; // now not used
+    } Config;
     typedef Session::CloseReason CloseReason;
     typedef uint16_t Id;
     typedef std::function<int (Stream &, const char *, size_t)> Handler;
@@ -25,24 +30,14 @@ namespace base {
     const std::string &label() const { return config_.label; }
     Connection &connection() { return conn_; }
   public:
-    virtual int Open() {
-      return conn_.Open(*this);
-    }
-    virtual void Close(const CloseReason &reason) {
-      if (!closed()) {
-        close_reason_ = std::make_unique<CloseReason>(reason);
-        OnShutdown();
-        conn_.Close(*this);
-      }
-    }
+    virtual int Open();
+    virtual void Close(const CloseReason &reason);
     inline void Close(
         qrpc_close_reason_code_t code, int64_t detail_code = 0, const std::string &msg = ""
     ) {
         Close( { .code = code, .detail_code = detail_code, .msg = msg });
     }
-    virtual int Send(const char *data, size_t sz) {
-      return conn_.Send(*this, data, sz, binary_payload_);
-    }
+    virtual int Send(const char *data, size_t sz);
     inline int Send(const json &&j) {
       auto data = j.dump();
       return Send(data.c_str(), data.length());
@@ -56,6 +51,7 @@ namespace base {
     std::unique_ptr<CloseReason> close_reason_;
     bool binary_payload_;
   };
+  typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, Connection &)> StreamFactory;
   class AdhocStream : public Stream {
   public:
     typedef std::function<int (Stream &)> ConnectHandler;

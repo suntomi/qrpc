@@ -241,16 +241,17 @@ namespace base {
 
 
     /******* HttpServer *******/
-    class HttpServer : public TcpServer<HttpSession> {
+    class HttpListener : public TcpListenerOf<HttpSession> {
     public:
         typedef std::function<TcpSession *(HttpSession&)> Callback;
     public:
-        HttpServer(Loop &l) : TcpServer<HttpSession>(l) {}
-        ~HttpServer() {}
+        HttpListener(Loop &l) :
+            TcpListenerOf<HttpSession>(l) {}
+        ~HttpListener() {}
         Callback &cb() { return callback_; }
-        bool Listen(int port, Callback cb) {
+        bool Listen(int port, const Callback &cb) {
             callback_ = cb;
-            return TcpServer<HttpSession>::Listen(port);
+            return TcpListenerOf<HttpSession>::Listen(port);
         }
     protected:
         Callback callback_;
@@ -972,7 +973,7 @@ namespace base {
 
 
     /******* WebSocketServer *******/
-    class WebSocketServer : public TcpServer<WebSocketSession> {
+    class WebSocketListener : public TcpListenerOf<WebSocketSession> {
     public:
         // intend to being called from HttpServer::Callback;
         template <class WS>
@@ -989,7 +990,7 @@ namespace base {
         template <class WS>
         void Open(const std::string &host, int port) {
             static_assert(std::is_base_of<WebSocketSession, WS>(), "S must be a descendant of WebSocketSession");
-            TcpServer<WebSocketSession>::Resolve(AF_INET, host, port, [this, host](Fd fd, const Address &addr) {
+            TcpListenerOf<WebSocketSession>::Resolve(AF_INET, host, port, [this, host](Fd fd, const Address &addr) {
                 return new WS(*this, fd, addr, host);
             });
         }
