@@ -41,10 +41,10 @@ cc_import(
   })
 )
 
-cc_binary(
-  name = "server",
+[cc_binary(
+  name = exe,
   srcs = glob([
-    "examples/server/main.cpp",
+    main,
     "src/qrpc.cpp",
     "src/base/**",
     "src/ext/libsdptransform/src/*.cpp",
@@ -91,4 +91,7 @@ cc_binary(
   ],
   deps = [":mediasoup", "//src/ext/cares:ares"],
   linkstatic = True,
-)
+) for exe, main in [
+  ("server", "examples/server/main.cpp"),
+  ("client", "examples/client/main.cpp"),
+]]

@@ -70,11 +70,10 @@ namespace webrtc {
     private:
       ConnectionFactory &cf_;
     };
-  public: // servers
     class SyscallStream : public AdhocStream {
     public:
-      SyscallStream(BaseConnection &c, const Config &config, const ConnectHandler &h) :
-        AdhocStream(c, config, Handler(Nop()), h, ShutdownHandler(Nop())) {}
+      SyscallStream(BaseConnection &c, const Config &config, ConnectHandler &&h) :
+        AdhocStream(c, config, std::move(Handler(Nop())), std::move(h), std::move(ShutdownHandler(Nop()))) {}
       ~SyscallStream() {}
     };
   public: // connections
@@ -215,6 +214,7 @@ namespace webrtc {
       IdFactory<Stream::Id> stream_id_factory_;
       bool sctp_connected_, closed_;
     };
+    typedef std::function<Connection *(ConnectionFactory &, DtlsTransport::Role)> FactoryMethod;
     struct Port {
       enum Protocol {
         NONE = 0,
@@ -242,8 +242,12 @@ namespace webrtc {
       int Derive(AlarmProcessor &ap);
     };
   public:
-    ConnectionFactory(Loop &l, Config &&config, const StreamFactory &sf) :
-      loop_(l), config_(config), stream_factory_(sf), connections_() {}
+    ConnectionFactory(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
+      loop_(l), config_(config), factory_method_(fm), stream_factory_(sf), connections_() {}
+    ConnectionFactory(Loop &l, Config &&config, StreamFactory &&sf) :
+      loop_(l), config_(config), factory_method_([this](ConnectionFactory &cf, DtlsTransport::Role role) {
+        return new Connection(cf, role);
+      }), stream_factory_(sf), connections_() {}
     ~ConnectionFactory() { Fin(); }
   public:
     Loop &loop() { return loop_; }
@@ -290,6 +294,7 @@ namespace webrtc {
     Loop &loop_;
     Config config_;
     AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
+    FactoryMethod factory_method_;
     StreamFactory stream_factory_;
     std::vector<TcpPort> tcp_ports_;
     std::vector<UdpPort> udp_ports_;
@@ -298,18 +303,18 @@ namespace webrtc {
     static int GlobalInit(AlarmProcessor &a);
     static void GlobalFin();
   };
-  class AdhocConnectionFactory : public ConnectionFactory {
+  class AdhocConnection : public ConnectionFactory::Connection {
   public:
-    AdhocConnectionFactory(Loop &l, Config &&c, const Stream::Handler &h) : ConnectionFactory(l, std::move(c), 
-      [&h](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, h));
-      }) {}
-    AdhocConnectionFactory(Loop &l, Config &&c, 
-      const Stream::Handler &h, const AdhocStream::ConnectHandler &ch, const AdhocStream::ShutdownHandler &sh) :
-      ConnectionFactory(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, h, ch, sh));
-      }) {}
-    ~AdhocConnectionFactory() {}
+    typedef std::function<int (ConnectionFactory::Connection &)> ConnectHandler;
+    typedef std::function<void (ConnectionFactory::Connection &)> ShutdownHandler;
+  public:
+    AdhocConnection(ConnectionFactory &sv, DtlsTransport::Role dtls_role, ConnectHandler &&ch, ShutdownHandler &&sh) :
+      Connection(sv, dtls_role), connect_handler_(std::move(ch)), shutdown_handler_(std::move(sh)) {};
+    int OnConnect() override { return connect_handler_(*this); }
+    void OnShutdown() override { shutdown_handler_(*this); }
+  private:
+    ConnectHandler connect_handler_;
+    ShutdownHandler shutdown_handler_;
   };
 
 
@@ -351,8 +356,10 @@ namespace webrtc {
       ReconnectionTimeoutCalculator rctc_;
     };
   public:
-    Client(Loop &l, Config &&config, const StreamFactory &sf) :
-      ConnectionFactory(l, std::move(config), sf), http_client_(l, config.alarm_processor) {}
+    Client(Loop &l, Config &&config, StreamFactory &&sf) :
+      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.alarm_processor) {}
+    Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.alarm_processor) {}
     ~Client() { Fin(); }
   public:
     // implement base::Client
@@ -366,11 +373,37 @@ namespace webrtc {
   };
 
 
+  // AdhocClient
+  class AdhocClient : public Client {
+  public:
+    AdhocClient(Loop &l, Config &&c, Stream::Handler &&h) : Client(l, std::move(c), 
+      [&h](const Stream::Config &config, base::Connection &conn) {
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h)));
+      }) {}
+    AdhocClient(Loop &l, Config &&c,
+      Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
+      Client(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h), std::move(ch), std::move(sh)));
+      }) {}
+    AdhocClient(Loop &l, Config &&c, 
+      AdhocConnection::ConnectHandler &&cch, AdhocConnection::ShutdownHandler &&csh,
+      Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
+      Client(l, std::move(c), [&cch, &csh](ConnectionFactory &cf, DtlsTransport::Role role) {
+        return new AdhocConnection(cf, role, std::move(cch), std::move(csh));
+      }, [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h), std::move(ch), std::move(sh)));
+      }) {}
+    ~AdhocClient() {}
+  };  
+
+
   // Server
   class Server : public ConnectionFactory, public base::Server {
   public:
-    Server(Loop &l, Config &&config, const StreamFactory &sf) :
-      ConnectionFactory(l, std::move(config), sf), http_listener_(l), router_() {}
+    Server(Loop &l, Config &&config, StreamFactory &&sf) :
+      ConnectionFactory(l, std::move(config), std::move(sf)), http_listener_(l), router_() {}
+    Server(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_listener_(l), router_() {}
     ~Server() { Fin(); }
   public:
     int Accept(const std::string &client_sdp, std::string &server_sdp);
@@ -390,14 +423,22 @@ namespace webrtc {
   // AdhocServer
   class AdhocServer : public Server {
   public:
-    AdhocServer(Loop &l, Config &&c, const Stream::Handler &h) : Server(l, std::move(c), 
+    AdhocServer(Loop &l, Config &&c, Stream::Handler &&h) : Server(l, std::move(c), 
       [&h](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, h));
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h)));
       }) {}
     AdhocServer(Loop &l, Config &&c, 
-      const Stream::Handler &h, const AdhocStream::ConnectHandler &ch, const AdhocStream::ShutdownHandler &sh) :
+      Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
       Server(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, h, ch, sh));
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h), std::move(ch), std::move(sh)));
+      }) {}
+    AdhocServer(Loop &l, Config &&c, 
+      AdhocConnection::ConnectHandler &&cch, AdhocConnection::ShutdownHandler &&csh,
+      Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
+      Server(l, std::move(c), [&cch, &csh](ConnectionFactory &cf, DtlsTransport::Role role) {
+        return new AdhocConnection(cf, role, std::move(cch), std::move(csh));
+      }, [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h), std::move(ch), std::move(sh)));
       }) {}
     ~AdhocServer() {}
   };  

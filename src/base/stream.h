@@ -57,11 +57,11 @@ namespace base {
     typedef std::function<int (Stream &)> ConnectHandler;
     typedef std::function<void (Stream &, const CloseReason &)> ShutdownHandler;
   public:
-    AdhocStream(Connection &c, const Config &config, const Handler &h) :
-      Stream(c, config, false), read_handler_(h), connect_handler_(Nop()), shutdown_handler_(Nop()) {}
-    AdhocStream(Connection &c, const Config &config, 
-      const Handler &rh, const ConnectHandler &ch, const ShutdownHandler &sh) :
-        Stream(c, config, false), read_handler_(rh), connect_handler_(ch), shutdown_handler_(sh) {}
+    AdhocStream(Connection &c, const Config &config, Handler &&h) :
+      Stream(c, config, false), read_handler_(std::move(h)), connect_handler_(Nop()), shutdown_handler_(Nop()) {}
+    AdhocStream(Connection &c, const Config &config, Handler &&rh, ConnectHandler &&ch, ShutdownHandler &&sh) :
+        Stream(c, config, false), read_handler_(std::move(rh)),
+        connect_handler_(std::move(ch)), shutdown_handler_(std::move(sh)) {}
     int OnRead(const char *p, size_t sz) override { return read_handler_(*this, p, sz); }
     int OnConnect() override { return connect_handler_(*this); }
     void OnShutdown() override { return shutdown_handler_(*this, *close_reason_); }

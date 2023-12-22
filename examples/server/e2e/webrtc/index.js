@@ -16,8 +16,6 @@ async function main() {
     await driver.wait(until.elementLocated(By.id('result')), 20000)
       .then(async (element) => {
         const text = await element.getText();
-        console.log("element text", text);
-        // ここでelementを使用する処理を書くことができます
         if (text !== "success") {
           results[b] = text;
         } else {
