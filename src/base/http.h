@@ -508,8 +508,9 @@ namespace base {
             }
             return r;
         }
-        void OnShutdown() override {
+        qrpc_time_t OnShutdown() override {
             WebSocketSession::write_frame(fd(), "", 0, opcode_connection_close, false);
+            return 0;
         }
         // implements IoProcessor (override Session's one)
         void OnEvent(Fd fd, const Event &e) override {

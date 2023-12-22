@@ -63,7 +63,6 @@ namespace base {
       CloseReason detail = CreateAresCloseReason(status);
       Session *s = factory_method_(INVALID_FD, Address());
       s->Close(detail);
-      delete s;
     }
   };
 
@@ -108,7 +107,6 @@ namespace base {
         logger::info({{"ev", "accept"},{"proto","udp"},{"fd",fd_},{"addr",a.str()}});
         if ((r = s->OnConnect()) < 0) {
           s->Close(QRPC_CLOSE_REASON_LOCAL, r);
-          delete s;
           continue;
         }
       } else {
@@ -120,7 +118,6 @@ namespace base {
         read_packets_[i].msg_len
       )) < 0) {
         s->Close(QRPC_CLOSE_REASON_LOCAL, r);
-        delete s;
       } else {
         dynamic_cast<UdpSession*>(s)->Touch(now);
       }

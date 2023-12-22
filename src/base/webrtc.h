@@ -41,7 +41,7 @@ namespace webrtc {
       TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) :
         TcpSessionFactory::TcpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
-      void OnShutdown() override;
+      qrpc_time_t OnShutdown() override;
     protected:
       std::shared_ptr<Connection> connection_;
     };
@@ -50,7 +50,7 @@ namespace webrtc {
       UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : 
         UdpSessionFactory::UdpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
-      void OnShutdown() override;
+      qrpc_time_t OnShutdown() override;
     protected:
       std::shared_ptr<Connection> connection_;
     };
@@ -335,14 +335,20 @@ namespace webrtc {
     class TcpSession : public ConnectionFactory::TcpSession {
     public:
       TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c) : 
-        ConnectionFactory::TcpSession(f, fd, addr) { connection_ = c; }
+        ConnectionFactory::TcpSession(f, fd, addr), rctc_(qrpc_time_sec(1), qrpc_time_sec(30)) { connection_ = c; }
       int OnConnect() override;
+      qrpc_time_t OnShutdown() override;
+    private:
+      ReconnectionTimeoutCalculator rctc_;
     };
     class UdpSession : public ConnectionFactory::UdpSession {
     public:
       UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c) : 
-        ConnectionFactory::UdpSession(f, fd, addr) { connection_ = c; }
+        ConnectionFactory::UdpSession(f, fd, addr), rctc_(qrpc_time_sec(1), qrpc_time_sec(30)) { connection_ = c; }
       int OnConnect() override;
+      qrpc_time_t OnShutdown() override;
+    private:
+      ReconnectionTimeoutCalculator rctc_;
     };
   public:
     Client(Loop &l, Config &&config, const StreamFactory &sf) :

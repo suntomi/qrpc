@@ -204,10 +204,11 @@ int ConnectionFactory::TcpSession::OnRead(const char *p, size_t sz) {
   }
   return connection_->OnPacketReceived(this, up, sz);
 }
-void ConnectionFactory::TcpSession::OnShutdown() {
+qrpc_time_t ConnectionFactory::TcpSession::OnShutdown() {
   if (connection_ != nullptr) {
     connection_->OnTcpSessionShutdown(this);
   }
+  return 0;
 }
 int ConnectionFactory::UdpSession::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
@@ -220,10 +221,11 @@ int ConnectionFactory::UdpSession::OnRead(const char *p, size_t sz) {
   }
   return connection_->OnPacketReceived(this, up, sz);
 }
-void ConnectionFactory::UdpSession::OnShutdown() {
+qrpc_time_t ConnectionFactory::UdpSession::OnShutdown() {
   if (connection_ != nullptr) {
     connection_->OnUdpSessionShutdown(this);
   }
+  return 0;
 }
 
 
@@ -869,15 +871,22 @@ int Client::WhipHttpProcessor::SendRequest(HttpSession &s) {
 // Client::TcpSession
 int Client::TcpSession::OnConnect() {
   // TODO: Send Stun Request
-  ASSERT(false);
+  rctc_.Connected();
   return QRPC_OK;
+}
+qrpc_time_t Client::TcpSession::OnShutdown() {
+  rctc_.Reconnect();
+  return rctc_.Timeout();
 }
 
 // Client::UdpSession
 int Client::UdpSession::OnConnect() {
-  // TODO: Send Stun Request
-  ASSERT(false);
+  rctc_.Connected();
   return QRPC_OK;
+}
+qrpc_time_t Client::UdpSession::OnShutdown() {
+  rctc_.Reconnect();
+  return rctc_.Timeout();
 }
 
 // Client
