@@ -76,17 +76,17 @@ namespace base {
         };
         typedef std::function<Session *(Fd, const Address &)> FactoryMethod;
     public:
-        SessionFactory(Loop &l, FactoryMethod &m) : 
-            sessions_(), loop_(l), factory_method_(m) {}
+        SessionFactory(Loop &l, FactoryMethod &&m) :
+            sessions_(), loop_(l), alarm_processor_(NopAlarmProcessor::Instance()), factory_method_(m) {}
+        SessionFactory(Loop &l, AlarmProcessor &ap, FactoryMethod &&m) :
+            sessions_(), loop_(l), alarm_processor_(ap), factory_method_(m) {}
         virtual ~SessionFactory() {}
         Loop &loop() { return loop_; }
+        AlarmProcessor &alarm_processor() { return alarm_processor_; }
         template <class F> F &to() { return static_cast<F&>(*this); }
         template <class F> const F &to() const { return static_cast<const F&>(*this); }
-        virtual Session *Open(const Address &a, FactoryMethod m) {
-            Fd fd = Syscall::Connect(a.sa(), a.salen());
-            return Create(fd, a, m);
-        }
-        bool Resolve(int family_pref, const std::string &host, int port, FactoryMethod m);
+        virtual Session *Open(const Address &a, FactoryMethod m) = 0;
+        bool Connect(const std::string &host, int port, FactoryMethod m, int family_pref = AF_INET);
     protected:
         virtual Session *Create(int fd, const Address &a, FactoryMethod &m) {
             auto s = m(fd, a);
@@ -101,13 +101,13 @@ namespace base {
         std::map<Address, Session*> sessions_;
         FactoryMethod factory_method_;
         Loop &loop_;
+        AlarmProcessor &alarm_processor_;
     };
-    typedef SessionFactory TcpSessionFactory;
-    class TcpListener : public TcpSessionFactory, public IoProcessor {
+    class TcpSessionFactory : public SessionFactory {
     public:
         class TcpSession : public Session, public IoProcessor {
         public:
-            TcpSession(TcpListener &f, Fd fd, const Address &addr) : 
+            TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) : 
                 Session(f, fd, addr) {}
             ~TcpSession() override {}
             inline void MigrateTo(TcpSession *newsession) {
@@ -150,12 +150,38 @@ namespace base {
                 }
                 return QRPC_OK;
             }
-        };        
+        };
     public:
-        TcpListener(Loop &l, FactoryMethod m) : 
-            TcpSessionFactory(l, m), fd_(INVALID_FD), port_(0) {}
+        TcpSessionFactory(Loop &l, FactoryMethod &&m) : SessionFactory(l, std::move(m)) {}
+        TcpSessionFactory(Loop &l, AlarmProcessor &ap) : SessionFactory(l, ap, [this](Fd fd, const Address &a) -> Session* {
+            DIE("client should not call this, provide factory with SessionFactory::Connect");
+            return (Session *)nullptr;
+        }) {}
+    public:
+        // implements SessionFactory
+        Session *Open(const Address &a, FactoryMethod m) override {
+            Fd fd = Syscall::Connect(a.sa(), a.salen());
+            if (fd == INVALID_FD) {
+                return nullptr;
+            }
+            return Create(fd, a, m);
+        }
+        Session *Create(Fd fd, const Address &a, FactoryMethod &m) override {
+            auto s = m(fd, a);
+            sessions_[a] = s;
+            if (loop_.Add(s->fd(), dynamic_cast<TcpSession *>(s), Loop::EV_READ | Loop::EV_WRITE) < 0) {
+                Close(*s);
+                return nullptr;
+            }
+            return s;
+        }
+    };
+    class TcpListener : public TcpSessionFactory, public IoProcessor {
+    public:
+        TcpListener(Loop &l, FactoryMethod &&m) : 
+            TcpSessionFactory(l, std::move(m)), fd_(INVALID_FD), port_(0) {}
         TcpListener(TcpListener &&rhs) : 
-            TcpSessionFactory(rhs.loop(), rhs.factory_method_), fd_(rhs.fd_), port_(rhs.port_) {
+            TcpSessionFactory(rhs.loop(), std::move(rhs.factory_method_)), fd_(rhs.fd_), port_(rhs.port_) {
             rhs.fd_ = INVALID_FD;
             rhs.port_ = 0;
         }
@@ -212,16 +238,6 @@ namespace base {
 		int OnOpen(Fd fd) {
             return QRPC_OK;
         }
-        // implements SessionFactory
-       Session *Create(Fd fd, const Address &a, FactoryMethod &m) override {
-            auto s = m(fd, a);
-            sessions_[a] = s;
-            if (loop_.Add(s->fd(), dynamic_cast<TcpSession *>(s), Loop::EV_READ | Loop::EV_WRITE) < 0) {
-                Close(*s);
-                return nullptr;
-            }
-            return s;
-        }
         void Close(Session &s) override {
             Fd fd = s.fd();
             if (fd != INVALID_FD) {
@@ -237,7 +253,7 @@ namespace base {
     template <class S>
     class TcpListenerOf : public TcpListener {
     public:
-        TcpListenerOf(Loop &l, FactoryMethod m) : TcpListener(l, m) {}
+        TcpListenerOf(Loop &l, FactoryMethod &&m) : TcpListener(l, std::move(m)) {}
         TcpListenerOf(Loop &l) : TcpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<TcpSession, S>(), "S must be a descendant of TcpSession");
             return new S(*this, fd, a);
@@ -358,23 +374,21 @@ namespace base {
             qrpc_time_t last_active_;
         };
     public:
-        UdpSessionFactory(Loop &l, FactoryMethod m, const Config config = Config::Default()) :
-            SessionFactory(l, m), fd_(INVALID_FD), port_(0),
+        UdpSessionFactory(Loop &l, FactoryMethod &&m, const Config config = Config::Default()) :
+            SessionFactory(l, config.alarm_processor, std::move(m)), fd_(INVALID_FD), port_(0),
             #if defined(__QRPC_USE_RECVMMSG__)
                 batch_size_(256),
             #else
                 batch_size_(1),
             #endif
-            alarm_processor_(config.alarm_processor), 
             timeout_(config.session_timeout), 
             factory_method_(m),
-            read_packets_(batch_size_), read_buffers_(batch_size_),
-            write_buffers_(batch_size_) {
+            read_packets_(batch_size_), read_buffers_(batch_size_), write_buffers_(batch_size_) {
             SetupPacket();
         }
         UdpSessionFactory(UdpSessionFactory &&rhs) : 
-            SessionFactory(rhs.loop(), rhs.factory_method_), fd_(rhs.fd_), port_(rhs.port_),
-            batch_size_(rhs.batch_size_), alarm_processor_(rhs.alarm_processor_), 
+            SessionFactory(rhs.loop(), rhs.alarm_processor_, std::move(rhs.factory_method_)), fd_(rhs.fd_), port_(rhs.port_),
+            batch_size_(rhs.batch_size_),
             timeout_(rhs.timeout_), factory_method_(rhs.factory_method_),
             read_packets_(std::move(rhs.read_packets_)), read_buffers_(std::move(rhs.read_buffers_)),
             write_buffers_(std::move(rhs.write_buffers_)) {
@@ -389,7 +403,6 @@ namespace base {
         Fd fd() const { return fd_; }
         int port() const { return port_; }
         qrpc_time_t timeout() const { return timeout_; }
-        AlarmProcessor &alarm_processor() { return alarm_processor_; }
         bool Bind() { return Init(0); } //automatically allocate available port
         bool Init(int port) {
             if (fd_ != INVALID_FD) {
@@ -421,7 +434,17 @@ namespace base {
             return true;
         }
         Session *Open(const Address &a, FactoryMethod m) override {
-            return Create(fd_, a, m);
+            auto s = Create(fd_, a, m);
+            if (s != nullptr) {
+                ASSERT(false);
+                return nullptr;
+            }
+            int r;
+            if ((r = s->OnConnect()) < 0) {
+                s->Close(QRPC_CLOSE_REASON_LOCAL, r, "OnConnect() fails");
+                return nullptr;
+            }
+            return s;
         }
         void Close() {
             if (fd_ != INVALID_FD) {
@@ -477,7 +500,6 @@ namespace base {
     protected:
         Fd fd_;
         int port_;
-        AlarmProcessor &alarm_processor_;
         int batch_size_;
         qrpc_time_t timeout_;
         AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
@@ -489,7 +511,8 @@ namespace base {
     };
     class UdpListener : public UdpSessionFactory {
     public:
-        UdpListener(Loop &l, FactoryMethod m, const Config c = Config::Default()) : UdpSessionFactory(l, m, c) {}
+        UdpListener(Loop &l, FactoryMethod &&m, const Config c = Config::Default()) :
+            UdpSessionFactory(l, std::move(m), c) {}
         bool Listen(int port) { return Init(port); }
     };
     class AdhocUdpListener : public UdpListener {
@@ -517,7 +540,7 @@ namespace base {
     template <class S>
     class UdpListenerOf : public UdpListener {
     public:
-        UdpListenerOf(Loop &l, FactoryMethod m, const Config c = Config::Default()) : UdpListener(l, m, c) {}
+        UdpListenerOf(Loop &l, FactoryMethod &&m, const Config c = Config::Default()) : UdpListener(l, std::move(m), c) {}
         UdpListenerOf(Loop &l, const Config c = Config::Default()) : UdpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<Session, S>(), "S must be a descendant of Session");
             return new S(*this, fd, a);

@@ -4,6 +4,14 @@
 
 namespace base {
 namespace webrtc {
+  bool SDP::Offer(const ConnectionFactory::Connection &c, std::string &offer) const {
+    ASSERT(false);
+    return false;
+  }
+  std::vector<std::tuple<bool, std::string, int>> SDP::Candidates() const {
+    ASSERT(false);
+    return std::vector<std::tuple<bool, std::string, int>>();
+  }
   bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
     auto mit = find("media");
     if (mit == end()) {

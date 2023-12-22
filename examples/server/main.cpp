@@ -109,7 +109,7 @@ int main(int argc, char *argv[]) {
             {.key = "Content-Type", .val = "text/html"},
             {.key = "Content-Length", .val = htmlen.c_str()}
         };
-        s.Write(HRC_OK, h, 2, html.get(), htmlsz);
+        s.Respond(HRC_OK, h, 2, html.get(), htmlsz);
         return nullptr;
     }).
     Route(std::regex("/(.*)\\.(.*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
@@ -135,7 +135,7 @@ int main(int argc, char *argv[]) {
             {.key = "Content-Type", .val = ctypes[m[2].str()].c_str()},
             {.key = "Content-Length", .val = flen.c_str()}
         };
-        s.Write(HRC_OK, h, 2, file.get(), filesz);
+        s.Respond(HRC_OK, h, 2, file.get(), filesz);
         return nullptr;
     }).
     Route(std::regex("/test"), [](HttpSession &s, std::cmatch &) {
@@ -148,7 +148,7 @@ int main(int argc, char *argv[]) {
             {.key = "Content-Type", .val = "application/json"},
             {.key = "Content-Length", .val = bodylen.c_str()}
         };
-        s.Write(HRC_OK, h, 2, body.c_str(), body.length());
+        s.Respond(HRC_OK, h, 2, body.c_str(), body.length());
 	    return nullptr;
     }).
     Route(std::regex("/ws"), [](HttpSession &s, std::cmatch &) {

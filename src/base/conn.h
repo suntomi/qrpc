@@ -27,7 +27,7 @@ namespace base {
       const std::string &host, int port, const std::string &path
     ) = 0;
     inline bool Connect(const std::string &host, int port) {
-      return Connect(host, port, "qrpc");
+      return Connect(host, port, "/qrpc");
     }
   };
   class Server {

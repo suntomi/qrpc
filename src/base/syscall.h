@@ -297,7 +297,7 @@ public:
       return QRPC_EINVAL;
     }
     if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), salen) < 0) {
-      logger::error({{"ev", "bind() fails"},{"errno", Errno()}});
+      logger::error({{"ev", "bind() fails"},{"errno", Errno()},{"port", port}});
       return QRPC_ESYSCALL;
     }
     return QRPC_OK;

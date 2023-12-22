@@ -517,7 +517,7 @@ namespace base {
             return QRPC_OK; //not close connection
         case HttpFSM::state_websocket_establish:
         case HttpFSM::state_recv_finish: {
-            auto newsession = factory_.to<HttpListener>().cb()(*this);
+            auto newsession = callback()(*this);
             if (newsession != nullptr) {
                 ASSERT(newsession->fd() == fd_);
                 if (newsession == this) {

@@ -62,12 +62,17 @@ int ConnectionFactory::Init() {
   return QRPC_OK;
 }
 void ConnectionFactory::Fin() {
-  GlobalFin();
   if (alarm_id_ != AlarmProcessor::INVALID_ID) {
     alarm_processor().Cancel(alarm_id_);
     alarm_id_ = AlarmProcessor::INVALID_ID;
   }
-  // cleanup TCP/UDP ports
+  for (auto &p : udp_ports_) {
+    p.Close();
+  }
+  for (auto &p : tcp_ports_) {
+    p.Close();
+  }
+  GlobalFin();
 }
 void ConnectionFactory::CloseConnection(Connection &c) {
   // how to close?
@@ -76,11 +81,6 @@ void ConnectionFactory::CloseConnection(Connection &c) {
   connections_.erase(c.ice_server().GetUsernameFragment());
   // c might be freed here
 }
-bool ConnectionFactory::Connect(const std::string &host, int port, const std::string &path) {
-  ASSERT(false);
-  return false;
-}
-
 static inline ConnectionFactory::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* packet) {
 		TRACK();
 
@@ -99,7 +99,8 @@ static inline ConnectionFactory::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* 
 
 		return ConnectionFactory::IceUFlag{username.substr(0, colonPos)};
 }
-std::shared_ptr<ConnectionFactory::Connection> ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
+std::shared_ptr<ConnectionFactory::Connection>
+ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
   RTC::StunPacket* packet = RTC::StunPacket::Parse(p, sz);
   if (packet == nullptr) {
     QRPC_LOG(warn, "ignoring wrong STUN packet received");
@@ -119,7 +120,14 @@ std::shared_ptr<ConnectionFactory::Connection> ConnectionFactory::FindFromStunRe
   }
   return it->second;
 }
-
+std::shared_ptr<ConnectionFactory::Connection>
+ConnectionFactory::FindFromUflag(const IceUFlag &uflag) {
+    auto it = connections_.find(uflag);
+    if (it == this->connections_.end()) {
+      return nullptr;
+    }
+    return it->second;
+}
 int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 	try
 	{
@@ -185,7 +193,7 @@ int ConnectionFactory::Config::Derive(AlarmProcessor &ap) {
 int ConnectionFactory::TcpSession::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
   if (connection_ == nullptr) {
-    connection_ = factory().to<TcpPort>().webrtc_server().FindFromStunRequest(up, sz);
+    connection_ = factory().to<TcpPort>().connection_factory().FindFromStunRequest(up, sz);
     if (connection_ == nullptr) {
       QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}});
       return QRPC_EINVAL;
@@ -204,7 +212,7 @@ void ConnectionFactory::TcpSession::OnShutdown() {
 int ConnectionFactory::UdpSession::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
   if (connection_ == nullptr) {
-    connection_ = factory().to<UdpPort>().webrtc_server().FindFromStunRequest(up, sz);
+    connection_ = factory().to<UdpPort>().connection_factory().FindFromStunRequest(up, sz);
     if (connection_ == nullptr) {
       QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}});
       return QRPC_EINVAL;
@@ -400,7 +408,7 @@ void ConnectionFactory::Connection::OnDtlsEstablished() {
   int r;
   if ((r = OnConnect()) < 0) {
     logger::error({{"ev","application reject connection"},{"rc",r}});
-    factory().Close(*this);
+    factory().CloseConnection(*this);
   }
 }
 void ConnectionFactory::Connection::OnTcpSessionShutdown(Session *s) {
@@ -595,7 +603,7 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
   logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"uflag",usernameFragment}});
   auto uflag = IceUFlag{usernameFragment};
-  sv_.RemoveUFlag(uflag);
+  sv_.CloseConnection(uflag);
 }
 void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
@@ -619,7 +627,7 @@ void ConnectionFactory::Connection::OnIceServerConnected(const IceServer *iceSer
   // If ready, run the DTLS handler.
   if (RunDtlsTransport() < 0) {
     logger::error({{"ev","fail to run DTLS transport"}});
-    factory().Close(*this);
+    factory().CloseConnection(*this);
     return;
   }
 
@@ -679,7 +687,7 @@ void ConnectionFactory::Connection::OnDtlsTransportClosed(const DtlsTransport* d
   // RTC::Transport::Disconnected();
   // above notifies TransportCongestionControlClient and TransportCongestionControlServer
   // may need to implement equivalent for performance
-  factory().Close(*this); // this might be freed here, so don't touch after the line
+  factory().CloseConnection(*this); // this might be freed here, so don't touch after the line
 }
 // Need to send DTLS data to the peer.
 void ConnectionFactory::Connection::OnDtlsTransportSendData(
@@ -810,6 +818,106 @@ void ConnectionFactory::Connection::OnSctpAssociationBufferedAmount(
   TRACK();
 }
 
+// Client::WhipHttpProcessor
+base::TcpSession *Client::WhipHttpProcessor::HandleResponse(HttpSession &s) {
+  const auto &uf = uflag();
+  if (s.fsm().rc() != HRC_OK) {
+    logger::error({{"ev","signaling server returns error response"},
+      {"status",s.fsm().rc()},{"uflag",uf}});
+    client_.CloseConnection(uf);
+    return nullptr;
+  }
+  SDP sdp(s.fsm().body());
+  auto candidates = sdp.Candidates();
+  if (candidates.size() <= 0) {
+    logger::error({{"ev","signaling server returns no candidates"},
+      {"sdp",sdp},{"uflag",uf}});
+    client_.CloseConnection(uf);
+    return nullptr;
+  }
+  bool success = false;
+  auto c = client_.FindFromUflag(uf);
+  for (auto &cand : candidates) {
+    if (!client_.Open(cand, c)) {
+      logger::info({{"ev","fail to open"},{"cand",cand},{"uflag",uf}});
+      continue;
+    }
+    success = true;
+  }
+  if (!success) {
+    logger::info({{"ev","fail to open for all of candidates"},{"uflag",uf}});
+    client_.CloseConnection(uf);
+    return nullptr;
+  }
+  return nullptr;
+}
+int Client::WhipHttpProcessor::SendRequest(HttpSession &s) {
+  std::string sdp, uflag;
+  if (!client_.Offer(sdp, uflag)) {
+    logger::error({{"ev","fail to generate offer"}});
+    return QRPC_ESYSCALL;
+  }
+  SetUFlag(std::move(uflag));
+  std::string sdplen = std::to_string(sdp.length());
+  HttpHeader h[] = {
+      {.key = "Content-Type", .val = "application/sdp"},
+      {.key = "Content-Length", .val = sdplen.c_str()}
+  };
+  return s.Request("POST", path().c_str(), h, 2, sdp.c_str(), sdp.length());
+}
+
+// Client::TcpSession
+int Client::TcpSession::OnConnect() {
+  // TODO: Send Stun Request
+  ASSERT(false);
+  return QRPC_OK;
+}
+
+// Client::UdpSession
+int Client::UdpSession::OnConnect() {
+  // TODO: Send Stun Request
+  ASSERT(false);
+  return QRPC_OK;
+}
+
+// Client
+bool Client::Open(
+  std::tuple<bool, std::string, int> &candidate,
+  std::shared_ptr<Connection> &c
+) {
+  if (std::get<0>(candidate)) {
+    if (!udp_ports_[0].Connect(
+      std::get<1>(candidate), std::get<2>(candidate),
+      [this, c](Fd fd, const Address a) mutable {
+        return new Client::UdpSession(udp_ports_[0], fd, a, c);
+      }
+    )) {
+      logger::info({{"ev","fail to start UDP session"},
+        {"to", std::get<1>(candidate)},{"port",std::get<2>(candidate)}});
+      return false;
+    }
+  } else {
+    if (!tcp_ports_[0].Connect(
+      std::get<1>(candidate), std::get<2>(candidate),
+      [this, c](Fd fd, const Address a) mutable {
+        return new Client::TcpSession(tcp_ports_[0], fd, a, c);
+      }
+    )) {
+      logger::info({{"ev","fail to start TCP session"},
+        {"to", std::get<1>(candidate)},{"port",std::get<2>(candidate)}});
+      return false;
+    }
+  }
+  return true;
+}
+bool Client::Offer(std::string &sdp, std::string &uflag) {
+  ASSERT(false);
+  return false;
+}
+bool Client::Connect(const std::string &host, int port, const std::string &path) {
+  return http_client_.Connect(host, port, new WhipHttpProcessor(*this, path));
+}
+
 // Server
 bool Server::Listen(
   int signaling_port, int port,
@@ -839,7 +947,7 @@ bool Server::Listen(
         {.key = "Content-Type", .val = "application/sdp"},
         {.key = "Content-Length", .val = sdplen.c_str()}
     };
-    s.Write(HRC_OK, h, 2, sdp.c_str(), sdp.length());
+    s.Respond(HRC_OK, h, 2, sdp.c_str(), sdp.length());
     return nullptr;
   });
   if (!http_listener_.Listen(signaling_port, router_)) {
@@ -849,7 +957,7 @@ bool Server::Listen(
   return true;
 }
 int Server::Accept(const std::string &client_sdp, std::string &server_sdp) {
-  logger::info({{"ev","new connection"},{"client_sdp", client_sdp}});
+  logger::info({{"ev","new server connection"},{"client_sdp", client_sdp}});
   // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
   // even if sdp anwser ask to do it.
   auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::CLIENT));

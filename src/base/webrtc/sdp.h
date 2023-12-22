@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <string>
+#include <tuple>
 
 #include "base/webrtc.h"
 
@@ -116,7 +117,9 @@ namespace webrtc {
   public:
     // connection is not const reference because it might be configured with SDP
     bool Answer(ConnectionFactory::Connection &c, std::string &answer) const;
-    static bool Test();
+    bool Offer(const ConnectionFactory::Connection &c, std::string &offer) const;
+  public:
+    std::vector<std::tuple<bool, std::string, int>> Candidates() const;
   protected:
     std::string AnswerAs(const std::string &proto, const ConnectionFactory::Connection &c) const;
     uint32_t AssignPriority(uint32_t component_id) const;

@@ -67,7 +67,7 @@ namespace base {
     }
   };
 
-  bool SessionFactory::Resolve(int family_pref, const std::string &host, int port, FactoryMethod m) {
+  bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, int family_pref) {
     auto q = new SessionDnsQuery(*this, m);
     q->host_ = host;
     q->family_ = family_pref;
