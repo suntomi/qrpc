@@ -51,6 +51,8 @@ namespace base {
             inline const SessionFactory &factory() const { return factory_; }
             inline const Address &addr() const { return addr_; }
             inline bool closed() const { return close_reason_ != nullptr; }
+            // Close should not be called inside OnXXXX callbacks of session.
+            // Instead, return negative value from them to close.
             inline bool Close(
                 qrpc_close_reason_code_t code, int64_t detail_code = 0, const std::string &msg = ""
             ) {
@@ -332,8 +334,8 @@ namespace base {
             UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : 
                 Session(f, fd, addr), last_active_(qrpc_time_now()) { AllocIovec(); }
             ~UdpSession() override {}
-            UdpSessionFactory &listener() { return factory().to<UdpSessionFactory>(); }
-            const UdpSessionFactory &listener() const { return factory().to<UdpSessionFactory>(); }
+            UdpSessionFactory &udp_session_factory() { return factory().to<UdpSessionFactory>(); }
+            const UdpSessionFactory &udp_session_factory() const { return factory().to<UdpSessionFactory>(); }
             bool timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
                 return CheckTimeout(last_active_, qrpc_time_now(), timeout, next_check);
             }
@@ -345,7 +347,7 @@ namespace base {
             void Touch(qrpc_time_t at) { last_active_ = at; }
         protected:
             bool AllocIovec() {
-                auto b = listener().write_buffers_.Alloc();
+                auto b = udp_session_factory().write_buffers_.Alloc();
                 if (b == nullptr) {
                     logger::error({{"ev","write_buffers_.Alloc fails"}});
                     ASSERT(false);
@@ -359,7 +361,7 @@ namespace base {
                 if (size > 1) {
                     for (int i = 0; i < size - 1; i++) {
                         struct iovec &iov = write_vecs_.back();
-                        listener().write_buffers_.Free(iov.iov_base);
+                        udp_session_factory().write_buffers_.Free(iov.iov_base);
                         write_vecs_.pop_back();
                     }
                 }
@@ -427,6 +429,11 @@ namespace base {
             read_packets_(batch_size_), read_buffers_(batch_size_), write_buffers_(batch_size_) {
             SetupPacket();
         }
+        UdpSessionFactory(Loop &l, AlarmProcessor &ap, qrpc_time_t session_timeout = qrpc_time_sec(120)) :
+            UdpSessionFactory(l, [this](Fd fd, const Address &ap) {
+                DIE("client should not call this, provide factory with SessionFactory::Connect");
+                return (Session *)nullptr;
+            }, {.alarm_processor = ap, .session_timeout = session_timeout}) {}
         UdpSessionFactory(UdpSessionFactory &&rhs) = default;
         ~UdpSessionFactory() override { Close(); }
         Fd fd() const { return fd_; }
@@ -576,6 +583,6 @@ namespace base {
     };
     // external typedef
     typedef SessionFactory::Session Session;
-    typedef TcpListener::TcpSession TcpSession;
-    typedef UdpListener::UdpSession UdpSession;
+    typedef TcpSessionFactory::TcpSession TcpSession;
+    typedef UdpSessionFactory::UdpSession UdpSession;
 }

@@ -11,6 +11,54 @@
 using json = nlohmann::json;
 using namespace base;
 
+class Handler {
+public:
+    static int Connect(Session &s, std::string proto, int &count) {
+        logger::info({{"ev","session connected"},{"p",proto},{"a",s.addr().str()}});
+        count++;
+        if (count == 0) {
+            logger::info({{"ev","kill session on connect"},{"p",proto},{"a",s.addr().str()}});
+            return QRPC_EUSER;
+        } else {
+            return QRPC_OK;
+        }
+    }
+    static int Read(Session &s, std::string proto, const char *p, size_t sz) {
+        auto pl = std::string(p, sz);
+        logger::info({{"ev","session read"},{"p",proto},{"a",s.addr().str()},{"pl", pl}});
+        if (pl == "die") {
+            logger::info({{"ev","kill session on read"},{"p",proto},{"a",s.addr().str()}});
+            return QRPC_EUSER;
+        } else {
+            return s.Send(p, sz);
+        }
+    }
+    static qrpc_time_t Shutdown(Session &s, std::string proto) {
+        logger::info({{"ev","udp session shutdown"},{"p",proto},{"a",s.addr().str()}});
+        return 0;
+    }
+};
+class TestUdpSession : public UdpSession {
+public:
+    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
+    int OnConnect() override {
+        static int count = -1;
+        return Handler::Connect(*this, "udp", count);
+    }
+    int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "udp", p, sz); }
+    qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "udp"); }
+};
+class TestTcpSession : public TcpSession {
+public:
+    TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
+    int OnConnect() override {
+        static int count = -1;
+        return Handler::Connect(*this, "tcp", count);
+    }
+    int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "tcp", p, sz); }
+    qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "tcp"); }
+};
+
 int main(int argc, char *argv[]) {
     bool alive = true;
     Loop l; {
@@ -167,6 +215,18 @@ int main(int argc, char *argv[]) {
     }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
     if (!us.Listen(9999)) {
         DIE("fail to listen on UDP");
+    }
+    UdpListener tu(l, [&tu](Fd fd, const Address &a) {
+        return new TestUdpSession(tu, fd, a);
+    }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
+    if (!tu.Listen(10000)) {
+        DIE("fail to listen on UDP for test");
+    }
+    TcpListener tt(l, [&tt](Fd fd, const Address &a) {
+        return new TestTcpSession(tt, fd, a);
+    });
+    if (!tt.Listen(10001)) {
+        DIE("fail to listen on TCP for test");
     }
     while (alive) {
         l.Poll();
