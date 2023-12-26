@@ -72,6 +72,7 @@ namespace base {
         return true;
       }
     }
+    ASSERT(false);
     return false;
   }
 
@@ -119,14 +120,21 @@ namespace base {
       if (ent.first > now) {
         break;
       }
+      ASSERT(schedule_times_.find(ent.second.id) != schedule_times_.end() && 
+        (*schedule_times_.find(ent.second.id)).second == ent.first);
+      auto old = ent.first;
       auto e = std::move(ent.second);
+      auto id = e.id;
       qrpc_time_t next = e.handler();
       it = handlers_.erase(it);
+      schedule_times_.erase(id);
       if (next < now) {
         continue;
       }
+      // TRACE("move handler: id=%llu,clock %llu=>%llu",e.id, old, next);
       handlers_.insert(std::make_pair(next, e));
-      schedule_times_.insert(std::make_pair(e.id, next));
+      schedule_times_.insert(std::make_pair(id, next));
     }
   }
+
 }

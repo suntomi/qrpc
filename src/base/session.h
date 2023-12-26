@@ -51,6 +51,7 @@ namespace base {
             inline const SessionFactory &factory() const { return factory_; }
             inline const Address &addr() const { return addr_; }
             inline bool closed() const { return close_reason_ != nullptr; }
+            inline CloseReason &close_reason() { return *close_reason_; }
             // Close should not be called inside OnXXXX callbacks of session.
             // Instead, return negative value from them to close.
             inline bool Close(
@@ -101,19 +102,19 @@ namespace base {
                     next_check = now + timeout - diff;
                     return false;
                 }
-            }        
+            }
+            inline void SetCloseReason(const CloseReason &reason) {
+                close_reason_.reset(new CloseReason(reason));
+                ASSERT(close_reason_ != nullptr);
+            }
         protected:
             inline qrpc_time_t Reconnect() {
-                this->factory().Open(this->addr(), [this](Fd fd, const Address &) {
+                factory().Open(addr(), [this](Fd fd, const Address &) {
                     // reuse this session with new fd
                     this->close_reason_.reset();
                     this->fd_ = fd;
                     return this;
                 });
-            }
-            inline void SetCloseReason(const CloseReason &reason) {
-                close_reason_.reset(new CloseReason(reason));
-                ASSERT(close_reason_ != nullptr);
             }
         protected:
             SessionFactory &factory_;
@@ -381,6 +382,8 @@ namespace base {
                     h.msg_control = nullptr;
                     h.msg_controllen = 0;
                     if (Syscall::SendTo(fd_, &h) < 0) {
+                        logger::error({{"ev","SendTo fails"},{"fd",fd_},{"errno",Syscall::Errno()},{"merr",Syscall::StrError()}});
+                        ASSERT(false);
                         return QRPC_ESYSCALL;
                     }                    
                 }
@@ -411,6 +414,7 @@ namespace base {
                     sz -= copied;
                 }
                 if ((r = Flush()) < 0) { return r; }
+                return QRPC_OK;
             }
         private:
             std::vector<struct iovec> write_vecs_;
@@ -463,15 +467,16 @@ namespace base {
                 return false;
             }
             if (timeout() > 0) {
-                alarm_processor_.Set(
+                alarm_id_ = alarm_processor_.Set(
                     [this]() { return this->CheckTimeout(); }, qrpc_time_now() + timeout()
                 );
             }
             return true;
         }
         Session *Open(const Address &a, FactoryMethod m) override {
+            ASSERT(fd_ >= 0); // forget to call Bind or Listen?
             auto s = Create(fd_, a, m);
-            if (s != nullptr) {
+            if (s == nullptr) {
                 ASSERT(false);
                 return nullptr;
             }

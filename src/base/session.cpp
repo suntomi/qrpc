@@ -20,16 +20,18 @@ namespace base {
         case AF_INET: {
           auto *sa = reinterpret_cast<struct sockaddr_in *>(&address);
           sa->sin_family = entries->h_addrtype;
-          sa->sin_port = htons(port);
+          sa->sin_port = Endian::HostToNet(static_cast<in_port_t>(port));
+          sa->sin_len = sizeof(sockaddr_in);
           memcpy(&sa->sin_addr, entries->h_addr_list[0], sizeof(in_addr_t));
-          addr.Reset(reinterpret_cast<struct sockaddr *>(sa), Syscall::GetIpAddrLen(AF_INET));
+          addr.Reset(*sa);
         } break;
         case AF_INET6: {
           auto *sa = reinterpret_cast<sockaddr_in6 *>(&address);
           sa->sin6_family = entries->h_addrtype;
-          sa->sin6_port = htons(port);          
+          sa->sin6_port = Endian::HostToNet(static_cast<in_port_t>(port));          
+          sa->sin6_len = sizeof(sockaddr_in6);
           memcpy(&sa->sin6_addr, entries->h_addr_list[0], sizeof(in6_addr_t));
-          addr.Reset(reinterpret_cast<struct sockaddr *>(sa), Syscall::GetIpAddrLen(AF_INET6));
+          addr.Reset(*sa);
         } break;
         default:
           return QRPC_ERESOLVE;
@@ -51,18 +53,34 @@ namespace base {
     FactoryMethod factory_method_;
     SessionDnsQuery(SessionFactory &f, FactoryMethod m) : factory_(f), factory_method_(m) {}
     void OnComplete(int status, int timeouts, struct hostent *entries) override {
+      int r;
       if (ARES_SUCCESS == status) {
         Address server_address;
-        if (ConvertToSocketAddress(entries, port_, server_address)) {
+        if ((r = ConvertToSocketAddress(entries, port_, server_address)) >= 0) {
           factory_.Open(server_address, factory_method_);
           return;
         } else {
+          logger::error({{"ev","invalid resolved address"},{"rc",r}});
           status = ARES_ENOTFOUND;
         }
       }
-      CloseReason detail = CreateAresCloseReason(status);
-      Session *s = factory_method_(INVALID_FD, Address());
-      s->Close(detail);
+      Address a;
+      if (a.Set("0.0.0.0", port_) < 0) {
+        logger::die({{"ev", "fail to set dummy address"}, {"port", port_}});
+      }
+      Session *s = factory_method_(INVALID_FD, a);
+      s->SetCloseReason(CreateAresCloseReason(status));
+      qrpc_time_t retry_timeout = s->OnShutdown();
+      if (retry_timeout > 0) {
+        s->close_reason().alarm_id = factory_.alarm_processor().Set([
+          &factory = factory_, host = host_, port = port_, fm = factory_method_, f = family_
+        ]() {
+          factory.Connect(host, port, fm, f);
+          return 0;
+        }, retry_timeout + qrpc_time_now());
+      } else {
+        delete s;
+      }
     }
   };
 

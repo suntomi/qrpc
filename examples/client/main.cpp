@@ -12,6 +12,9 @@ using json = nlohmann::json;
 using namespace base;
 
 static const char *error_msg = nullptr;
+static void clear_error() {
+    error_msg = nullptr;
+}
 static void error(const char *msg) {
     error_msg = msg;
 }
@@ -65,6 +68,7 @@ public:
             error("session should reconnect");
         } else if (close_count == 1){
             if (std::string(p, sz) != "start") {
+                logger::error({{"ev","wrong msg"},{"msg",std::string(p, sz)}});
                 error("session should receive start");
             } else {
                 s.Send("die", 4);
@@ -76,6 +80,7 @@ public:
         logger::info({{"ev","session shutdown"},{"p",proto},{"a",s.addr().str()}});
         close_count++;
         if (close_count >= 2) {
+            logger::info({{"ev", "reconnect test done"}});
             success();
             return 0; //stop reconnection
         }
@@ -101,14 +106,18 @@ public:
     qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "tcp", close_count_); }
 };
 bool test_udp_session(Loop &l, AlarmProcessor &ap) {
-    UdpSessionFactory uf(l, ap);
+    clear_error();
+    UdpSessionFactory uf(l, ap, qrpc_time_sec(1));
+    if (!uf.Bind()) {
+        DIE("fail to bind");
+    }
     uf.Connect("localhost", 10000, [&uf](Fd fd, const Address &a) {
         return new TestUdpSession(uf, fd, a);
     });
     while (error_msg == nullptr) {
         l.PollAres();
     }
-    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1)) {
+    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
         return true;
     } else {
         DIE(error_msg);
@@ -117,6 +126,7 @@ bool test_udp_session(Loop &l, AlarmProcessor &ap) {
     return true;
 }
 bool test_tcp_session(Loop &l, AlarmProcessor &ap) {
+    clear_error();
     TcpSessionFactory tf(l, ap);
     tf.Connect("localhost", 10001, [&tf](Fd fd, const Address &a) {
         return new TestTcpSession(tf, fd, a);
@@ -124,7 +134,7 @@ bool test_tcp_session(Loop &l, AlarmProcessor &ap) {
     while (error_msg == nullptr) {
         l.PollAres();
     }
-    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1)) {
+    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
         return true;
     } else {
         DIE(error_msg);
@@ -133,6 +143,7 @@ bool test_tcp_session(Loop &l, AlarmProcessor &ap) {
     return true;
 }
 bool test_http_client(Loop &l, AlarmProcessor &ap) {
+    clear_error();
     return true;
 }
 
@@ -142,10 +153,10 @@ int main(int argc, char *argv[]) {
     if (l.Open(1024) < 0) {
         DIE("fail to init loop");
     }
-    if (!l.ares().Initialize(AsyncResolver::Config())) {
+    if (!l.ares().Initialize()) {
         DIE("fail to init resolver");
     }
-    TimerScheduler t(qrpc_time_msec(10));
+    TimerScheduler t(qrpc_time_msec(300));
     if (t.Init(l) < 0) {
         DIE("fail to start timer");
     }

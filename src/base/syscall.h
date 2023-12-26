@@ -64,7 +64,7 @@ public:
   }
   static inline bool EAgain() {
     int eno = Errno();
-    return (EINTR == eno || EAGAIN == eno || EWOULDBLOCK == eno);
+    return (EINTR == eno || EAGAIN == eno || EWOULDBLOCK == eno || EINPROGRESS == eno);
   }
   /* note that we treat EADDRNOTAVAIL and ENETUNREACH as blocked error, when reachability_tracked. 
   because it typically happens during network link change (eg. wifi-cellular handover)

@@ -13,9 +13,15 @@ using namespace base;
 
 class Handler {
 public:
-    static int Connect(Session &s, std::string proto, int &count) {
+    static int Connect(Session &s, std::string proto, std::map<Address, int> &counts) {
         logger::info({{"ev","session connected"},{"p",proto},{"a",s.addr().str()}});
-        count++;
+        auto it = counts.find(s.addr());
+        int count;
+        if (it != counts.end()) {
+            count = (*it).second++;
+        } else {
+            count = counts[s.addr()] = 0;
+        }
         if (count == 0) {
             logger::info({{"ev","kill session on connect"},{"p",proto},{"a",s.addr().str()}});
             return QRPC_EUSER;
@@ -42,8 +48,8 @@ class TestUdpSession : public UdpSession {
 public:
     TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
     int OnConnect() override {
-        static int count = -1;
-        return Handler::Connect(*this, "udp", count);
+        static std::map<Address, int> counts;
+        return Handler::Connect(*this, "udp", counts);
     }
     int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "udp", p, sz); }
     qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "udp"); }
@@ -52,8 +58,8 @@ class TestTcpSession : public TcpSession {
 public:
     TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
     int OnConnect() override {
-        static int count = -1;
-        return Handler::Connect(*this, "tcp", count);
+        static std::map<Address, int> counts;
+        return Handler::Connect(*this, "tcp", counts);
     }
     int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "tcp", p, sz); }
     qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "tcp"); }
