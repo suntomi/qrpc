@@ -13,17 +13,11 @@ using namespace base;
 
 class Handler {
 public:
-    static int Connect(Session &s, std::string proto, std::map<Address, int> &counts) {
-        logger::info({{"ev","session connected"},{"p",proto},{"a",s.addr().str()}});
-        auto it = counts.find(s.addr());
-        int count;
-        if (it != counts.end()) {
-            count = (*it).second++;
-        } else {
-            count = counts[s.addr()] = 0;
-        }
+    static int Connect(Session &s, std::string proto, int &count) {
+        logger::info({{"ev","session connected"},{"p",proto},{"a",s.addr().str()},{"c",count}});
         if (count == 0) {
             logger::info({{"ev","kill session on connect"},{"p",proto},{"a",s.addr().str()}});
+            count++;
             return QRPC_EUSER;
         } else {
             return QRPC_OK;
@@ -40,30 +34,34 @@ public:
         }
     }
     static qrpc_time_t Shutdown(Session &s, std::string proto) {
-        logger::info({{"ev","udp session shutdown"},{"p",proto},{"a",s.addr().str()}});
+        logger::info({{"ev","session shutdown"},{"p",proto},{"a",s.addr().str()}});
         return 0;
     }
 };
 class TestUdpSession : public UdpSession {
+    static int count;
 public:
     TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
     int OnConnect() override {
-        static std::map<Address, int> counts;
-        return Handler::Connect(*this, "udp", counts);
+        return Handler::Connect(*this, "udp", count);
     }
     int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "udp", p, sz); }
     qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "udp"); }
+    static void Reset() { count = 0; }
 };
+int TestUdpSession::count = 0;
 class TestTcpSession : public TcpSession {
+    static int count;
 public:
     TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
     int OnConnect() override {
-        static std::map<Address, int> counts;
-        return Handler::Connect(*this, "tcp", counts);
+        return Handler::Connect(*this, "tcp", count);
     }
     int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "tcp", p, sz); }
     qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "tcp"); }
+    static void Reset() { count = 0; }
 };
+int TestTcpSession::count = 0;
 
 int main(int argc, char *argv[]) {
     bool alive = true;
@@ -202,6 +200,8 @@ int main(int argc, char *argv[]) {
             {.key = "Content-Type", .val = "application/json"},
             {.key = "Content-Length", .val = bodylen.c_str()}
         };
+        TestTcpSession::Reset();
+        TestUdpSession::Reset();
         s.Respond(HRC_OK, h, 2, body.c_str(), body.length());
 	    return nullptr;
     }).

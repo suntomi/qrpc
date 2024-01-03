@@ -82,12 +82,12 @@ namespace base {
       }
     }
   }
-  void SignalHandler::OnClose(Fd) {
+  void SignalHandler::Fin() {
     // un-ignore signals that handled by signalfd
     if (sigprocmask(SIG_UNBLOCK, &mask_, NULL) != 0) {
       logger::error({{"ev","sigprocmask(UNBLOCK) fails"},{"mask",mask_},{"errno",Syscall::Errno()}});
     }
-    if (fd_ != INVALID_FD) {
+    if (fd_ != -1) {
       Syscall::Close(fd_);
       fd_ = -1;
     }

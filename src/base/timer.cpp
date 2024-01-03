@@ -122,7 +122,6 @@ namespace base {
       }
       ASSERT(schedule_times_.find(ent.second.id) != schedule_times_.end() && 
         (*schedule_times_.find(ent.second.id)).second == ent.first);
-      auto old = ent.first;
       auto e = std::move(ent.second);
       auto id = e.id;
       qrpc_time_t next = e.handler();
@@ -131,7 +130,6 @@ namespace base {
       if (next < now) {
         continue;
       }
-      // TRACE("move handler: id=%llu,clock %llu=>%llu",e.id, old, next);
       handlers_.insert(std::make_pair(next, e));
       schedule_times_.insert(std::make_pair(id, next));
     }

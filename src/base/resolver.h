@@ -64,8 +64,6 @@ class AsyncResolver {
     ~IoRequest() override {}
     // implements IoProcessor
     void OnEvent(Fd fd, const Event &e) override;
-    void OnClose(Fd fd) override {}
-    int OnOpen(Fd fd) override { return QRPC_OK; }
 
     uint32_t current_flags() const { return current_flags_; }
     bool alive() const { return alive_; }

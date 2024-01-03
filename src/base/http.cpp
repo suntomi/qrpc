@@ -525,16 +525,14 @@ namespace base {
                     // session does not closed here (deferred).
                     // callbacked module should cleanup connection after response is sent,
                     // by calling Close(...)
+                    return QRPC_OK; // not close conection
                 } else {
                     // fd is migrate to other session. eg WebSocket.
-                    // need to delete this
+                    // need to delete this. done by returning QRPC_EGOAWAY below
                     MigrateTo(newsession);
                 }
-            } else {
-                Close(QRPC_CLOSE_REASON_LOCAL);
-                // after here, cannot touch this object.
             }
-            return QRPC_OK;
+            return QRPC_EGOAWAY; // close connection
         } break;
         case HttpFSM::state_invalid:
         case HttpFSM::state_error:

@@ -182,10 +182,11 @@ namespace base {
         const HttpFSM &fsm() const { return fsm_; }
         HttpFSM &fsm() { return fsm_; }
         TcpSessionFactory &tcp_session_factory() { return factory().to<TcpSessionFactory>(); }
-        int Request(const char *method, const char *path, Header *h, size_t hsz, const char *body, size_t bsz) {
+        int Request(const char *method, const char *path, 
+            Header *h = nullptr, size_t hsz = 0, const char *body = nullptr, size_t bsz = 0) {
             char buffer[4096];
             return WriteCommon(
-                buffer, snprintf(buffer, sizeof(buffer), "%s %s\r\n", method, path),
+                buffer, snprintf(buffer, sizeof(buffer), "%s %s HTTP/1.1\r\n", method, path),
                 h, hsz, body, bsz
             );
         }
@@ -196,24 +197,30 @@ namespace base {
                 h, hsz, body, bsz
             );
         }
-        int WriteCommon(const char *first_line, size_t first_line_size,
+        inline int WriteCommon(const char *first_line, size_t first_line_size,
             Header *h, size_t hsz, const char *body, size_t bsz) {
             // +2 for status line and body
-            const char *ptrs[hsz + 2];
-            char buffers[hsz + 1][1024];
-            size_t sizes[hsz + 2];
+            const char *ptrs[hsz + 3];
+            char buffers[hsz][1024];
+            size_t sizes[hsz + 3];
             sizes[0] = first_line_size;
             ptrs[0] = first_line;
             for (size_t i = 1; i <= hsz; i++) {
-                ptrs[i] = buffers[i];
+                ptrs[i] = buffers[i - 1];
                 sizes[i] = snprintf(
-                    buffers[i], sizeof(buffers[i]), "%s: %s%s",
-                    h[i - 1].key, h[i - 1].val, i == hsz ? "\r\n\r\n" : "\r\n"
+                    buffers[i - 1], sizeof(buffers[i - 1]), "%s: %s\r\n",
+                    h[i - 1].key, h[i - 1].val
                 );
             }
-            ptrs[hsz + 1] = body;
-            sizes[hsz + 1] = bsz;
-            return Syscall::Writev(fd_, ptrs, sizes, hsz + 2);
+            sizes[hsz + 1] = 2;
+            ptrs[hsz + 1] = "\r\n";
+            if (body != nullptr) {
+                ptrs[hsz + 2] = body;
+                sizes[hsz + 2] = bsz;
+                return Syscall::Writev(fd_, ptrs, sizes, hsz + 3);
+            } else {
+                return Syscall::Writev(fd_, ptrs, sizes, hsz + 2);
+            }
         }
         virtual Callback &callback() = 0;
         // implements Session
@@ -274,10 +281,7 @@ namespace base {
                 [this](HttpSession &s){ return processor_->HandleResponse(s); }
             ) {}
             Callback &callback() override { return cb_; }
-            int OnConnect() override {
-                // mainly send request
-                return processor_->SendRequest(*this);
-            }
+            int OnConnect() override { return processor_->SendRequest(*this); }
         private:
             std::unique_ptr<Processor> processor_;
             Callback cb_;
@@ -285,9 +289,28 @@ namespace base {
     public:
         HttpClient(Loop &l, AlarmProcessor &ap) : TcpSessionFactory(l, ap) {}
         bool Connect(const std::string &host, int port, Processor *p) {
-            return TcpSessionFactory::Connect(host, port, [this, &p](Fd fd, const Address &addr) {
+            return TcpSessionFactory::Connect(host, port, [this, p](Fd fd, const Address &addr) {
                 return new HttpClientSession(*this, fd, addr, p);
             });
+        }
+    };
+    class AdhocHttpClient : public HttpClient {
+    public:
+        typedef std::function<int (HttpSession &)> Sender;
+        typedef std::function<TcpSession *(HttpSession &)> Receiver;
+        class Processor : public HttpClient::Processor {
+        public:
+            Processor(Sender &&scb, Receiver &&rcb) : scb_(std::move(scb)), rcb_(std::move(rcb)) {}
+            TcpSession *HandleResponse(HttpSession &s) override { return rcb_(s); }
+            int SendRequest(HttpSession &s) override { return scb_(s); }
+        private:
+            Sender scb_;
+            Receiver rcb_;
+        };
+    public:
+        AdhocHttpClient(Loop &l, AlarmProcessor &ap) : HttpClient(l, ap) {}
+        bool Connect(const std::string &host, int port, Sender &&scb, Receiver &&rcb) {
+            return HttpClient::Connect(host, port, new Processor(std::move(scb), std::move(rcb)));
         }
     };
 
@@ -525,13 +548,13 @@ namespace base {
                 }
             }
             size_t sz = 4096;
-            while (LIKELY(!closed())) {
+            while (true) {
                 char buffer[sz];
                 if ((r = read_frame(fd, buffer, sz)) < 0) {
                     if (r == QRPC_EAGAIN) {
                         return;
                     }
-                    Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
+                    Close(QRPC_CLOSE_REASON_SYSCALL, r);
                     break;
                 }
                 if (r == 0 || (r = OnRead(buffer, (size_t)r)) < 0) {

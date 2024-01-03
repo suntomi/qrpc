@@ -67,10 +67,10 @@ void ConnectionFactory::Fin() {
     alarm_id_ = AlarmProcessor::INVALID_ID;
   }
   for (auto &p : udp_ports_) {
-    p.Close();
+    p.Fin();
   }
   for (auto &p : tcp_ports_) {
-    p.Close();
+    p.Fin();
   }
   GlobalFin();
 }

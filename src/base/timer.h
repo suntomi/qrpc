@@ -22,7 +22,7 @@ namespace base {
     TimerScheduler(qrpc_time_t granularity) :
       fd_(INVALID_FD), granularity_(granularity),
       handlers_(), schedule_times_(), id_factory_() {}
-    virtual ~TimerScheduler() {}
+    virtual ~TimerScheduler() { Fin(); }
     int Init(Loop &l);
     void Fin();
     inline Fd fd() const { return fd_; }
@@ -31,8 +31,6 @@ namespace base {
     void Poll();
     // implement IoProcessor
     void OnEvent(Fd, const Event &) override;
-		void OnClose(Fd) override { Fin(); }
-    int OnOpen(Fd) override { return QRPC_OK; }
     // implement AlarmProcessor
     Id Set(const Handler &h, qrpc_time_t at) override {
       return Start(h, at);

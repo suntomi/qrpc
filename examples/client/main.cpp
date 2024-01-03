@@ -71,20 +71,27 @@ public:
                 logger::error({{"ev","wrong msg"},{"msg",std::string(p, sz)}});
                 error("session should receive start");
             } else {
-                s.Send("die", 4);
+                s.Send("die", 3);
             }
+        } else if (close_count == 2) {
+            logger::info({{"ev","close session by callback rv"}});
+            return QRPC_EUSER;
         }
         return QRPC_OK;
     }
     static qrpc_time_t Shutdown(Session &s, std::string proto, int &close_count) {
         logger::info({{"ev","session shutdown"},{"p",proto},{"a",s.addr().str()}});
         close_count++;
-        if (close_count >= 2) {
-            logger::info({{"ev", "reconnect test done"}});
+        if (close_count <= 2) {
+            return qrpc_time_msec(100);
+        } else if (close_count == 3) {
+            logger::info({{"ev", "reconnect test done"},{"p",proto}});
             success();
             return 0; //stop reconnection
+        } else {
+            DIE("should not be here");
+            return 0;
         }
-        return qrpc_time_msec(100);
     }
 };
 class TestUdpSession : public UdpSession {
@@ -144,6 +151,29 @@ bool test_tcp_session(Loop &l, AlarmProcessor &ap) {
 }
 bool test_http_client(Loop &l, AlarmProcessor &ap) {
     clear_error();
+    AdhocHttpClient hc(l, ap);
+    hc.Connect("localhost", 8888, [](HttpSession &s) {
+        return s.Request("GET", "/test");
+    }, [](HttpSession &s) {
+        auto b = std::string(s.fsm().body(), s.fsm().bodylen());
+        auto j = json::parse(b);
+        if (j["sdp"].get<std::string>() != "hoge") {
+            logger::error({{"ev","wrong response"},{"body",b}});
+            error("wrong response");
+        } else {
+            success();
+        }
+        return nullptr;
+    });
+    while (error_msg == nullptr) {
+        l.PollAres();
+    }
+    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
+        return true;
+    } else {
+        DIE(error_msg);
+        return false;
+    }
     return true;
 }
 
@@ -175,13 +205,13 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
+    if (!test_http_client(l, t)) {
+        return 1;
+    }
     if (!test_udp_session(l, t)) {
         return 1;
     }
     if (!test_tcp_session(l, t)) {
-        return 1;
-    }
-    if (!test_http_client(l, t)) {
         return 1;
     }
     // if (!test_webrtc_client()) {

@@ -40,11 +40,10 @@ public:
     LoopImpl::Close();
   }
   inline int Add(Fd fd, IoProcessor *h, uint32_t flags) {
-    int r = h->OnOpen(fd);
-    if (r < 0) { return r; }
     CheckAndGrow(fd);
     ASSERT(processors_[fd] == nullptr);
     processors_[fd] = h;
+    // logger::info({{"ev","Loop::Add"}, {"fd", fd}, {"h", str::dptr(h)}});
     return LoopImpl::Add(fd, flags);
   }
   inline int Mod(Fd fd, uint32_t flags) {
@@ -56,7 +55,6 @@ public:
     auto h = processors_[fd];
     if (h != hnew) {
       processors_[fd] = hnew;
-      h->OnClose(fd);
     } else {
       ASSERT(false);
     }
@@ -67,7 +65,6 @@ public:
     if (r >= 0) {
       auto h = processors_[fd];
       processors_[fd] = nullptr;
-      h->OnClose(fd);
       // logger::info({{"ev","Loop::Del"}, {"fd", fd}, {"h", str::dptr(h)}});
     } else {
       ASSERT(false);
@@ -79,7 +76,6 @@ public:
       if (Del(fd) < 0) {
         auto h = processors_[fd];
         processors_[fd] = nullptr;
-        h->OnClose(fd);
       }
       return QRPC_OK;					
     } else {
@@ -106,8 +102,6 @@ public:
   }
 public: //IoProcessor
   void OnEvent(Fd fd, const Event &e) override { Poll(); }
-  int OnOpen(Fd) override { return QRPC_OK; }
-  void OnClose(Fd) override {}
 
   inline void CheckAndGrow(Fd fd) {
     if ((int)fd >= max_nfd_) {

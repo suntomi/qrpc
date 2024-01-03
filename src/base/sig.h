@@ -33,8 +33,9 @@ namespace base {
       for (int i = 0; i < SIGRTMAX; i++) { receivers_[i] = Nop(); }
       sigemptyset(&mask_);
     }
-    virtual ~SignalHandler() { if (fd_ >= 0) { Syscall::Close(fd_); fd_ = -1; } }
+    virtual ~SignalHandler() { Fin(); }
     inline bool Init(Loop &l, const Initializer &init) { return init(*this).Start(l); }
+    void Fin();
     inline Fd fd() const { return fd_; }
     inline SignalHandler &Ignore(int sig) {
       return Handle(sig, [](int sig, const Signal &s) {
@@ -60,8 +61,6 @@ namespace base {
     }
     int Register(int);
     void OnEvent(Fd fd, const Event &e) override;
-		void OnClose(Fd) override;
-		int OnOpen(Fd) override { return QRPC_OK; }
   protected:
     class Nop {
     public:
