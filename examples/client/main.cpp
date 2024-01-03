@@ -21,7 +21,18 @@ static void error(const char *msg) {
 static void success() {
     error_msg = "success";
 }
+struct Test3StreamContext {
+    int count{0};
+};
+struct TestStreamContext {
+    std::vector<std::string> texts;
+};
 bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
+    clear_error();
+    TestStreamContext testctx = { .texts = {"aaaa", "bbbb", "cccc"} };
+    Test3StreamContext test3ctx;
+    int closed = 0;
+    const int MAX_RECONNECT = 2;
     webrtc::AdhocClient w(l, webrtc::ConnectionFactory::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .send_buffer_size = 256 * 1024,
@@ -29,18 +40,82 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
         .alarm_processor = ap,
-    }, [](webrtc::ConnectionFactory::Connection &) {
+    }, [](webrtc::ConnectionFactory::Connection &c) {
+        logger::info({{"ev","webrtc connected"}});
+        c.OpenStream({.label = "test"});
+        c.OpenStream({.label = "test3"});
         return QRPC_OK;
-    }, [](webrtc::ConnectionFactory::Connection &) {
-    }, [](Stream &s, const char *p, size_t sz) {
+    }, [&closed](webrtc::ConnectionFactory::Connection &) {
+        logger::info({{"ev","webrtc closed"}});
+        if (closed < MAX_RECONNECT) {
+            closed++;
+            return qrpc_time_sec(2);
+        } else {
+            success();
+            return 0ULL;
+        }
+    }, [&closed](Stream &s, const char *p, size_t sz) -> int {
         auto pl = std::string(p, sz);
+        auto resp = json::parse(pl);
         logger::info({{"ev","recv dc packet"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
-        return 0;
-    }, [](Stream &s) {
+        if (s.label() == "test") {
+            auto now = qrpc_time_now();
+            auto hello = resp["hello"].get<std::string>();
+            auto count = resp["count"].get<uint64_t>();
+            auto ts = resp["ts"].get<qrpc_time_t>();
+            const auto &ctx = s.context<TestStreamContext>();
+            auto &text = ctx.texts[count];
+            if (hello != ("test:" + text)) {
+                error(("stream message hello wrong: [" + hello + "] should be [", text + "]").c_str());
+                return QRPC_EINVAL;
+            }
+            if (count < 2) {
+                QRPC_LOG(info, "Data channel latency", now - ts);
+                s.Send({{"hello", ctx.texts[count + 1]},{"count",count + 1},{"ts",now}});
+            } else {
+                s.Close(QRPC_CLOSE_REASON_LOCAL);
+            }
+        } else if (s.label() == "test2") {
+            error("test2.onread should not be called");
+        } else if (s.label() == "test3") {
+            auto count = resp["count"].get<uint64_t>();
+            s.Send({{"count", count + 1}});
+        } else if (s.label() == "recv") {
+            auto msg = resp["msg"].get<std::string>();
+            if (msg != "byebye") {
+                error(("Data channel3 message msg wrong: [" + msg + "] should be [byebye]").c_str());
+                return QRPC_EINVAL;
+            }
+            s.connection().Close();
+        }
+        return QRPC_OK;
+    }, [&closed, &testctx, &test3ctx](Stream &s) -> int {
         logger::info({{"ev","stream opened"},{"l",s.label()},{"sid",s.id()}});
+        if (s.label() == "test") {
+            s.SetContext(&testctx);
+            return s.Send({{"hello", testctx.texts[closed]}, {"ts", qrpc_time_now()}, {"count", closed}});
+        } else if (s.label() == "test2") {
+            return s.Send({{"streamName", "recv"}});
+        } else if (s.label() == "test3") {
+            s.SetContext(&test3ctx);
+            return s.Send({{"count", 0}});
+        } else if (s.label() == "recv") {
+            return s.Send({{"die", closed < MAX_RECONNECT}});
+        }
+        ASSERT(false);
         return QRPC_OK;
     }, [](Stream &s, const Stream::CloseReason &reason) {
         logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
+        if (s.label() == "test") {
+            s.connection().OpenStream({.label = "test2"});
+        } else if (s.label() == "test2") {
+        } else if (s.label() == "test3") {
+            if (s.context<Test3StreamContext>().count != 2) {
+                error("test3.onclose count should be 2");
+            }
+        } else if (s.label() == "recv") {
+        }
+        return QRPC_OK;
     });
     base::Client &bcl = w;
     if (!bcl.Connect("localhost", 8888)) {
@@ -205,6 +280,9 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
+    if (!test_webrtc_client(l, t)) {
+        return 1;
+    }
     if (!test_http_client(l, t)) {
         return 1;
     }
@@ -214,8 +292,5 @@ int main(int argc, char *argv[]) {
     if (!test_tcp_session(l, t)) {
         return 1;
     }
-    // if (!test_webrtc_client()) {
-    //     return 1;
-    // }
     return 0;
 }

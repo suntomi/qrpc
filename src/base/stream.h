@@ -21,7 +21,7 @@ namespace base {
     typedef std::function<int (Stream &, const char *, size_t)> Handler;
   public:
     Stream(Connection &c, const Config &config, bool binary_payload = true) : 
-      conn_(c), config_(config), close_reason_(nullptr),
+      conn_(c), config_(config), context_(nullptr), close_reason_(nullptr),
       binary_payload_(binary_payload) {}
     virtual ~Stream() {}
     const Config &config() const { return config_; }
@@ -29,6 +29,8 @@ namespace base {
     Id id() const { return config_.params.streamId; }
     const std::string &label() const { return config_.label; }
     Connection &connection() { return conn_; }
+    template <class T> const T &context() const { return *static_cast<T *>(context_); }
+    template <class T> T &context() { return *static_cast<T *>(context_); }
   public:
     virtual int Open();
     virtual void Close(const CloseReason &reason);
@@ -45,9 +47,11 @@ namespace base {
     virtual int OnConnect() { return QRPC_OK; }
     virtual void OnShutdown() {}
     virtual int OnRead(const char *p, size_t sz) = 0;
+    template <class T> void SetContext(T *t) { context_ = t;}
   protected:
     Connection &conn_;
     Config config_;
+    void *context_;
     std::unique_ptr<CloseReason> close_reason_;
     bool binary_payload_;
   };
