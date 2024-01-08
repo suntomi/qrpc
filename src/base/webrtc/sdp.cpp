@@ -4,9 +4,35 @@
 
 namespace base {
 namespace webrtc {
-  bool SDP::Offer(const ConnectionFactory::Connection &c, std::string &offer) const {
-    ASSERT(false);
-    return false;
+  int SDP::Offer(const ConnectionFactory::Connection &c,
+    const std::string &uflag, const std::string &pwd, std::string &offer) {
+    auto now = qrpc_time_now();
+    offer = str::Format(R"sdp(v=0
+o=- %llu %llu IN IP4 0.0.0.0
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=extmap-allow-mixed
+a=msid-semantic: WMS
+m=application 9 %s/DTLS/SCTP webrtc-datachannel
+c=IN IP4 0.0.0.0
+b=AS:30
+a=ice-ufrag:%s
+a=ice-pwd:%s
+a=ice-options:trickle
+a=fingerprint:%s %s
+a=setup:active
+a=mid:0
+a=sctp-port:5000
+a=max-message-size:%u
+)sdp",
+      now, now,
+      c.factory().primary_proto(),
+      uflag, pwd,
+      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
+      c.factory().config().send_buffer_size
+    );
+    return QRPC_OK;
   }
   std::vector<Candidate> SDP::Candidates() const {
     std::vector<Candidate> v;

@@ -284,6 +284,9 @@ namespace webrtc {
     }
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
+    const std::string primary_proto() const {
+      return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";
+    }
   public:
     int Init();
     void Fin();
@@ -352,7 +355,7 @@ namespace webrtc {
     bool Connect(const std::string &host, int port, const std::string &path) override;
     void Close(BaseConnection &c) override { CloseConnection(dynamic_cast<Connection &>(c)); }
   public:
-    bool Offer(std::string &sdp, std::string &uflag);
+    int Offer(std::string &sdp, std::string &uflag);
     bool Open(Candidate &candidate, std::shared_ptr<Connection> &c);
   protected:
     HttpClient http_client_;

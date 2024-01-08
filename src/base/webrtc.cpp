@@ -912,9 +912,10 @@ namespace client {
       return nullptr;
     }
     int SendRequest(HttpSession &s) override {
+      int r;
       std::string sdp, uflag;
-      if (!client_.Offer(sdp, uflag)) {
-        logger::error({{"ev","fail to generate offer"}});
+      if ((r = client_.Offer(sdp, uflag)) < 0) {
+        logger::error({{"ev","fail to generate offer"},{"rc",r}});
         return QRPC_ESYSCALL;
       }
       SetUFlag(std::move(uflag));
@@ -1004,8 +1005,26 @@ bool Client::Open(
   }
   return true;
 }
-bool Client::Offer(std::string &sdp, std::string &uflag) {
-  ASSERT(false);
+int Client::Offer(std::string &sdp, std::string &uflag) {
+  logger::info({{"ev","new client connection"}});
+  // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
+  // even if sdp anwser ask to do it.
+  auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::SERVER));
+  if (c == nullptr) {
+    logger::error({{"ev","fail to allocate connection"}});
+    return QRPC_EALLOC;
+  }
+  int r;
+  std::string pwd;
+  if ((r = c->Init(uflag, pwd)) < 0) {
+    logger::error({{"ev","fail to init connection"},{"rc",r}});
+    return QRPC_EINVAL;
+  }
+  if ((r = SDP::Offer(*c, uflag, pwd, sdp)) < 0) {
+    logger::error({{"ev","fail to create offer"},{"rc",r}});
+    return QRPC_EINVAL;
+  }
+  connections_.emplace(std::move(uflag), c);
   return false;
 }
 bool Client::Connect(const std::string &host, int port, const std::string &path) {
