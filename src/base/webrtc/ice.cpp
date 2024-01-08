@@ -12,6 +12,7 @@
 
 namespace base {
 namespace webrtc {
+	// IceServer
 	/* Static. */
 
 	static constexpr size_t StunSerializeBufferSize{ 65536 };
@@ -268,14 +269,14 @@ namespace webrtc {
 			case RTC::StunPacket::Class::SUCCESS_RESPONSE:
 			{
 				QRPC_LOG(debug, "STUN Binding Success Response processed");
-
+				this->listener->OnIceServerSuccessResponded(this, packet, session);
 				break;
 			}
 
 			case RTC::StunPacket::Class::ERROR_RESPONSE:
 			{
 				QRPC_LOG(debug, "STUN Binding Error Response processed");
-
+				this->listener->OnIceServerErrorResponded(this, packet, session);
 				break;
 			}
 		}
@@ -695,5 +696,58 @@ namespace webrtc {
 		// Notify the listener.
 		this->listener->OnIceServerSelectedSession(this, this->selectedSession);
 	}
+
+	// IceProber
+	void IceProber::Success() {
+		last_success_ = qrpc_time_now();
+	}
+	void IceProber::SendBindingRequest(Session *s) {
+		static thread_local TxId tx_id;
+		static thread_local RTC::StunPacket *stun_packet = new RTC::StunPacket(
+			RTC::StunPacket::Class::REQUEST, RTC::StunPacket::Method::BINDING, tx_id, nullptr, 0);
+		uint8_t stun_buffer[1024];
+		random::bytes(tx_id, sizeof(TxId));
+		stun_packet->Serialize(stun_buffer);
+		// TODO: set pwd_ and uflag_ for the stun request
+		s->Send(
+			reinterpret_cast<const char *>(stun_buffer), stun_packet->GetSize()
+		);
+	}
+  qrpc_time_t IceProber::operator()() {
+    listener_.OnIceProberBindingRequest();
+    switch (state_) {
+    case NEW:
+      if (last_success_ > 0ULL) {
+        state_ = CONNECTED;
+	      return qrpc_time_msec(2500);
+      }
+      return qrpc_time_msec(50);
+    case CONNECTED:
+      if (qrpc_time_now() - last_success_ > qrpc_time_msec(2500)) {
+        state_ = CHECKING;
+        return qrpc_time_sec(1);
+      }
+      return qrpc_time_msec(2500);
+    case CHECKING:
+      if (qrpc_time_now() - last_success_ > disconnect_timeout_) {
+        state_ = DISCONNECTED;
+        return qrpc_time_msec(50);
+      }
+      return qrpc_time_sec(1);
+    case DISCONNECTED:
+      if (qrpc_time_now() - last_success_ > failed_timeout_) {
+        state_ = FAILED;
+      }
+      return qrpc_time_msec(50);
+    case FAILED:
+      state_ = NEW;
+			last_success_ = 0;
+			alarm_id_ = AlarmProcessor::INVALID_ID;
+      return 0ULL; // stop alarm
+    default:
+      ASSERT(false);
+      return 0ULL;
+    }
+  }
 } // namespace webrtc
 } // namespace base

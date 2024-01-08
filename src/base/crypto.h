@@ -37,9 +37,8 @@ namespace base {
     inline uint64_t gen64() {
       return gen<uint64_t>(0, UINT64_MAX);
     }
-    inline std::string bytes(size_t len) {
+    inline uint8_t *bytes(uint8_t *ret, size_t len) {
       // generate random bytes from std::mt19937
-      std::string ret(len, 0);
       for (size_t i = 0; i < len; ++i) {
         ret[i] = gen<uint8_t>(0, UINT8_MAX);
       }

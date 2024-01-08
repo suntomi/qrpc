@@ -20,7 +20,7 @@ namespace base {
                 static constexpr int kMaxRetryCount = 63;
                 ReconnectionTimeoutCalculator(qrpc_time_t unit, qrpc_time_t max = qrpc_time_sec(3600)) :
                     unit_(unit), max_(max) {}
-                void Reconnect() { retry_count_++; }
+                void Shutdown() { retry_count_++; }
                 void Connected() { retry_count_ = 0; }
                 qrpc_time_t Timeout() const {
                     double unit = (double)(unit_);

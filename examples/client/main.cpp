@@ -54,7 +54,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
             success();
             return 0ULL;
         }
-    }, [&closed](Stream &s, const char *p, size_t sz) -> int {
+    }, [](Stream &s, const char *p, size_t sz) -> int {
         auto pl = std::string(p, sz);
         auto resp = json::parse(pl);
         logger::info({{"ev","recv dc packet"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});

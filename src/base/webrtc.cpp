@@ -342,6 +342,18 @@ void ConnectionFactory::Connection::Close() {
     });
   });
 }
+int ConnectionFactory::Connection::RunIceProber(
+  Session *s, const std::string &uflag, const std::string &pwd) {
+  TRACK();
+  if (!ice_prober_) {
+    ice_prober_ = std::make_unique<IceProber>(*this, uflag, pwd);
+  }
+  if (ice_server_->GetSelectedSession() == nullptr) {
+      ice_server_->ForceSetSelectedSession(s);
+  }
+  ice_prober_->Start(factory().alarm_processor());
+  return QRPC_OK;
+}
 int ConnectionFactory::Connection::RunDtlsTransport() {
   TRACK();
 
@@ -567,6 +579,15 @@ int ConnectionFactory::Connection::Send(Stream &s, const char *p, size_t sz, boo
   sctp_association_->SendSctpMessage(&s, ppid, reinterpret_cast<const uint8_t *>(p), sz);
   return QRPC_OK;
 }
+int ConnectionFactory::Connection::Send(const char *p, size_t sz) {
+  auto *session = ice_server_->GetSelectedSession();
+  if (session == nullptr) {
+    logger::warn({{"proto","raw"},{"ev","no selected tuple set, cannot send raw packet"}});
+    return QRPC_EINVAL;
+  }
+  return session->Send(p, sz);
+}
+
 void ConnectionFactory::Connection::Close(Stream &s) {
   sctp_association_->DataConsumerClosed(&s);
   streams_.erase(s.id()); // s might destroyed
@@ -644,6 +665,32 @@ void ConnectionFactory::Connection::OnIceServerCompleted(const IceServer *iceSer
 }
 void ConnectionFactory::Connection::OnIceServerDisconnected(const IceServer *iceServer) {
   TRACK();
+}
+void ConnectionFactory::Connection::OnIceServerSuccessResponded(
+  const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) {
+  if (!ice_prober_ || dtls_role_ != DtlsTransport::Role::CLIENT) {
+    logger::warn({{"ev","stun packet response receive with invalid state"},{"dtls_role",dtls_role_}});
+    ASSERT(false);
+    return;
+  }
+  if (!ice_prober_->active()) {
+    // stun binding request success. start dtls transport so that it can process
+    // dtls handshake packets from server.
+    int r;
+    if ((r = RunDtlsTransport()) < 0) {
+      logger::error({{"ev","fail to run dtls transport"},{"rc",r}});
+      return;
+    }
+  }
+  ice_prober_->Success();
+}
+void ConnectionFactory::Connection::OnIceServerErrorResponded(
+  const IceServer *, const RTC::StunPacket* , Session *) {
+}
+
+// implements IceProber::Listener
+void ConnectionFactory::Connection::OnIceProberBindingRequest() {
+ ice_prober_->SendBindingRequest(ice_server_->GetSelectedSession());
 }
 
 // implements IceServer::Listener
@@ -820,100 +867,138 @@ void ConnectionFactory::Connection::OnSctpAssociationBufferedAmount(
   TRACK();
 }
 
-// Client::WhipHttpProcessor
-base::TcpSession *Client::WhipHttpProcessor::HandleResponse(HttpSession &s) {
-  const auto &uf = uflag();
-  if (s.fsm().rc() != HRC_OK) {
-    logger::error({{"ev","signaling server returns error response"},
-      {"status",s.fsm().rc()},{"uflag",uf}});
-    client_.CloseConnection(uf);
-    return nullptr;
-  }
-  SDP sdp(s.fsm().body());
-  auto candidates = sdp.Candidates();
-  if (candidates.size() <= 0) {
-    logger::error({{"ev","signaling server returns no candidates"},
-      {"sdp",sdp},{"uflag",uf}});
-    client_.CloseConnection(uf);
-    return nullptr;
-  }
-  bool success = false;
-  auto c = client_.FindFromUflag(uf);
-  for (auto &cand : candidates) {
-    if (!client_.Open(cand, c)) {
-      logger::info({{"ev","fail to open"},{"cand",cand},{"uflag",uf}});
-      continue;
+// client::WhipHttpProcessor, client::TcpSession, client::UdpSession
+namespace client {
+  typedef ConnectionFactory::IceUFlag IceUFlag;
+  class WhipHttpProcessor : public HttpClient::Processor {
+  public:
+    WhipHttpProcessor(Client &c, const std::string &path) : client_(c), path_(), uflag_() {}
+    ~WhipHttpProcessor() {}
+  public:
+    const std::string &path() const { return path_; }
+    const IceUFlag &uflag() const { return uflag_; }
+    void SetUFlag(std::string &&uflag) { uflag_ = std::move(IceUFlag(uflag)); }
+  public:
+    base::TcpSession *HandleResponse(HttpSession &s) override {
+      const auto &uf = uflag();
+      if (s.fsm().rc() != HRC_OK) {
+        logger::error({{"ev","signaling server returns error response"},
+          {"status",s.fsm().rc()},{"uflag",uf}});
+        client_.CloseConnection(uf);
+        return nullptr;
+      }
+      SDP sdp(s.fsm().body());
+      auto candidates = sdp.Candidates();
+      if (candidates.size() <= 0) {
+        logger::error({{"ev","signaling server returns no candidates"},
+          {"sdp",sdp},{"uflag",uf}});
+        client_.CloseConnection(uf);
+        return nullptr;
+      }
+      bool success = false;
+      auto c = client_.FindFromUflag(uf);
+      for (auto &cand : candidates) {
+        if (!client_.Open(cand, c)) {
+          logger::info({{"ev","fail to open"},{"cand",cand},{"uflag",uf}});
+          continue;
+        }
+        success = true;
+      }
+      if (!success) {
+        logger::info({{"ev","fail to open for all of candidates"},{"uflag",uf}});
+        client_.CloseConnection(uf);
+        return nullptr;
+      }
+      return nullptr;
     }
-    success = true;
-  }
-  if (!success) {
-    logger::info({{"ev","fail to open for all of candidates"},{"uflag",uf}});
-    client_.CloseConnection(uf);
-    return nullptr;
-  }
-  return nullptr;
-}
-int Client::WhipHttpProcessor::SendRequest(HttpSession &s) {
-  std::string sdp, uflag;
-  if (!client_.Offer(sdp, uflag)) {
-    logger::error({{"ev","fail to generate offer"}});
-    return QRPC_ESYSCALL;
-  }
-  SetUFlag(std::move(uflag));
-  std::string sdplen = std::to_string(sdp.length());
-  HttpHeader h[] = {
-      {.key = "Content-Type", .val = "application/sdp"},
-      {.key = "Content-Length", .val = sdplen.c_str()}
+    int SendRequest(HttpSession &s) override {
+      std::string sdp, uflag;
+      if (!client_.Offer(sdp, uflag)) {
+        logger::error({{"ev","fail to generate offer"}});
+        return QRPC_ESYSCALL;
+      }
+      SetUFlag(std::move(uflag));
+      std::string sdplen = std::to_string(sdp.length());
+      HttpHeader h[] = {
+          {.key = "Content-Type", .val = "application/sdp"},
+          {.key = "Content-Length", .val = sdplen.c_str()}
+      };
+      return s.Request("POST", path().c_str(), h, 2, sdp.c_str(), sdp.length());
+    }
+  private:
+    Client &client_;
+    std::string path_;
+    IceUFlag uflag_;
   };
-  return s.Request("POST", path().c_str(), h, 2, sdp.c_str(), sdp.length());
-}
-
-// Client::TcpSession
-int Client::TcpSession::OnConnect() {
-  // TODO: Send Stun Request
-  rctc_.Connected();
-  return QRPC_OK;
-}
-qrpc_time_t Client::TcpSession::OnShutdown() {
-  rctc_.Reconnect();
-  return rctc_.Timeout();
-}
-
-// Client::UdpSession
-int Client::UdpSession::OnConnect() {
-  rctc_.Connected();
-  return QRPC_OK;
-}
-qrpc_time_t Client::UdpSession::OnShutdown() {
-  rctc_.Reconnect();
-  return rctc_.Timeout();
+  template <class BASE>
+  class BaseSession : public BASE {
+  public:
+    typedef typename BASE::Factory Factory;
+    BaseSession(Factory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
+      const std::string &remote_uflag, const std::string &remote_pwd) : 
+      BASE(f, fd, addr, c), remote_uflag_(remote_uflag), remote_pwd_(remote_pwd),
+      rctc_(qrpc_time_sec(1), qrpc_time_sec(30)) {}
+    int OnConnect() override {
+      rctc_.Connected();
+      // start ICE prober.
+      int r;
+      if ((r = BASE::connection_->RunIceProber(this, remote_uflag_, remote_pwd_)) < 0) {
+        logger::warn({{"ev","fail to start ICE prober"},{"rc",r}});
+        return QRPC_EGOAWAY;
+      }
+      // after above, ICE server will receive stun success response at IceServer::ProcessStunPacket
+      // and ConnectionFactory::Connection will be notified via OnIceServerSuccessResponded()
+      return QRPC_OK;
+    }
+    qrpc_time_t OnShutdown() override {
+      rctc_.Shutdown();
+      return rctc_.Timeout();
+    }
+  private:
+    std::string remote_uflag_, remote_pwd_;
+    base::Session::ReconnectionTimeoutCalculator rctc_;
+  };
+  class TcpSession : public BaseSession<ConnectionFactory::TcpSession> {
+  public:
+    TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
+      const std::string &remote_uflag, const std::string &remote_pwd
+    ) : BaseSession<ConnectionFactory::TcpSession>(f, fd, addr, c, remote_uflag, remote_pwd) {}
+  };
+  class UdpSession : public BaseSession<ConnectionFactory::UdpSession> {
+  public:
+    UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
+      const std::string &remote_uflag, const std::string &remote_pwd
+    ) : BaseSession<ConnectionFactory::UdpSession>(f, fd, addr, c, remote_uflag, remote_pwd) {}
+  };
 }
 
 // Client
 bool Client::Open(
-  std::tuple<bool, std::string, int> &candidate,
+  Candidate &cand,
   std::shared_ptr<Connection> &c
 ) {
-  if (std::get<0>(candidate)) {
+  std::string uflag = std::get<3>(cand);
+  std::string pwd = std::get<4>(cand);
+  if (std::get<0>(cand)) {
     if (!udp_ports_[0].Connect(
-      std::get<1>(candidate), std::get<2>(candidate),
-      [this, c](Fd fd, const Address a) mutable {
-        return new Client::UdpSession(udp_ports_[0], fd, a, c);
+      std::get<1>(cand), std::get<2>(cand),
+      [this, c, uflag, pwd](Fd fd, const Address a) mutable {
+        return new client::UdpSession(udp_ports_[0], fd, a, c, uflag, pwd);
       }
     )) {
       logger::info({{"ev","fail to start UDP session"},
-        {"to", std::get<1>(candidate)},{"port",std::get<2>(candidate)}});
+        {"to", std::get<1>(cand)},{"port",std::get<2>(cand)}});
       return false;
     }
   } else {
     if (!tcp_ports_[0].Connect(
-      std::get<1>(candidate), std::get<2>(candidate),
-      [this, c](Fd fd, const Address a) mutable {
-        return new Client::TcpSession(tcp_ports_[0], fd, a, c);
+      std::get<1>(cand), std::get<2>(cand),
+      [this, c, uflag, pwd](Fd fd, const Address a) mutable {
+        return new client::TcpSession(tcp_ports_[0], fd, a, c, uflag, pwd);
       }
     )) {
       logger::info({{"ev","fail to start TCP session"},
-        {"to", std::get<1>(candidate)},{"port",std::get<2>(candidate)}});
+        {"to", std::get<1>(cand)},{"port",std::get<2>(cand)}});
       return false;
     }
   }
@@ -924,7 +1009,7 @@ bool Client::Offer(std::string &sdp, std::string &uflag) {
   return false;
 }
 bool Client::Connect(const std::string &host, int port, const std::string &path) {
-  return http_client_.Connect(host, port, new WhipHttpProcessor(*this, path));
+  return http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, path));
 }
 
 // Server

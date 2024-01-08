@@ -11,6 +11,7 @@ namespace base {
     virtual ~Connection() = default;
   public:
     virtual void Close() = 0;
+    virtual int Send(const char *, size_t) = 0;
     virtual int Open(Stream &) = 0;
     virtual void Close(Stream &) = 0;
     virtual int Send(Stream &, const char *, size_t, bool) = 0;

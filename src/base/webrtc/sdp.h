@@ -119,7 +119,7 @@ namespace webrtc {
     bool Answer(ConnectionFactory::Connection &c, std::string &answer) const;
     bool Offer(const ConnectionFactory::Connection &c, std::string &offer) const;
   public:
-    std::vector<std::tuple<bool, std::string, int>> Candidates() const;
+    std::vector<Candidate> Candidates() const;
   protected:
     std::string AnswerAs(const std::string &proto, const ConnectionFactory::Connection &c) const;
     uint32_t AssignPriority(uint32_t component_id) const;

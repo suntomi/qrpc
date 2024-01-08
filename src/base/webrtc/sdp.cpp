@@ -8,9 +8,50 @@ namespace webrtc {
     ASSERT(false);
     return false;
   }
-  std::vector<std::tuple<bool, std::string, int>> SDP::Candidates() const {
-    ASSERT(false);
-    return std::vector<std::tuple<bool, std::string, int>>();
+  std::vector<Candidate> SDP::Candidates() const {
+    std::vector<Candidate> v;
+    auto mit = find("media");
+    if (mit == end()) {
+      ASSERT(false);
+      return v;
+    }
+    for (auto it = mit->begin(); it != mit->end(); ++it) {
+      auto protoit = it->find("protocol");
+      bool dgram = false;
+      if ((*protoit) == "UDP/DTLS/SCTP") {
+        dgram = true;
+      } else if ((*protoit) == "TCP/DTLS/SCTP") {
+      } else {
+        QRPC_LOGJ(warn, {{"ev","non SCTP media protocol"}, {"proto", *protoit}});
+        continue;
+      }
+      auto hostit = it->find("host");
+      if (hostit == it->end()) {
+        QRPC_LOGJ(warn, {{"ev","non host value"},{"sdp",json::dump(*this)}});
+        ASSERT(false);
+        continue;
+      }
+      auto portit = it->find("port");
+      if (portit == it->end()) {
+        QRPC_LOGJ(warn, {{"ev","non port valuests"},{"sdp",json::dump(*this)}});
+        ASSERT(false);
+        continue;
+      }
+      auto uflagit = it->find("uflag");
+      if (uflagit == it->end()) {
+        QRPC_LOGJ(warn, {{"ev","non uflag value"},{"sdp",json::dump(*this)}});
+        ASSERT(false);
+        continue;
+      }
+      auto pwdit = it->find("pwd");
+      if (pwdit == it->end()) {
+        QRPC_LOGJ(warn, {{"ev","non pwd valuests"},{"sdp",json::dump(*this)}});
+        ASSERT(false);
+        continue;
+      }
+      v.push_back(Candidate(dgram, *hostit, *portit, *uflagit, *pwdit));
+    }
+    return v;
   }
   bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
     auto mit = find("media");
@@ -38,7 +79,7 @@ namespace webrtc {
         logger::debug({{"ev","non SCTP media protocol"}, {"proto", *proto}});
         continue;
       }
-      // protocol found. set remote finger pring
+      // protocol found. set remote fingerprint
       // TODO: move this to dedicated function but type declaration of it is not easy
       auto fp = root_fp;
       if (fp == end()) {

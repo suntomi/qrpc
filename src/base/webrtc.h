@@ -17,7 +17,8 @@ namespace webrtc {
   typedef base::AdhocStream AdhocStream;
   typedef base::AlarmProcessor AlarmProcessor;
   typedef base::Connection BaseConnection;
-
+  typedef IceProber::TxId TxId;
+  typedef std::tuple<bool, std::string, int, std::string, std::string> Candidate;
 
   // ConnectionFactory
   class ConnectionFactory {
@@ -38,6 +39,9 @@ namespace webrtc {
     class Connection;
     class TcpSession : public TcpListener::TcpSession {
     public:
+      typedef TcpSessionFactory Factory;
+      TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+        TcpSession(f, fd, addr) { connection_ = c; }
       TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) :
         TcpSessionFactory::TcpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
@@ -47,7 +51,10 @@ namespace webrtc {
     };
     class UdpSession : public UdpListener::UdpSession {
     public:
-      UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : 
+      typedef UdpSessionFactory Factory;
+      UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+        UdpSession(f, fd, addr) { connection_ = c; }
+      UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) :
         UdpSessionFactory::UdpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
       qrpc_time_t OnShutdown() override;
@@ -79,6 +86,7 @@ namespace webrtc {
   public: // connections
     class Connection : public base::Connection, 
                        public IceServer::Listener,
+                       public IceProber::Listener,
                        public DtlsTransport::Listener,
                        public SctpAssociation::Listener {
     public:
@@ -104,6 +112,7 @@ namespace webrtc {
     public:
       // implements base::Connection
       void Close() override;
+      int Send(const char *p, size_t sz) override;
       int Send(Stream &s, const char *p, size_t sz, bool binary) override;
       void Close(Stream &s) override;
       int Open(Stream &s) override;
@@ -119,11 +128,15 @@ namespace webrtc {
       inline const ConnectionFactory &factory() const { return sv_; }
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
       inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
+      // for now, qrpc server initiates dtls transport because safari does not initiate it
+      // even if we specify "setup: passive" in SDP of whip response
+      inline bool is_client() const { return dtls_role_ == DtlsTransport::Role::SERVER; }
     public:
       int Init(std::string &uflag, std::string &pwd);
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
       int RunDtlsTransport();
+      int RunIceProber(Session *s, const std::string &uflag, const std::string &pwd);
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
@@ -157,6 +170,13 @@ namespace webrtc {
 			void OnIceServerCompleted(const IceServer *iceServer)    override;
 			void OnIceServerDisconnected(const IceServer *iceServer) override;
       bool OnIceServerCheckClosed(const IceServer *) override { return closed(); }
+			void OnIceServerSuccessResponded(
+					const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) override;
+			void OnIceServerErrorResponded(
+				const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) override;
+
+      // implements IceProber::Listener
+      void OnIceProberBindingRequest() override;
 
       // implements DtlsTransport::Listener
 			void OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) override;
@@ -206,6 +226,7 @@ namespace webrtc {
       qrpc_time_t last_active_;
       ConnectionFactory &sv_;
       std::unique_ptr<IceServer> ice_server_; // ICE
+      std::unique_ptr<IceProber> ice_prober_; // ICE(client)
       DtlsTransport::Role dtls_role_;
       std::unique_ptr<DtlsTransport> dtls_transport_; // DTLS
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
@@ -321,41 +342,6 @@ namespace webrtc {
   // Client
   class Client : public ConnectionFactory, public base::Client {
   public:
-    class WhipHttpProcessor : public HttpClient::Processor {
-    public:
-      WhipHttpProcessor(Client &c, const std::string &path) : client_(c), path_(), uflag_() {}
-      ~WhipHttpProcessor() {}
-    public:
-      const std::string &path() const { return path_; }
-      const IceUFlag &uflag() const { return uflag_; }
-      void SetUFlag(std::string &&uflag) { uflag_ = std::move(IceUFlag(uflag)); }
-    public:
-      base::TcpSession *HandleResponse(HttpSession &s) override;
-      int SendRequest(HttpSession &s) override;
-    private:
-      Client &client_;
-      std::string path_;
-      IceUFlag uflag_;
-    };
-    class TcpSession : public ConnectionFactory::TcpSession {
-    public:
-      TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c) : 
-        ConnectionFactory::TcpSession(f, fd, addr), rctc_(qrpc_time_sec(1), qrpc_time_sec(30)) { connection_ = c; }
-      int OnConnect() override;
-      qrpc_time_t OnShutdown() override;
-    private:
-      ReconnectionTimeoutCalculator rctc_;
-    };
-    class UdpSession : public ConnectionFactory::UdpSession {
-    public:
-      UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c) : 
-        ConnectionFactory::UdpSession(f, fd, addr), rctc_(qrpc_time_sec(1), qrpc_time_sec(30)) { connection_ = c; }
-      int OnConnect() override;
-      qrpc_time_t OnShutdown() override;
-    private:
-      ReconnectionTimeoutCalculator rctc_;
-    };
-  public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.alarm_processor) {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
@@ -367,7 +353,7 @@ namespace webrtc {
     void Close(BaseConnection &c) override { CloseConnection(dynamic_cast<Connection &>(c)); }
   public:
     bool Offer(std::string &sdp, std::string &uflag);
-    bool Open(std::tuple<bool, std::string, int> &candidate, std::shared_ptr<Connection> &c);
+    bool Open(Candidate &candidate, std::shared_ptr<Connection> &c);
   protected:
     HttpClient http_client_;
   };

@@ -4,11 +4,13 @@
 #include "common.hpp"
 #include "RTC/StunPacket.hpp"
 #include "base/session.h"
+#include "base/alarm.h"
 #include <list>
 #include <string>
 
 namespace base {
 namespace webrtc {
+	// IceServer
 	class IceServer
 	{
 	public:
@@ -46,6 +48,10 @@ namespace webrtc {
 			virtual void OnIceServerCompleted(const IceServer *iceServer)    = 0;
 			virtual void OnIceServerDisconnected(const IceServer *iceServer) = 0;
 			virtual bool OnIceServerCheckClosed(const IceServer *iceServer) = 0;
+			virtual void OnIceServerSuccessResponded(
+					const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) = 0;
+			virtual void OnIceServerErrorResponded(
+				const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) = 0;
 		};
 
 	public:
@@ -69,6 +75,9 @@ namespace webrtc {
 		Session *GetSelectedSession() const
 		{
 			return this->selectedSession;
+		}
+		void ForceSetSelectedSession(Session *s) {
+			this->SetSelectedSession(s);
 		}
 		void RestartIce(const std::string& usernameFragment, const std::string& password)
 		{
@@ -130,6 +139,59 @@ namespace webrtc {
 		std::list<Session*> sessions;
 		Session *selectedSession{ nullptr };
 	};
+
+	// IceProber
+	class IceProber {
+  public:
+    enum State {
+      NEW = 0,
+      CONNECTED,
+      CHECKING,
+      DISCONNECTED,
+      FAILED,
+    };
+    typedef uint8_t TxId[12];
+	public:
+		class Listener {
+		public:
+			virtual void OnIceProberBindingRequest() = 0;
+		};
+  public:
+    IceProber(Listener &l, const std::string &uflag, const std::string &pwd) :
+			IceProber(l, uflag, pwd, qrpc_time_sec(5), qrpc_time_sec(10)) {}
+    IceProber(Listener &l, const std::string &uflag, const std::string &pwd,
+			qrpc_time_t disconnect_timeout, qrpc_time_t failed_timeout) :
+      listener_(l), uflag_(uflag), pwd_(pwd), 
+			alarm_processor_(NopAlarmProcessor::Instance()), alarm_id_(AlarmProcessor::INVALID_ID),
+			disconnect_timeout_(disconnect_timeout), failed_timeout_(failed_timeout) {}
+    ~IceProber() { Stop(); }
+		inline bool active() const { return state_ != NEW; }
+  public:
+    qrpc_time_t operator()();
+		void Start(AlarmProcessor &ap) {
+			if (alarm_id_ == AlarmProcessor::INVALID_ID) {
+				alarm_processor_ = ap;
+				alarm_id_ = alarm_processor_.Set(*this, qrpc_time_now());
+			}
+		}
+		void Stop() {
+			if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+				alarm_processor_.Cancel(alarm_id_);
+				alarm_id_ = AlarmProcessor::INVALID_ID;
+			}
+		}
+    void Success();
+		void SendBindingRequest(Session *s);
+  private:
+    Listener &listener_;
+		std::string uflag_, pwd_;
+		AlarmProcessor &alarm_processor_;
+		AlarmProcessor::Id alarm_id_;
+    State state_{NEW};
+    qrpc_time_t last_success_{0ULL};
+    qrpc_time_t disconnect_timeout_;
+    qrpc_time_t failed_timeout_;
+  };
 } // namespace webrtc
 } // namespace base
 
