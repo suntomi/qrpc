@@ -106,6 +106,17 @@ public:
     }
     return true;
   }
+  static int GetSockAddrFromFd(Fd fd, Address &a) {
+    sockaddr_storage sa;
+    socklen_t salen = sizeof(sa);
+    if (getsockname(fd, reinterpret_cast<sockaddr *>(&sa), &salen) != 0) {
+      logger::error({{"ev","Failed to get sockaddr from fd"},
+        {"fd",fd},{"errno",Errno()}});
+      return QRPC_ESYSCALL;
+    }
+    a = Address(sa, salen);
+    return QRPC_OK;
+  }
   static const void *GetSockAddrPtr(const struct sockaddr_storage &addr) {
     if (addr.ss_family == AF_INET) {
       auto tmp = (struct sockaddr_in *)&addr;

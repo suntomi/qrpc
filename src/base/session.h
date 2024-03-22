@@ -136,6 +136,16 @@ namespace base {
         template <class F> const F &to() const { return static_cast<const F&>(*this); }
         virtual Session *Open(const Address &a, FactoryMethod m) = 0;
         bool Connect(const std::string &host, int port, FactoryMethod m, int family_pref = AF_INET);
+        static int AssignedPort(Fd fd) {
+            Address a;
+            int r;
+            if ((r = Syscall::GetSockAddrFromFd(fd, a)) < 0) {
+                logger::error({{"ev", "fail to get sock addr from fd"},{"fd",fd},{"rc",r}});
+                return r;
+            } else {
+                return a.port();
+            }
+        }
     protected:
         virtual Session *Create(int fd, const Address &a, FactoryMethod &m) {
             auto s = m(fd, a);
@@ -242,9 +252,13 @@ namespace base {
         int port() const { return port_; }
         bool Listen(int port) {
             port_ = port;
-            if ((fd_ = Syscall::Listen(port)) < 0) {
+            if ((fd_ = Syscall::Listen(port_)) < 0) {
                 logger::error({{"ev","Syscall::Listen() fails"},{"port",port},{"rc",fd_},{"errno",Syscall::Errno()}});
                 return false;
+            }
+            if (port_ == 0) {
+                port_ = AssignedPort(fd_);
+                logger::info({{"ev", "listen port auto assigned"},{"proto","tcp"},{"port",port_}});
             }
             if (loop_.Add(fd_, this, Loop::EV_READ) < 0) {
                 logger::error({{"ev","Loop::Add fails"},{"fd",fd_}});
@@ -455,10 +469,14 @@ namespace base {
             if ((fd_ = Syscall::CreateUDPSocket(AF_INET, &overflow_supported_)) < 0) {
                 return false;
             }
-            if (Syscall::Bind(fd_, port) != QRPC_OK) {
+            if (Syscall::Bind(fd_, port_) != QRPC_OK) {
                 Syscall::Close(fd_);
                 fd_ = INVALID_FD;
                 return false;
+            }
+            if (port_ == 0) {
+                port_ = AssignedPort(fd_);
+                logger::info({{"ev", "listen port auto assigned"},{"proto","tcp"},{"port",port_}});
             }
             if (loop_.Add(fd_, this, Loop::EV_READ) < 0) {
                 logger::error({{"ev","Loop::Add fails"},{"fd",fd_}});

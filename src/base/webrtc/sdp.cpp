@@ -7,6 +7,7 @@ namespace webrtc {
   int SDP::Offer(const ConnectionFactory::Connection &c,
     const std::string &uflag, const std::string &pwd, std::string &offer) {
     auto now = qrpc_time_now();
+    // string value to the str::Format should be converted to c string like str.c_str()
     offer = str::Format(R"sdp(v=0
 o=- %llu %llu IN IP4 0.0.0.0
 s=-
@@ -27,8 +28,8 @@ a=sctp-port:5000
 a=max-message-size:%u
 )sdp",
       now, now,
-      c.factory().primary_proto(),
-      uflag, pwd,
+      c.factory().primary_proto().c_str(),
+      uflag.c_str(), pwd.c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
       c.factory().config().send_buffer_size
     );
@@ -158,6 +159,7 @@ a=max-message-size:%u
       );
       idx++;
     }
+    // string value to the str::Format should be converted to c string like str.c_str()
     return str::Format(R"sdp(v=0
 o=- %llu %llu IN IP4 0.0.0.0
 s=-

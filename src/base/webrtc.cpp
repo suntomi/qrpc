@@ -877,7 +877,7 @@ namespace client {
   public:
     const std::string &path() const { return path_; }
     const IceUFlag &uflag() const { return uflag_; }
-    void SetUFlag(std::string &&uflag) { uflag_ = std::move(IceUFlag(uflag)); }
+    void SetUFlag(std::string &&uflag) { uflag_ = IceUFlag(uflag); }
   public:
     base::TcpSession *HandleResponse(HttpSession &s) override {
       const auto &uf = uflag();
@@ -1025,9 +1025,24 @@ int Client::Offer(std::string &sdp, std::string &uflag) {
     return QRPC_EINVAL;
   }
   connections_.emplace(std::move(uflag), c);
-  return false;
+  return QRPC_OK;
 }
 bool Client::Connect(const std::string &host, int port, const std::string &path) {
+  config_.ports = {
+    // 0 for local port number auto assignment
+    {.protocol = ConnectionFactory::Port::UDP, .port = 0},
+    {.protocol = ConnectionFactory::Port::TCP, .port = 0}
+  };
+  // assign listener port
+  int r;
+  if ((r = Init()) < 0) {
+    logger::error({{"ev","fail to init conection factory"},{"rc",r}});
+    return r;
+  }
+  // get assigned ports and set to config_.ports
+  config_.ports[0].port = udp_ports_[0].port();
+  config_.ports[1].port = tcp_ports_[0].port();
+  logger::info({{"ev","local port assigned"},{"tcp",config_.ports[1].port},{"udp",config_.ports[0].port}});
   return http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, path));
 }
 

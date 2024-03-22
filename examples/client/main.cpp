@@ -119,7 +119,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
     });
     base::Client &bcl = w;
     if (!bcl.Connect("localhost", 8888)) {
-        DIE("fail to start webrtc client");
+        DIE("fail to start webrtc client as connect");
     }
     while (error_msg == nullptr) {
         l.PollAres();
