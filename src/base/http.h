@@ -1162,6 +1162,10 @@ namespace base {
         TcpSession *operator () (HttpSession &s) {
             char buff[256];
             const char *path = s.fsm().url(buff, sizeof(buff));
+            if (UNLIKELY(path == nullptr)) {
+                s.BadRequest("no path specified\n");
+                return nullptr; //session finished
+            }
             for (auto &it : route_) {
                 std::cmatch match;
                 if (std::regex_match(path, match, it.first)) {
