@@ -52,31 +52,39 @@ a=max-message-size:%u
         QRPC_LOGJ(warn, {{"ev","non SCTP media protocol"}, {"proto", *protoit}});
         continue;
       }
-      auto hostit = it->find("host");
-      if (hostit == it->end()) {
-        QRPC_LOGJ(warn, {{"ev","non host value"},{"sdp",json::dump(*this)}});
+      auto cand = it->find("candidates");
+      if (cand != it->end()) {
+        QRPC_LOGJ(warn, {{"ev","non candidates value"},{"sdp",dump()}});
         ASSERT(false);
         continue;
       }
-      auto portit = it->find("port");
-      if (portit == it->end()) {
-        QRPC_LOGJ(warn, {{"ev","non port valuests"},{"sdp",json::dump(*this)}});
-        ASSERT(false);
-        continue;
-      }
-      auto uflagit = it->find("uflag");
+      auto uflagit = it->find("iceUflag");
       if (uflagit == it->end()) {
-        QRPC_LOGJ(warn, {{"ev","non uflag value"},{"sdp",json::dump(*this)}});
+        QRPC_LOGJ(warn, {{"ev","non uflag value"},{"sdp",dump()}});
         ASSERT(false);
         continue;
       }
-      auto pwdit = it->find("pwd");
+      auto pwdit = it->find("icePwd");
       if (pwdit == it->end()) {
-        QRPC_LOGJ(warn, {{"ev","non pwd valuests"},{"sdp",json::dump(*this)}});
+        QRPC_LOGJ(warn, {{"ev","non pwd value"},{"sdp",dump()}});
         ASSERT(false);
         continue;
       }
-      v.push_back(Candidate(dgram, *hostit, *portit, *uflagit, *pwdit));
+      for (auto cit = cand->begin(); cit != cand->end(); ++cit) {
+        auto hostit = it->find("ip");
+        if (hostit == it->end()) {
+          QRPC_LOGJ(warn, {{"ev","non host value"},{"sdp",dump()}});
+          ASSERT(false);
+          continue;
+        }
+        auto portit = it->find("port");
+        if (portit == it->end()) {
+          QRPC_LOGJ(warn, {{"ev","non port valuests"},{"sdp",dump()}});
+          ASSERT(false);
+          continue;
+        }
+        v.push_back(Candidate(dgram, *hostit, *portit, *uflagit, *pwdit));
+      }
     }
     return v;
   }

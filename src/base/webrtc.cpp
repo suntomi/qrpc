@@ -872,7 +872,7 @@ namespace client {
   typedef ConnectionFactory::IceUFlag IceUFlag;
   class WhipHttpProcessor : public HttpClient::Processor {
   public:
-    WhipHttpProcessor(Client &c, const std::string &path) : client_(c), path_(), uflag_() {}
+    WhipHttpProcessor(Client &c, const std::string &path) : client_(c), path_(path), uflag_() {}
     ~WhipHttpProcessor() {}
   public:
     const std::string &path() const { return path_; }
@@ -907,7 +907,6 @@ namespace client {
       if (!success) {
         logger::info({{"ev","fail to open for all of candidates"},{"uflag",uf}});
         client_.CloseConnection(uf);
-        return nullptr;
       }
       return nullptr;
     }
