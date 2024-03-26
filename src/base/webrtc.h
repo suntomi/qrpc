@@ -356,7 +356,7 @@ namespace webrtc {
     void Close(BaseConnection &c) override { CloseConnection(dynamic_cast<Connection &>(c)); }
   public:
     int Offer(std::string &sdp, std::string &uflag);
-    bool Open(Candidate &candidate, std::shared_ptr<Connection> &c);
+    bool Open(const std::vector<Candidate> &candidate, size_t idx, std::shared_ptr<Connection> &c);
   protected:
     HttpClient http_client_;
   };

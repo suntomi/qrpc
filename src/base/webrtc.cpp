@@ -895,17 +895,8 @@ namespace client {
         client_.CloseConnection(uf);
         return nullptr;
       }
-      bool success = false;
       auto c = client_.FindFromUflag(uf);
-      for (auto &cand : candidates) {
-        if (!client_.Open(cand, c)) {
-          logger::info({{"ev","fail to open"},{"cand",cand},{"uflag",uf}});
-          continue;
-        }
-        success = true;
-      }
-      if (!success) {
-        logger::info({{"ev","fail to open for all of candidates"},{"uflag",uf}});
+      if (!client_.Open(candidates, 0, c)) {
         client_.CloseConnection(uf);
       }
       return nullptr;
@@ -974,9 +965,16 @@ namespace client {
 
 // Client
 bool Client::Open(
-  Candidate &cand,
+  const std::vector<Candidate> &candidates,
+  size_t idx,
   std::shared_ptr<Connection> &c
 ) {
+  if (candidates.size() <= idx) {
+    logger::info({{"ev","no more candidate to open"},
+      {"candidates_size", candidates.size()}});
+    return false;
+  }
+  const auto &cand = candidates[idx];
   std::string uflag = std::get<3>(cand);
   std::string pwd = std::get<4>(cand);
   if (std::get<0>(cand)) {
@@ -984,10 +982,15 @@ bool Client::Open(
       std::get<1>(cand), std::get<2>(cand),
       [this, c, uflag, pwd](Fd fd, const Address a) mutable {
         return new client::UdpSession(udp_ports_[0], fd, a, c, uflag, pwd);
+      },
+      [this, candidates, idx, c, uflag](int status) mutable {
+        if (!this->Open(candidates, idx + 1, c)) {
+          this->CloseConnection(uflag);
+        }
       }
     )) {
-      logger::info({{"ev","fail to start UDP session"},
-        {"to", std::get<1>(cand)},{"port",std::get<2>(cand)}});
+      logger::info({{"ev","fail to start session"},{"proto","udp"},
+        {"to",std::get<1>(cand)},{"port",std::get<2>(cand)}});
       return false;
     }
   } else {
@@ -995,10 +998,15 @@ bool Client::Open(
       std::get<1>(cand), std::get<2>(cand),
       [this, c, uflag, pwd](Fd fd, const Address a) mutable {
         return new client::TcpSession(tcp_ports_[0], fd, a, c, uflag, pwd);
+      },
+      [this, candidates, idx, c, uflag](int status) mutable {
+        if (!this->Open(candidates, idx + 1, c)) {
+          this->CloseConnection(uflag);
+        }
       }
     )) {
-      logger::info({{"ev","fail to start TCP session"},
-        {"to", std::get<1>(cand)},{"port",std::get<2>(cand)}});
+      logger::info({{"ev","fail to start session"},{"proto","tcp"},
+        {"to",std::get<1>(cand)},{"port",std::get<2>(cand)}});
       return false;
     }
   }

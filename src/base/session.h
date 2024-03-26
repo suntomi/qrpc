@@ -124,6 +124,7 @@ namespace base {
             std::unique_ptr<CloseReason> close_reason_;
         };
         typedef std::function<Session *(Fd, const Address &)> FactoryMethod;
+        typedef std::function<void (int)> DnsErrorHandler;
     public:
         SessionFactory(Loop &l, FactoryMethod &&m) :
             sessions_(), loop_(l), alarm_processor_(NopAlarmProcessor::Instance()), factory_method_(m) {}
@@ -135,6 +136,7 @@ namespace base {
         template <class F> F &to() { return static_cast<F&>(*this); }
         template <class F> const F &to() const { return static_cast<const F&>(*this); }
         virtual Session *Open(const Address &a, FactoryMethod m) = 0;
+        bool Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref = AF_INET);
         bool Connect(const std::string &host, int port, FactoryMethod m, int family_pref = AF_INET);
         static int AssignedPort(Fd fd) {
             Address a;

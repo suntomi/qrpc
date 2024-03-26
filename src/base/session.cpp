@@ -49,9 +49,35 @@ namespace base {
   };
 
   struct SessionDnsQuery : public DnsQuery {
+    typedef SessionFactory::DnsErrorHandler ErrorHandler;
     SessionFactory &factory_;
     FactoryMethod factory_method_;
-    SessionDnsQuery(SessionFactory &f, FactoryMethod m) : factory_(f), factory_method_(m) {}
+    ErrorHandler error_handler_;
+    SessionDnsQuery(SessionFactory &f, FactoryMethod m, ErrorHandler eh) :
+      factory_(f), factory_method_(m), error_handler_(eh) {}
+    SessionDnsQuery(SessionFactory &f, FactoryMethod m) :
+      factory_(f), factory_method_(m), error_handler_(MakeDefault()) {}
+    ErrorHandler MakeDefault() {
+      return [this](int status) {
+        Address a;
+        if (a.Set("0.0.0.0", port_) < 0) {
+          logger::die({{"ev", "fail to set dummy address"}, {"port", port_}});
+        }
+        Session *s = factory_method_(INVALID_FD, a);
+        s->SetCloseReason(CreateAresCloseReason(status));
+        qrpc_time_t retry_timeout = s->OnShutdown();
+        if (retry_timeout > 0) {
+          s->close_reason().alarm_id = factory_.alarm_processor().Set([
+            &f = factory_, host = host_, port = port_, fm = factory_method_, af = family_
+          ]() {
+            f.Connect(host, port, fm, af);
+            return 0;
+          }, retry_timeout + qrpc_time_now());
+        } else {
+          delete s;
+        }
+      };
+    }
     void OnComplete(int status, int timeouts, struct hostent *entries) override {
       int r;
       if (ARES_SUCCESS == status) {
@@ -64,26 +90,18 @@ namespace base {
           status = ARES_ENOTFOUND;
         }
       }
-      Address a;
-      if (a.Set("0.0.0.0", port_) < 0) {
-        logger::die({{"ev", "fail to set dummy address"}, {"port", port_}});
-      }
-      Session *s = factory_method_(INVALID_FD, a);
-      s->SetCloseReason(CreateAresCloseReason(status));
-      qrpc_time_t retry_timeout = s->OnShutdown();
-      if (retry_timeout > 0) {
-        s->close_reason().alarm_id = factory_.alarm_processor().Set([
-          &factory = factory_, host = host_, port = port_, fm = factory_method_, f = family_
-        ]() {
-          factory.Connect(host, port, fm, f);
-          return 0;
-        }, retry_timeout + qrpc_time_now());
-      } else {
-        delete s;
-      }
+      error_handler_(status);
     }
   };
 
+  bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref) {
+    auto q = new SessionDnsQuery(*this, m, eh);
+    q->host_ = host;
+    q->family_ = family_pref;
+    q->port_ = port;
+    loop().ares().Resolve(q);
+    return true;
+  }
   bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, int family_pref) {
     auto q = new SessionDnsQuery(*this, m);
     q->host_ = host;
