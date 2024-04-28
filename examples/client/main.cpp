@@ -124,6 +124,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
 }
 class Handler {
     int close_count_{0};
+    const char *initial_payload_{"start"};
     const char *error_msg_{nullptr};
 public:
     bool finished() const {
@@ -138,9 +139,15 @@ public:
     void success() {
         error_msg_ = "success";
     }
+    void Reset(const char *initial_payload = "start") {
+        close_count_ = 0;
+        error_msg_ = nullptr;
+        initial_payload_ = initial_payload;
+    }
     int Connect(Session &s, std::string proto) {
-        logger::info({{"ev","session connect"},{"p",proto},{"a",s.addr().str()}});
-        return s.Send("start", 5);
+        logger::info({{"ev","session connect"},{"p",proto},{"a",s.addr().str()},{"pl",std::string(initial_payload_)}});
+        s.Send(initial_payload_, strlen(initial_payload_));
+        return QRPC_OK;
     }
     int Read(Session &s, std::string proto, const char *p, size_t sz) {
         if (close_count_ < 1) {
@@ -160,7 +167,7 @@ public:
     }
     qrpc_time_t Shutdown(Session &s, std::string proto) {
         logger::info({{"ev","session shutdown"},{"p",proto},{"a",s.addr().str()},{"reason",s.close_reason().code}});
-        if (s.close_reason().code == QRPC_CLOSE_REASON_TIMEOUT) {
+        if (strcmp(initial_payload_, "timeout") == 0 && s.close_reason().code == QRPC_CLOSE_REASON_TIMEOUT) {
             error("timeout");
             return 0;
         }
@@ -179,61 +186,87 @@ public:
 };
 class TestUdpSession : public UdpSession {
 public:
-    Handler handler_;
+    Handler &handler_;
 public:
-    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
-    Handler handler() const { return handler_; }
+    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a, Handler &h) : UdpSession(f, fd, a), handler_(h) {}
     int OnConnect() override { return handler_.Connect(*this, "udp"); }
     int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "udp", p, sz); }
     qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "udp"); }
 };
 class TestTcpSession : public TcpSession {
 public:
-    Handler handler_;
+    Handler &handler_;
 public:
-    TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
-    Handler handler() const { return handler_; }
+    TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a, Handler &h) : TcpSession(f, fd, a), handler_(h)  {}
     int OnConnect() override { return handler_.Connect(*this, "tcp"); }
     int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "tcp", p, sz); }
     qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "tcp"); }
 };
 template<class F, class S>
 bool test_session(Loop &l, F &f, int port) {
-    S *s = nullptr;
+    Handler h;
     logger::error({{"ev","test normal connection"}});
-    f.Connect("localhost", port, [&f, &s](Fd fd, const Address &a) {
-        return s = new S(f, fd, a);
+    f.Connect("localhost", port, [&f, &h](Fd fd, const Address &a) {
+        return new S(f, fd, a, h);
     });
-    while (s == nullptr || !s->handler().finished()) {
+    while (!h.finished()) {
         l.PollAres();
     }
-    if (str::CmpNocase(s->handler().error_msg(), "success", sizeof("success") - 1) == 0) {
-        return true;
-    } else {
-        DIE(s->handler().error_msg());
+    if (str::CmpNocase(h.error_msg(), "success", sizeof("success") - 1) != 0) {
+        DIE(std::string("test normal conn error:[") + h.error_msg() + "]");
         return false;
     }
     logger::error({{"ev","test timeout connection"}});
-    // port + 2 should be non-existent
-    f.Connect("localhost", port + 2, [&f, &s](Fd fd, const Address &a) {
-        return s = new S(f, fd, a);
+    h.Reset("timeout");
+    f.Connect("localhost", port, [&f, &h](Fd fd, const Address &a) {
+        return new S(f, fd, a, h);
     });
-    while (s == nullptr || !s->handler().finished()) {
+    while (!h.finished()) {
         l.PollAres();
     }
-    if (str::CmpNocase(s->handler().error_msg(), "timeout", sizeof("timeout") - 1) == 0) {
+    if (str::CmpNocase(h.error_msg(), "timeout", sizeof("timeout") - 1) == 0) {
         return true;
     } else {
-        DIE(s->handler().error_msg());
+        DIE(std::string("test timeout error:[") + h.error_msg() + "]");
+        return false;
+    }
+}
+bool reset_test_state(Loop &l, AlarmProcessor &ap) {
+    const char *error_msg = nullptr;
+    AdhocHttpClient hc(l, ap);
+    hc.Connect("localhost", 8888, [](HttpSession &s) {
+        return s.Request("GET", "/reset");
+    }, [&error_msg](HttpSession &s) {
+        if (s.fsm().rc() != HRC_OK) {
+            logger::error({{"ev","wrong response"},{"rc",s.fsm().rc()}});
+            error_msg = "wrong response";
+        } else {
+            error_msg = "success";
+        }
+        return nullptr;
+    });
+    while (error_msg == nullptr) {
+        l.PollAres();
+    }
+    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
+        return true;
+    } else {
+        DIE(error_msg);
         return false;
     }
     return true;
 }
 bool test_tcp_session(Loop &l, AlarmProcessor &ap) {
+    if (!reset_test_state(l, ap)) {
+        return false;
+    }
     TcpSessionFactory tf(l, ap, qrpc_time_sec(1));
     return test_session<TcpSessionFactory, TestTcpSession>(l, tf, 10001);
 }
 bool test_udp_session(Loop &l, AlarmProcessor &ap) {
+    if (!reset_test_state(l, ap)) {
+        return false;
+    }
     UdpSessionFactory uf(l, ap, qrpc_time_sec(1));
     if (!uf.Bind()) {
         DIE("fail to bind");
@@ -300,12 +333,15 @@ int main(int argc, char *argv[]) {
     // if (!test_webrtc_client(l, t)) {
     //     return 1;
     // }
+    TRACE("======== test_tcp_session ========");
     if (!test_tcp_session(l, t)) {
         return 1;
     }
+    TRACE("======== test_http_client ========");
     if (!test_http_client(l, t)) {
         return 1;
     }
+    TRACE("======== test_udp_session ========");
     if (!test_udp_session(l, t)) {
         return 1;
     }

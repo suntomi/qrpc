@@ -17,7 +17,7 @@ namespace base {
             AlarmProcessor &alarm_processor;
             qrpc_time_t session_timeout;
             static inline Config Default() { 
-                return { .alarm_processor = NopAlarmProcessor::Instance(), .session_timeout = qrpc_time_sec(120) };
+                return { .alarm_processor = NopAlarmProcessor::Instance(), .session_timeout = qrpc_time_sec(0) };
             }
         };
         class Session {
@@ -140,20 +140,20 @@ namespace base {
     public:
         SessionFactory(Loop &l, FactoryMethod &&m) :
             sessions_(), loop_(l), alarm_processor_(NopAlarmProcessor::Instance()),
-            factory_method_(m), session_timeout_(0ULL) {}
+            factory_method_(m), session_timeout_(0ULL) { Init(); }
         SessionFactory(Loop &l, FactoryMethod &&m, Config c) :
             sessions_(), loop_(l), alarm_processor_(c.alarm_processor),
-            factory_method_(m), session_timeout_(c.session_timeout) {}
+            factory_method_(m), session_timeout_(c.session_timeout) { Init(); }
         virtual ~SessionFactory() { Fin(); }
-        Loop &loop() { return loop_; }
-        AlarmProcessor &alarm_processor() { return alarm_processor_; }
-        qrpc_time_t session_timeout() const { return session_timeout_; }
+        inline Loop &loop() { return loop_; }
+        inline AlarmProcessor &alarm_processor() { return alarm_processor_; }
+        inline qrpc_time_t session_timeout() const { return session_timeout_; }
         template <class F> F &to() { return static_cast<F&>(*this); }
         template <class F> const F &to() const { return static_cast<const F&>(*this); }
         virtual Session *Open(const Address &a, FactoryMethod m) = 0;
         bool Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref = AF_INET);
         bool Connect(const std::string &host, int port, FactoryMethod m, int family_pref = AF_INET);
-        static int AssignedPort(Fd fd) {
+        static inline int AssignedPort(Fd fd) {
             Address a;
             int r;
             if ((r = Syscall::GetSockAddrFromFd(fd, a)) < 0) {
@@ -164,7 +164,7 @@ namespace base {
             }
         }
     protected:
-        void Init() {
+        inline void Init() {
             if (session_timeout() > 0) {
                 alarm_id_ = alarm_processor_.Set(
                     [this]() { return this->CheckTimeout(); }, qrpc_time_now() + session_timeout()
@@ -198,6 +198,10 @@ namespace base {
         virtual void Fin() {
             for (const auto &s : sessions_) {
                 s.second->Close(QRPC_CLOSE_REASON_LOCAL, 0, "factory closed");
+            }
+            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+                alarm_processor_.Cancel(alarm_id_);
+                alarm_id_ = AlarmProcessor::INVALID_ID;
             }
         }
     protected:
@@ -294,7 +298,6 @@ namespace base {
         Fd fd() const { return fd_; }
         int port() const { return port_; }
         bool Listen(int port) {
-            SessionFactory::Init();
             port_ = port;
             if ((fd_ = Syscall::Listen(port_)) < 0) {
                 logger::error({{"ev","Syscall::Listen() fails"},{"port",port},{"rc",fd_},{"errno",Syscall::Errno()}});
@@ -489,7 +492,6 @@ namespace base {
         int port() const { return port_; }
         bool Bind() { return Init(0); } //automatically allocate available port
         bool Init(int port) {
-            SessionFactory::Init();
             if (fd_ != INVALID_FD) {
                 ASSERT(port_ != 0);
                 logger::warn({{"ev","already initialized"},{"fd",fd_},{"port",port_}});
@@ -537,10 +539,6 @@ namespace base {
                 loop_.Del(fd_);
                 Syscall::Close(fd_);
                 fd_ = INVALID_FD;
-            }
-            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-                alarm_processor_.Cancel(alarm_id_);
-                alarm_id_ = AlarmProcessor::INVALID_ID;
             }
         }
         int Read();

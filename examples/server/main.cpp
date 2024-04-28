@@ -12,8 +12,11 @@ using json = nlohmann::json;
 using namespace base;
 
 class Handler {
-    int count_{0};
+    static int count_;
 public:
+    static void Reset() {
+        count_ = 0;
+    }
     int Connect(Session &s, std::string proto) {
         logger::info({{"ev","session connected"},{"p",proto},{"a",s.addr().str()},{"c",count_}});
         if (count_ == 0) {
@@ -30,6 +33,9 @@ public:
         if (pl == "die") {
             logger::info({{"ev","kill session on read"},{"p",proto},{"a",s.addr().str()}});
             return QRPC_EUSER;
+        } else if (pl == "timeout") {
+            logger::info({{"ev","nothing returns to make peer timedout"},{"p",proto},{"a",s.addr().str()}});
+            return QRPC_OK;
         } else {
             return s.Send(p, sz);
         }
@@ -39,6 +45,7 @@ public:
         return 0;
     }
 };
+int Handler::count_ = 0;
 class TestUdpSession : public UdpSession {
     Handler handler_;
 public:
@@ -198,6 +205,15 @@ int main(int argc, char *argv[]) {
             {.key = "Content-Length", .val = bodylen.c_str()}
         };
         s.Respond(HRC_OK, h, 2, body.c_str(), body.length());
+	    return nullptr;
+    }).
+    Route(std::regex("/reset"), [](HttpSession &s, std::cmatch &) {
+        HttpHeader h[] = {
+            {.key = "Content-Type", .val = "application/text"},
+            {.key = "Content-Length", .val = "5"}
+        };
+        Handler::Reset();
+        s.Respond(HRC_OK, h, 2, "reset", 5);
 	    return nullptr;
     }).
     Route(std::regex("/ws"), [](HttpSession &s, std::cmatch &) {
