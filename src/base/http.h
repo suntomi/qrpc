@@ -287,7 +287,8 @@ namespace base {
             Callback cb_;
         };
     public:
-        HttpClient(Loop &l, AlarmProcessor &ap) : TcpSessionFactory(l, ap) {}
+        // https://superuser.com/a/1271864 says chrome timeout is 300s
+        HttpClient(Loop &l, AlarmProcessor &ap) : TcpSessionFactory(l, ap, qrpc_time_sec(300)) {}
         bool Connect(const std::string &host, int port, Processor *p) {
             return TcpSessionFactory::Connect(host, port, [this, p](Fd fd, const Address &addr) {
                 return new HttpClientSession(*this, fd, addr, p);

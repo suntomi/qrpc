@@ -12,18 +12,19 @@ using json = nlohmann::json;
 using namespace base;
 
 class Handler {
+    int count_{0};
 public:
-    static int Connect(Session &s, std::string proto, int &count) {
-        logger::info({{"ev","session connected"},{"p",proto},{"a",s.addr().str()},{"c",count}});
-        if (count == 0) {
+    int Connect(Session &s, std::string proto) {
+        logger::info({{"ev","session connected"},{"p",proto},{"a",s.addr().str()},{"c",count_}});
+        if (count_ == 0) {
             logger::info({{"ev","kill session on connect"},{"p",proto},{"a",s.addr().str()}});
-            count++;
+            count_++;
             return QRPC_EUSER;
         } else {
             return QRPC_OK;
         }
     }
-    static int Read(Session &s, std::string proto, const char *p, size_t sz) {
+    int Read(Session &s, std::string proto, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
         logger::info({{"ev","session read"},{"p",proto},{"a",s.addr().str()},{"pl", pl}});
         if (pl == "die") {
@@ -33,35 +34,31 @@ public:
             return s.Send(p, sz);
         }
     }
-    static qrpc_time_t Shutdown(Session &s, std::string proto) {
+    qrpc_time_t Shutdown(Session &s, std::string proto) {
         logger::info({{"ev","session shutdown"},{"p",proto},{"a",s.addr().str()}});
         return 0;
     }
 };
 class TestUdpSession : public UdpSession {
-    static int count;
+    Handler handler_;
 public:
     TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
     int OnConnect() override {
-        return Handler::Connect(*this, "udp", count);
+        return handler_.Connect(*this, "udp");
     }
-    int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "udp", p, sz); }
-    qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "udp"); }
-    static void Reset() { count = 0; }
+    int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "udp", p, sz); }
+    qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "udp"); }
 };
-int TestUdpSession::count = 0;
 class TestTcpSession : public TcpSession {
-    static int count;
+    Handler handler_;
 public:
     TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
     int OnConnect() override {
-        return Handler::Connect(*this, "tcp", count);
+        return handler_.Connect(*this, "tcp");
     }
-    int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "tcp", p, sz); }
-    qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "tcp"); }
-    static void Reset() { count = 0; }
+    int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "tcp", p, sz); }
+    qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "tcp"); }
 };
-int TestTcpSession::count = 0;
 
 int main(int argc, char *argv[]) {
     bool alive = true;
@@ -200,8 +197,6 @@ int main(int argc, char *argv[]) {
             {.key = "Content-Type", .val = "application/json"},
             {.key = "Content-Length", .val = bodylen.c_str()}
         };
-        TestTcpSession::Reset();
-        TestUdpSession::Reset();
         s.Respond(HRC_OK, h, 2, body.c_str(), body.length());
 	    return nullptr;
     }).

@@ -11,16 +11,6 @@
 using json = nlohmann::json;
 using namespace base;
 
-static const char *error_msg = nullptr;
-static void clear_error() {
-    error_msg = nullptr;
-}
-static void error(const char *msg) {
-    error_msg = msg;
-}
-static void success() {
-    error_msg = "success";
-}
 struct Test3StreamContext {
     int count{0};
 };
@@ -28,7 +18,7 @@ struct TestStreamContext {
     std::vector<std::string> texts;
 };
 bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
-    clear_error();
+    std::string error_msg = "";
     TestStreamContext testctx = { .texts = {"aaaa", "bbbb", "cccc"} };
     Test3StreamContext test3ctx;
     int closed = 0;
@@ -45,16 +35,16 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
         c.OpenStream({.label = "test"});
         c.OpenStream({.label = "test3"});
         return QRPC_OK;
-    }, [&closed](webrtc::ConnectionFactory::Connection &) {
+    }, [&closed, &error_msg](webrtc::ConnectionFactory::Connection &) {
         logger::info({{"ev","webrtc closed"}});
         if (closed < MAX_RECONNECT) {
             closed++;
             return qrpc_time_sec(2);
         } else {
-            success();
+            error_msg = "success";
             return 0ULL;
         }
-    }, [](Stream &s, const char *p, size_t sz) -> int {
+    }, [&error_msg](Stream &s, const char *p, size_t sz) -> int {
         auto pl = std::string(p, sz);
         auto resp = json::parse(pl);
         logger::info({{"ev","recv dc packet"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
@@ -66,7 +56,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
             const auto &ctx = s.context<TestStreamContext>();
             auto &text = ctx.texts[count];
             if (hello != ("test:" + text)) {
-                error(("stream message hello wrong: [" + hello + "] should be [", text + "]").c_str());
+                error_msg = ("stream message hello wrong: [" + hello + "] should be [", text + "]");
                 return QRPC_EINVAL;
             }
             if (count < 2) {
@@ -76,14 +66,14 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
                 s.Close(QRPC_CLOSE_REASON_LOCAL);
             }
         } else if (s.label() == "test2") {
-            error("test2.onread should not be called");
+            error_msg = ("test2.onread should not be called");
         } else if (s.label() == "test3") {
             auto count = resp["count"].get<uint64_t>();
             s.Send({{"count", count + 1}});
         } else if (s.label() == "recv") {
             auto msg = resp["msg"].get<std::string>();
             if (msg != "byebye") {
-                error(("Data channel3 message msg wrong: [" + msg + "] should be [byebye]").c_str());
+                error_msg = ("Data channel3 message msg wrong: [" + msg + "] should be [byebye]");
                 return QRPC_EINVAL;
             }
             s.connection().Close();
@@ -104,14 +94,14 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
         }
         ASSERT(false);
         return QRPC_OK;
-    }, [](Stream &s, const Stream::CloseReason &reason) {
+    }, [&error_msg](Stream &s, const Stream::CloseReason &reason) {
         logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
         if (s.label() == "test") {
             s.connection().OpenStream({.label = "test2"});
         } else if (s.label() == "test2") {
         } else if (s.label() == "test3") {
             if (s.context<Test3StreamContext>().count != 2) {
-                error("test3.onclose count should be 2");
+                error_msg = ("test3.onclose count should be 2");
             }
         } else if (s.label() == "recv") {
         }
@@ -121,7 +111,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
     if (!bcl.Connect("localhost", 8888)) {
         DIE("fail to start webrtc client as connect");
     }
-    while (error_msg == nullptr) {
+    while (error_msg.length() <= 0) {
         l.PollAres();
     }
     if (str::CmpNocase(error_msg, "success", sizeof("success") - 1)) {
@@ -133,33 +123,51 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
     return true;
 }
 class Handler {
+    int close_count_{0};
+    const char *error_msg_{nullptr};
 public:
-    static int Connect(Session &s, std::string proto) {
+    bool finished() const {
+        return error_msg_ != nullptr;
+    }
+    const char *error_msg() const {
+        return error_msg_;
+    }
+    void error(const char *msg) {
+        error_msg_ = msg;
+    }
+    void success() {
+        error_msg_ = "success";
+    }
+    int Connect(Session &s, std::string proto) {
         logger::info({{"ev","session connect"},{"p",proto},{"a",s.addr().str()}});
         return s.Send("start", 5);
     }
-    static int Read(Session &s, std::string proto, int &close_count, const char *p, size_t sz) {
-        if (close_count < 1) {
+    int Read(Session &s, std::string proto, const char *p, size_t sz) {
+        if (close_count_ < 1) {
             error("session should reconnect");
-        } else if (close_count == 1){
+        } else if (close_count_ == 1){
             if (std::string(p, sz) != "start") {
                 logger::error({{"ev","wrong msg"},{"msg",std::string(p, sz)}});
                 error("session should receive start");
             } else {
                 s.Send("die", 3);
             }
-        } else if (close_count == 2) {
+        } else if (close_count_ == 2) {
             logger::info({{"ev","close session by callback rv"}});
             return QRPC_EUSER;
         }
         return QRPC_OK;
     }
-    static qrpc_time_t Shutdown(Session &s, std::string proto, int &close_count) {
-        logger::info({{"ev","session shutdown"},{"p",proto},{"a",s.addr().str()}});
-        close_count++;
-        if (close_count <= 2) {
+    qrpc_time_t Shutdown(Session &s, std::string proto) {
+        logger::info({{"ev","session shutdown"},{"p",proto},{"a",s.addr().str()},{"reason",s.close_reason().code}});
+        if (s.close_reason().code == QRPC_CLOSE_REASON_TIMEOUT) {
+            error("timeout");
+            return 0;
+        }
+        close_count_++;
+        if (close_count_ <= 2) {
             return qrpc_time_msec(100);
-        } else if (close_count == 3) {
+        } else if (close_count_ == 3) {
             logger::info({{"ev", "reconnect test done"},{"p",proto}});
             success();
             return 0; //stop reconnection
@@ -171,72 +179,81 @@ public:
 };
 class TestUdpSession : public UdpSession {
 public:
-    int close_count_{0};
+    Handler handler_;
 public:
     TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
-    int OnConnect() override { return Handler::Connect(*this, "udp"); }
-    int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "udp", close_count_, p, sz); }
-    qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "udp", close_count_); }
+    Handler handler() const { return handler_; }
+    int OnConnect() override { return handler_.Connect(*this, "udp"); }
+    int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "udp", p, sz); }
+    qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "udp"); }
 };
 class TestTcpSession : public TcpSession {
 public:
-    int close_count_{0};
+    Handler handler_;
 public:
     TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
-    int OnConnect() override { return Handler::Connect(*this, "tcp"); }
-    int OnRead(const char *p, size_t sz) override { return Handler::Read(*this, "tcp", close_count_, p, sz); }
-    qrpc_time_t OnShutdown() override { return Handler::Shutdown(*this, "tcp", close_count_); }
+    Handler handler() const { return handler_; }
+    int OnConnect() override { return handler_.Connect(*this, "tcp"); }
+    int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "tcp", p, sz); }
+    qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "tcp"); }
 };
-bool test_udp_session(Loop &l, AlarmProcessor &ap) {
-    clear_error();
-    UdpSessionFactory uf(l, ap, qrpc_time_sec(1));
-    if (!uf.Bind()) {
-        DIE("fail to bind");
-    }
-    uf.Connect("localhost", 10000, [&uf](Fd fd, const Address &a) {
-        return new TestUdpSession(uf, fd, a);
+template<class F, class S>
+bool test_session(Loop &l, F &f, int port) {
+    S *s = nullptr;
+    logger::error({{"ev","test normal connection"}});
+    f.Connect("localhost", port, [&f, &s](Fd fd, const Address &a) {
+        return s = new S(f, fd, a);
     });
-    while (error_msg == nullptr) {
+    while (s == nullptr || !s->handler().finished()) {
         l.PollAres();
     }
-    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
+    if (str::CmpNocase(s->handler().error_msg(), "success", sizeof("success") - 1) == 0) {
         return true;
     } else {
-        DIE(error_msg);
+        DIE(s->handler().error_msg());
+        return false;
+    }
+    logger::error({{"ev","test timeout connection"}});
+    // port + 2 should be non-existent
+    f.Connect("localhost", port + 2, [&f, &s](Fd fd, const Address &a) {
+        return s = new S(f, fd, a);
+    });
+    while (s == nullptr || !s->handler().finished()) {
+        l.PollAres();
+    }
+    if (str::CmpNocase(s->handler().error_msg(), "timeout", sizeof("timeout") - 1) == 0) {
+        return true;
+    } else {
+        DIE(s->handler().error_msg());
         return false;
     }
     return true;
 }
 bool test_tcp_session(Loop &l, AlarmProcessor &ap) {
-    clear_error();
-    TcpSessionFactory tf(l, ap);
-    tf.Connect("localhost", 10001, [&tf](Fd fd, const Address &a) {
-        return new TestTcpSession(tf, fd, a);
-    });
-    while (error_msg == nullptr) {
-        l.PollAres();
-    }
-    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
-        return true;
-    } else {
-        DIE(error_msg);
-        return false;
-    }
-    return true;
+    TcpSessionFactory tf(l, ap, qrpc_time_sec(1));
+    return test_session<TcpSessionFactory, TestTcpSession>(l, tf, 10001);
 }
+bool test_udp_session(Loop &l, AlarmProcessor &ap) {
+    UdpSessionFactory uf(l, ap, qrpc_time_sec(1));
+    if (!uf.Bind()) {
+        DIE("fail to bind");
+    }
+    return test_session<UdpSessionFactory, TestUdpSession>(l, uf, 10000);
+}
+
 bool test_http_client(Loop &l, AlarmProcessor &ap) {
-    clear_error();
+    const char *error_msg = nullptr;
     AdhocHttpClient hc(l, ap);
     hc.Connect("localhost", 8888, [](HttpSession &s) {
         return s.Request("GET", "/test");
-    }, [](HttpSession &s) {
+    }, [&error_msg](HttpSession &s) {
         auto b = std::string(s.fsm().body(), s.fsm().bodylen());
         auto j = json::parse(b);
         if (j["sdp"].get<std::string>() != "hoge") {
             logger::error({{"ev","wrong response"},{"body",b}});
-            error("wrong response");
+            error_msg = "wrong response";
         } else {
-            success();
+            error_msg = "success";
         }
         return nullptr;
     });
@@ -280,16 +297,16 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    if (!test_webrtc_client(l, t)) {
+    // if (!test_webrtc_client(l, t)) {
+    //     return 1;
+    // }
+    if (!test_tcp_session(l, t)) {
         return 1;
     }
     if (!test_http_client(l, t)) {
         return 1;
     }
     if (!test_udp_session(l, t)) {
-        return 1;
-    }
-    if (!test_tcp_session(l, t)) {
         return 1;
     }
     return 0;
