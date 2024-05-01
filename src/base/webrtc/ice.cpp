@@ -713,36 +713,37 @@ namespace webrtc {
 			reinterpret_cast<const char *>(stun_buffer), stun_packet->GetSize()
 		);
 	}
-  qrpc_time_t IceProber::operator()() {
-    listener_.OnIceProberBindingRequest();
+  qrpc_time_t IceProber::OnTimer(Session *s) {
+		auto now = qrpc_time_now();
+    SendBindingRequest(s);
     switch (state_) {
     case NEW:
       if (last_success_ > 0ULL) {
         state_ = CONNECTED;
-	      return qrpc_time_msec(2500);
+	      return now + qrpc_time_msec(2500);
       }
-      return qrpc_time_msec(50);
+      return now + qrpc_time_msec(50);
     case CONNECTED:
-      if (qrpc_time_now() - last_success_ > qrpc_time_msec(2500)) {
+      if (now - last_success_ > qrpc_time_msec(2500)) {
         state_ = CHECKING;
-        return qrpc_time_sec(1);
+        return now + qrpc_time_sec(1);
       }
-      return qrpc_time_msec(2500);
+      return now + qrpc_time_msec(2500);
     case CHECKING:
-      if (qrpc_time_now() - last_success_ > disconnect_timeout_) {
+      if (now - last_success_ > disconnect_timeout_) {
         state_ = DISCONNECTED;
-        return qrpc_time_msec(50);
+        return now + qrpc_time_msec(50);
       }
-      return qrpc_time_sec(1);
+      return now + qrpc_time_sec(1);
     case DISCONNECTED:
-      if (qrpc_time_now() - last_success_ > failed_timeout_) {
+      if (now - last_success_ > failed_timeout_) {
         state_ = FAILED;
       }
-      return qrpc_time_msec(50);
+      return now + qrpc_time_msec(50);
     case FAILED:
       state_ = NEW;
 			last_success_ = 0;
-			alarm_id_ = AlarmProcessor::INVALID_ID;
+			s->Close(QRPC_CLOSE_REASON_TIMEOUT, 0, "");
       return 0ULL; // stop alarm
     default:
       ASSERT(false);

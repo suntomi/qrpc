@@ -76,12 +76,12 @@ void ConnectionFactory::Fin() {
 }
 void ConnectionFactory::CloseConnection(Connection &c) {
   // how to close?
-  logger::info({{"ev","close webrtc connection"},{"uflag",c.ice_server().GetUsernameFragment()}});
+  logger::info({{"ev","close webrtc connection"},{"ufrag",c.ice_server().GetUsernameFragment()}});
   c.Fin(); // cleanup resources if not yet
   connections_.erase(c.ice_server().GetUsernameFragment());
   // c might be freed here
 }
-static inline ConnectionFactory::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* packet) {
+static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket* packet) {
 		TRACK();
 
 		// Here we inspect the USERNAME attribute of a received STUN request and
@@ -94,10 +94,10 @@ static inline ConnectionFactory::IceUFlag GetLocalIceUFragFrom(RTC::StunPacket* 
 
 		// If no colon is found just return the whole USERNAME attribute anyway.
 		if (colonPos == std::string::npos) {
-			return ConnectionFactory::IceUFlag{username};
+			return ConnectionFactory::IceUFrag{username};
     }
 
-		return ConnectionFactory::IceUFlag{username.substr(0, colonPos)};
+		return ConnectionFactory::IceUFrag{username.substr(0, colonPos)};
 }
 std::shared_ptr<ConnectionFactory::Connection>
 ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
@@ -114,15 +114,15 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
   if (it == this->connections_.end()) {
     logger::error({
       {"ev","ignoring received STUN packet with unknown remote ICE usernameFragment"},
-      {"uflag",key}
+      {"ufrag",key}
     });
     return nullptr;
   }
   return it->second;
 }
 std::shared_ptr<ConnectionFactory::Connection>
-ConnectionFactory::FindFromUflag(const IceUFlag &uflag) {
-    auto it = connections_.find(uflag);
+ConnectionFactory::FindFromUfrag(const IceUFrag &ufrag) {
+    auto it = connections_.find(ufrag);
     if (it == this->connections_.end()) {
       return nullptr;
     }
@@ -238,15 +238,15 @@ bool ConnectionFactory::Connection::connected() const {
     ) && dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED
   );
 }
-int ConnectionFactory::Connection::Init(std::string &uflag, std::string &pwd) {
+int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   if (ice_server_ != nullptr) {
     logger::warn({{"ev","already init"}});
     return QRPC_OK;
   }
-  uflag = random::word(32);
+  ufrag = random::word(32);
   pwd = random::word(32);
   // create ICE server
-  ice_server_.reset(new IceServer(this, uflag, pwd));
+  ice_server_.reset(new IceServer(this, ufrag, pwd));
   if (ice_server_ == nullptr) {
     logger::die({{"ev","fail to create ICE server"}});
     return QRPC_EALLOC;
@@ -342,17 +342,13 @@ void ConnectionFactory::Connection::Close() {
     });
   });
 }
-int ConnectionFactory::Connection::RunIceProber(
-  Session *s, const std::string &uflag, const std::string &pwd) {
+IceProber *ConnectionFactory::Connection::InitIceProber(
+  const std::string &ufrag, const std::string &pwd) {
   TRACK();
   if (!ice_prober_) {
-    ice_prober_ = std::make_unique<IceProber>(*this, uflag, pwd);
+    ice_prober_ = std::make_unique<IceProber>(ufrag, pwd);
   }
-  if (ice_server_->GetSelectedSession() == nullptr) {
-      ice_server_->ForceSetSelectedSession(s);
-  }
-  ice_prober_->Start(factory().alarm_processor());
-  return QRPC_OK;
+  return ice_prober_.get();
 }
 int ConnectionFactory::Connection::RunDtlsTransport() {
   TRACK();
@@ -616,7 +612,7 @@ void ConnectionFactory::Connection::OnIceServerSendStunPacket(
 }
 void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentAdded(
   const IceServer *iceServer, const std::string& usernameFragment) {
-  logger::info({{"ev","OnIceServerLocalUsernameFragmentAdded"},{"uflag",usernameFragment}});
+  logger::info({{"ev","OnIceServerLocalUsernameFragmentAdded"},{"ufrag",usernameFragment}});
   // mediasoup seems to add Connection itself to ConnectionFactory's map here.
   // and OnIceServerLocalUsernameFragmentAdded is called from WebRtcTransport::ctor
   // thus, if mediasoup creates WebRtcTransport, it will be added to the map automatically
@@ -624,9 +620,9 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentAdded(
 }
 void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
-  logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"uflag",usernameFragment}});
-  auto uflag = IceUFlag{usernameFragment};
-  sv_.CloseConnection(uflag);
+  logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"ufrag",usernameFragment}});
+  auto ufrag = IceUFrag{usernameFragment};
+  sv_.CloseConnection(ufrag);
 }
 void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
@@ -686,11 +682,6 @@ void ConnectionFactory::Connection::OnIceServerSuccessResponded(
 }
 void ConnectionFactory::Connection::OnIceServerErrorResponded(
   const IceServer *, const RTC::StunPacket* , Session *) {
-}
-
-// implements IceProber::Listener
-void ConnectionFactory::Connection::OnIceProberBindingRequest() {
- ice_prober_->SendBindingRequest(ice_server_->GetSelectedSession());
 }
 
 // implements IceServer::Listener
@@ -869,21 +860,21 @@ void ConnectionFactory::Connection::OnSctpAssociationBufferedAmount(
 
 // client::WhipHttpProcessor, client::TcpSession, client::UdpSession
 namespace client {
-  typedef ConnectionFactory::IceUFlag IceUFlag;
+  typedef ConnectionFactory::IceUFrag IceUFrag;
   class WhipHttpProcessor : public HttpClient::Processor {
   public:
     WhipHttpProcessor(Client &c, const std::string &path) : client_(c), path_(path), uflag_() {}
     ~WhipHttpProcessor() {}
   public:
     const std::string &path() const { return path_; }
-    const IceUFlag &uflag() const { return uflag_; }
-    void SetUFlag(std::string &&uflag) { uflag_ = IceUFlag(uflag); }
+    const IceUFrag &ufrag() const { return uflag_; }
+    void SetUFrag(std::string &&ufrag) { uflag_ = IceUFrag(ufrag); }
   public:
     base::TcpSession *HandleResponse(HttpSession &s) override {
-      const auto &uf = uflag();
+      const auto &uf = ufrag();
       if (s.fsm().rc() != HRC_OK) {
         logger::error({{"ev","signaling server returns error response"},
-          {"status",s.fsm().rc()},{"uflag",uf}});
+          {"status",s.fsm().rc()},{"ufrag",uf}});
         client_.CloseConnection(uf);
         return nullptr;
       }
@@ -891,11 +882,11 @@ namespace client {
       auto candidates = sdp.Candidates();
       if (candidates.size() <= 0) {
         logger::error({{"ev","signaling server returns no candidates"},
-          {"sdp",sdp},{"uflag",uf}});
+          {"sdp",sdp},{"ufrag",uf}});
         client_.CloseConnection(uf);
         return nullptr;
       }
-      auto c = client_.FindFromUflag(uf);
+      auto c = client_.FindFromUfrag(uf);
       if (!client_.Open(candidates, 0, c)) {
         client_.CloseConnection(uf);
       }
@@ -903,12 +894,12 @@ namespace client {
     }
     int SendRequest(HttpSession &s) override {
       int r;
-      std::string sdp, uflag;
-      if ((r = client_.Offer(sdp, uflag)) < 0) {
+      std::string sdp, ufrag;
+      if ((r = client_.Offer(sdp, ufrag)) < 0) {
         logger::error({{"ev","fail to generate offer"},{"rc",r}});
         return QRPC_ESYSCALL;
       }
-      SetUFlag(std::move(uflag));
+      SetUFrag(std::move(ufrag));
       std::string sdplen = std::to_string(sdp.length());
       HttpHeader h[] = {
           {.key = "Content-Type", .val = "application/sdp"},
@@ -919,47 +910,69 @@ namespace client {
   private:
     Client &client_;
     std::string path_;
-    IceUFlag uflag_;
+    IceUFrag uflag_;
   };
+  typedef std::function<void (int)> OnIceFailure;
   template <class BASE>
   class BaseSession : public BASE {
   public:
     typedef typename BASE::Factory Factory;
     BaseSession(Factory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
-      const std::string &remote_uflag, const std::string &remote_pwd) : 
+      const std::string &remote_uflag, const std::string &remote_pwd,
+      OnIceFailure &&on_ice_failure) : 
       BASE(f, fd, addr, c), remote_uflag_(remote_uflag), remote_pwd_(remote_pwd),
-      rctc_(qrpc_time_sec(1), qrpc_time_sec(30)) {}
+      prober_(nullptr), on_ice_failure_(std::move(on_ice_failure)), rctc_(qrpc_time_sec(1), qrpc_time_sec(30)) {}
     int OnConnect() override {
       rctc_.Connected();
       // start ICE prober.
-      int r;
-      if ((r = BASE::connection_->RunIceProber(this, remote_uflag_, remote_pwd_)) < 0) {
-        logger::warn({{"ev","fail to start ICE prober"},{"rc",r}});
-        return QRPC_EGOAWAY;
+      prober_ = BASE::connection_->InitIceProber(remote_uflag_, remote_pwd_);
+      if (alarm_id_ == AlarmProcessor::INVALID_ID) {
+        alarm_id_ = BASE::factory().alarm_processor().Set([this]() { return this->operator()(); }, qrpc_time_now());
+      } else {
+        ASSERT(false);
       }
+      logger::info({{"ev","session connected"},{"proto",BASE::proto()},{"tid",alarm_id_}});
       // after above, ICE server will receive stun success response at IceServer::ProcessStunPacket
       // and ConnectionFactory::Connection will be notified via OnIceServerSuccessResponded()
       return QRPC_OK;
     }
     qrpc_time_t OnShutdown() override {
+      logger::info({{"ev","session shutdown"},{"proto",BASE::proto()},{"tid",alarm_id_}});
+      if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+        BASE::factory().alarm_processor().Cancel(alarm_id_);
+        alarm_id_ = AlarmProcessor::INVALID_ID;
+      }
+      // removes Tuple(this session) from IceServer
+      BASE::OnShutdown();
+      if (BASE::close_reason().code == QRPC_CLOSE_REASON_TIMEOUT) {
+        on_ice_failure_(QRPC_CLOSE_REASON_TIMEOUT);
+        return 0ULL; // stop reconnection;
+      }
       rctc_.Shutdown();
       return rctc_.Timeout();
     }
+    qrpc_time_t operator()() {
+      ASSERT(prober_ != nullptr);
+      return prober_->OnTimer(this);
+    }
   private:
     std::string remote_uflag_, remote_pwd_;
+    IceProber *prober_;
+    OnIceFailure on_ice_failure_;
+    AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
     base::Session::ReconnectionTimeoutCalculator rctc_;
   };
   class TcpSession : public BaseSession<ConnectionFactory::TcpSession> {
   public:
     TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
-      const std::string &remote_uflag, const std::string &remote_pwd
-    ) : BaseSession<ConnectionFactory::TcpSession>(f, fd, addr, c, remote_uflag, remote_pwd) {}
+      const std::string &remote_uflag, const std::string &remote_pwd, OnIceFailure &&oif
+    ) : BaseSession<ConnectionFactory::TcpSession>(f, fd, addr, c, remote_uflag, remote_pwd, std::move(oif)) {}
   };
   class UdpSession : public BaseSession<ConnectionFactory::UdpSession> {
   public:
     UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
-      const std::string &remote_uflag, const std::string &remote_pwd
-    ) : BaseSession<ConnectionFactory::UdpSession>(f, fd, addr, c, remote_uflag, remote_pwd) {}
+      const std::string &remote_uflag, const std::string &remote_pwd, OnIceFailure &&oif
+    ) : BaseSession<ConnectionFactory::UdpSession>(f, fd, addr, c, remote_uflag, remote_pwd, std::move(oif)) {}
   };
 }
 
@@ -975,19 +988,20 @@ bool Client::Open(
     return false;
   }
   const auto &cand = candidates[idx];
-  std::string uflag = std::get<3>(cand);
+  std::string ufrag = std::get<3>(cand);
   std::string pwd = std::get<4>(cand);
+  auto on_failure = [this, candidates, idx, c, ufrag](int status) mutable {
+    // try next candidate
+    if (!this->Open(candidates, idx + 1, c)) {
+      this->CloseConnection(ufrag);
+    }
+  };
   if (std::get<0>(cand)) {
     if (!udp_ports_[0].Connect(
       std::get<1>(cand), std::get<2>(cand),
-      [this, c, uflag, pwd](Fd fd, const Address a) mutable {
-        return new client::UdpSession(udp_ports_[0], fd, a, c, uflag, pwd);
-      },
-      [this, candidates, idx, c, uflag](int status) mutable {
-        if (!this->Open(candidates, idx + 1, c)) {
-          this->CloseConnection(uflag);
-        }
-      }
+      [this, c, ufrag, pwd, on_failure](Fd fd, const Address a) mutable {
+        return new client::UdpSession(udp_ports_[0], fd, a, c, ufrag, pwd, std::move(on_failure));
+      }, on_failure
     )) {
       logger::info({{"ev","fail to start session"},{"proto","udp"},
         {"to",std::get<1>(cand)},{"port",std::get<2>(cand)}});
@@ -996,14 +1010,9 @@ bool Client::Open(
   } else {
     if (!tcp_ports_[0].Connect(
       std::get<1>(cand), std::get<2>(cand),
-      [this, c, uflag, pwd](Fd fd, const Address a) mutable {
-        return new client::TcpSession(tcp_ports_[0], fd, a, c, uflag, pwd);
-      },
-      [this, candidates, idx, c, uflag](int status) mutable {
-        if (!this->Open(candidates, idx + 1, c)) {
-          this->CloseConnection(uflag);
-        }
-      }
+      [this, c, ufrag, pwd, on_failure](Fd fd, const Address a) mutable {
+        return new client::TcpSession(tcp_ports_[0], fd, a, c, ufrag, pwd, std::move(on_failure));
+      }, on_failure
     )) {
       logger::info({{"ev","fail to start session"},{"proto","tcp"},
         {"to",std::get<1>(cand)},{"port",std::get<2>(cand)}});
@@ -1012,7 +1021,7 @@ bool Client::Open(
   }
   return true;
 }
-int Client::Offer(std::string &sdp, std::string &uflag) {
+int Client::Offer(std::string &sdp, std::string &ufrag) {
   logger::info({{"ev","new client connection"}});
   // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
   // even if sdp anwser ask to do it.
@@ -1023,15 +1032,15 @@ int Client::Offer(std::string &sdp, std::string &uflag) {
   }
   int r;
   std::string pwd;
-  if ((r = c->Init(uflag, pwd)) < 0) {
+  if ((r = c->Init(ufrag, pwd)) < 0) {
     logger::error({{"ev","fail to init connection"},{"rc",r}});
     return QRPC_EINVAL;
   }
-  if ((r = SDP::Offer(*c, uflag, pwd, sdp)) < 0) {
+  if ((r = SDP::Offer(*c, ufrag, pwd, sdp)) < 0) {
     logger::error({{"ev","fail to create offer"},{"rc",r}});
     return QRPC_EINVAL;
   }
-  connections_.emplace(std::move(uflag), c);
+  connections_.emplace(std::move(ufrag), c);
   return QRPC_OK;
 }
 bool Client::Connect(const std::string &host, int port, const std::string &path) {
@@ -1101,8 +1110,8 @@ int Server::Accept(const std::string &client_sdp, std::string &server_sdp) {
     return QRPC_EALLOC;
   }
   int r;
-  std::string uflag, pwd;
-  if ((r = c->Init(uflag, pwd)) < 0) {
+  std::string ufrag, pwd;
+  if ((r = c->Init(ufrag, pwd)) < 0) {
     logger::error({{"ev","fail to init connection"},{"rc",r}});
     return QRPC_EINVAL;
   }
@@ -1111,7 +1120,7 @@ int Server::Accept(const std::string &client_sdp, std::string &server_sdp) {
     logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
     return QRPC_EINVAL;
   }
-  connections_.emplace(std::move(uflag), c);
+  connections_.emplace(std::move(ufrag), c);
   return QRPC_OK;
 }
 } //namespace webrtc

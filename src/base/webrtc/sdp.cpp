@@ -5,7 +5,7 @@
 namespace base {
 namespace webrtc {
   int SDP::Offer(const ConnectionFactory::Connection &c,
-    const std::string &uflag, const std::string &pwd, std::string &offer) {
+    const std::string &ufrag, const std::string &pwd, std::string &offer) {
     auto now = qrpc_time_now();
     // string value to the str::Format should be converted to c string like str.c_str()
     offer = str::Format(R"sdp(v=0
@@ -29,7 +29,7 @@ a=max-message-size:%u
 )sdp",
       now, now,
       c.factory().primary_proto().c_str(),
-      uflag.c_str(), pwd.c_str(),
+      ufrag.c_str(), pwd.c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
       c.factory().config().send_buffer_size
     );
@@ -53,32 +53,32 @@ a=max-message-size:%u
         continue;
       }
       auto cand = it->find("candidates");
-      if (cand != it->end()) {
-        QRPC_LOGJ(warn, {{"ev","non candidates value"},{"sdp",dump()}});
+      if (cand == it->end()) {
+        QRPC_LOGJ(warn, {{"ev","no candidates value"},{"sdp",dump()}});
         ASSERT(false);
         continue;
       }
-      auto uflagit = it->find("iceUflag");
+      auto uflagit = it->find("iceUfrag");
       if (uflagit == it->end()) {
-        QRPC_LOGJ(warn, {{"ev","non uflag value"},{"sdp",dump()}});
+        QRPC_LOGJ(warn, {{"ev","no ufrag value"},{"sdp",dump()}});
         ASSERT(false);
         continue;
       }
       auto pwdit = it->find("icePwd");
       if (pwdit == it->end()) {
-        QRPC_LOGJ(warn, {{"ev","non pwd value"},{"sdp",dump()}});
+        QRPC_LOGJ(warn, {{"ev","no pwd value"},{"sdp",dump()}});
         ASSERT(false);
         continue;
       }
       for (auto cit = cand->begin(); cit != cand->end(); ++cit) {
-        auto hostit = it->find("ip");
-        if (hostit == it->end()) {
-          QRPC_LOGJ(warn, {{"ev","non host value"},{"sdp",dump()}});
+        auto hostit = cit->find("ip");
+        if (hostit == cit->end()) {
+          QRPC_LOGJ(warn, {{"ev","no host value"},{"sdp",dump()}});
           ASSERT(false);
           continue;
         }
-        auto portit = it->find("port");
-        if (portit == it->end()) {
+        auto portit = cit->find("port");
+        if (portit == cit->end()) {
           QRPC_LOGJ(warn, {{"ev","non port valuests"},{"sdp",dump()}});
           ASSERT(false);
           continue;

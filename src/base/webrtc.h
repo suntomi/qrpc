@@ -23,14 +23,14 @@ namespace webrtc {
   // ConnectionFactory
   class ConnectionFactory {
   public:
-    class IceUFlag : public std::string {
+    class IceUFrag : public std::string {
     public:
-      IceUFlag() : std::string() {}
-      IceUFlag(const std::string &s) : std::string(s) {}
-      IceUFlag(const std::string &&s) : std::string(s) {}
-      IceUFlag(const IceUFlag &f) : std::string(f) {}
-      IceUFlag(const IceUFlag &&f) : std::string(f) {}
-      IceUFlag& operator=(IceUFlag&& other) noexcept {
+      IceUFrag() : std::string() {}
+      IceUFrag(const std::string &s) : std::string(s) {}
+      IceUFrag(const std::string &&s) : std::string(s) {}
+      IceUFrag(const IceUFrag &f) : std::string(f) {}
+      IceUFrag(const IceUFrag &&f) : std::string(f) {}
+      IceUFrag& operator=(IceUFrag&& other) noexcept {
         if (this != &other) { dynamic_cast<std::string *>(this)->operator=(other); }
         return *this;
       }
@@ -86,7 +86,6 @@ namespace webrtc {
   public: // connections
     class Connection : public base::Connection, 
                        public IceServer::Listener,
-                       public IceProber::Listener,
                        public DtlsTransport::Listener,
                        public SctpAssociation::Listener {
     public:
@@ -132,11 +131,11 @@ namespace webrtc {
       // even if we specify "setup: passive" in SDP of whip response
       inline bool is_client() const { return dtls_role_ == DtlsTransport::Role::SERVER; }
     public:
-      int Init(std::string &uflag, std::string &pwd);
+      int Init(std::string &ufrag, std::string &pwd);
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
       int RunDtlsTransport();
-      int RunIceProber(Session *s, const std::string &uflag, const std::string &pwd);
+      IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd);
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
@@ -174,9 +173,6 @@ namespace webrtc {
 					const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) override;
 			void OnIceServerErrorResponded(
 				const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) override;
-
-      // implements IceProber::Listener
-      void OnIceProberBindingRequest() override;
 
       // implements DtlsTransport::Listener
 			void OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) override;
@@ -290,11 +286,11 @@ namespace webrtc {
   public:
     int Init();
     void Fin();
-    std::shared_ptr<Connection> FindFromUflag(const IceUFlag &uflag);
+    std::shared_ptr<Connection> FindFromUfrag(const IceUFrag &ufrag);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
     void CloseConnection(Connection &c);
-    void CloseConnection(const IceUFlag &uflag) {
-      auto it = connections_.find(uflag);
+    void CloseConnection(const IceUFrag &ufrag) {
+      auto it = connections_.find(ufrag);
       if (it != connections_.end()) {
         CloseConnection(*it->second);
       }
@@ -322,7 +318,7 @@ namespace webrtc {
     StreamFactory stream_factory_;
     std::vector<TcpPort> tcp_ports_;
     std::vector<UdpPort> udp_ports_;
-    std::map<IceUFlag, std::shared_ptr<Connection>> connections_;
+    std::map<IceUFrag, std::shared_ptr<Connection>> connections_;
   private:
     static int GlobalInit(AlarmProcessor &a);
     static void GlobalFin();
@@ -355,7 +351,7 @@ namespace webrtc {
     bool Connect(const std::string &host, int port, const std::string &path) override;
     void Close(BaseConnection &c) override { CloseConnection(dynamic_cast<Connection &>(c)); }
   public:
-    int Offer(std::string &sdp, std::string &uflag);
+    int Offer(std::string &sdp, std::string &ufrag);
     bool Open(const std::vector<Candidate> &candidate, size_t idx, std::shared_ptr<Connection> &c);
   protected:
     HttpClient http_client_;

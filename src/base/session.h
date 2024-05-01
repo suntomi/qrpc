@@ -102,6 +102,7 @@ namespace base {
             virtual int OnConnect() { return QRPC_OK; }
             virtual qrpc_time_t OnShutdown() { return 0; } // return 0 to delete the session
             virtual int OnRead(const char *p, size_t sz) = 0;
+            virtual const char *proto() const = 0;
         public:
             static inline bool CheckTimeout(
                 qrpc_time_t last_active, qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check
@@ -224,6 +225,8 @@ namespace base {
                 fd_ = INVALID_FD; // invalidate fd_ so that SessionFactory::Close will not close fd_
             }
             inline bool migrated() const { return fd_ == INVALID_FD; }
+            // implements Session
+            const char *proto() const { return "tcp"; }
             // implements IoProcessor
             void OnEvent(Fd fd, const Event &e) override {
                 ASSERT(fd == fd_);
@@ -394,6 +397,7 @@ namespace base {
             const UdpSessionFactory &udp_session_factory() const { return factory().to<UdpSessionFactory>(); }
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
             // implements Session
+            const char *proto() const { return "udp"; }
             int Send(const char *data, size_t sz) override {
                 return Write(data, sz, addr());
             }

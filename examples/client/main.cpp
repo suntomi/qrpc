@@ -330,9 +330,10 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    // if (!test_webrtc_client(l, t)) {
-    //     return 1;
-    // }
+    TRACE("======== test_webrtc_client ========");
+    if (!test_webrtc_client(l, t)) {
+        return 1;
+    }
     TRACE("======== test_tcp_session ========");
     if (!test_tcp_session(l, t)) {
         return 1;

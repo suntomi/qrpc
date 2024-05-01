@@ -118,7 +118,7 @@ namespace webrtc {
     // connection is not const reference because it might be configured with SDP
     bool Answer(ConnectionFactory::Connection &c, std::string &answer) const;
     static int Offer(const ConnectionFactory::Connection &c, 
-      const std::string &uflag, const std::string &pwd, std::string &offer);
+      const std::string &ufrag, const std::string &pwd, std::string &offer);
   public:
     std::vector<Candidate> Candidates() const;
   protected:

@@ -151,42 +151,21 @@ namespace webrtc {
       FAILED,
     };
     typedef uint8_t TxId[12];
-	public:
-		class Listener {
-		public:
-			virtual void OnIceProberBindingRequest() = 0;
-		};
   public:
-    IceProber(Listener &l, const std::string &uflag, const std::string &pwd) :
-			IceProber(l, uflag, pwd, qrpc_time_sec(5), qrpc_time_sec(10)) {}
-    IceProber(Listener &l, const std::string &uflag, const std::string &pwd,
+    IceProber(const std::string &ufrag, const std::string &pwd) :
+			IceProber(ufrag, pwd, qrpc_time_sec(5), qrpc_time_sec(10)) {}
+    IceProber(const std::string &ufrag, const std::string &pwd,
 			qrpc_time_t disconnect_timeout, qrpc_time_t failed_timeout) :
-      listener_(l), uflag_(uflag), pwd_(pwd), 
-			alarm_processor_(NopAlarmProcessor::Instance()), alarm_id_(AlarmProcessor::INVALID_ID),
+      uflag_(ufrag), pwd_(pwd),
 			disconnect_timeout_(disconnect_timeout), failed_timeout_(failed_timeout) {}
-    ~IceProber() { Stop(); }
+    ~IceProber() {}
 		inline bool active() const { return state_ != NEW; }
   public:
-    qrpc_time_t operator()();
-		void Start(AlarmProcessor &ap) {
-			if (alarm_id_ == AlarmProcessor::INVALID_ID) {
-				alarm_processor_ = ap;
-				alarm_id_ = alarm_processor_.Set(*this, qrpc_time_now());
-			}
-		}
-		void Stop() {
-			if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-				alarm_processor_.Cancel(alarm_id_);
-				alarm_id_ = AlarmProcessor::INVALID_ID;
-			}
-		}
+    qrpc_time_t OnTimer(Session *s);
     void Success();
 		void SendBindingRequest(Session *s);
   private:
-    Listener &listener_;
 		std::string uflag_, pwd_;
-		AlarmProcessor &alarm_processor_;
-		AlarmProcessor::Id alarm_id_;
     State state_{NEW};
     qrpc_time_t last_success_{0ULL};
     qrpc_time_t disconnect_timeout_;

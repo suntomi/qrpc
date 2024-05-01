@@ -54,14 +54,17 @@ namespace base {
   }
   TimerScheduler::Id TimerScheduler::Start(const Handler &h, qrpc_time_t at) {
     Id id = id_factory_.New();
+    logger::info({{"ev","timer: start"},{"tid",id},{"ptr",str::dptr(this)}});
     handlers_.insert(std::make_pair(at, Entry(id, h)));
     schedule_times_.insert(std::make_pair(id, at));
     return id;
   }
   bool TimerScheduler::Stop(Id id) {
+    logger::info({{"ev","timer: stop"},{"tid",id},{"ptr",str::dptr(this)}});
     auto i = schedule_times_.find(id);
     if (i == schedule_times_.end()) {
-      logger::warn({{"ev","timer: id not found"},{"id",id}});
+      logger::warn({{"ev","timer: id not found"},{"tid",id}});
+      ASSERT(false);
       return false;
     }
     auto range = handlers_.equal_range(i->second);
