@@ -708,7 +708,10 @@ namespace webrtc {
 		uint8_t stun_buffer[1024];
 		random::bytes(tx_id, sizeof(TxId));
 		stun_packet->Serialize(stun_buffer);
-		// TODO: set pwd_ and uflag_ for the stun request
+		stun_packet->SetUsername(uflag_.c_str(), uflag_.length());
+		stun_packet->Authenticate(pwd_);
+		stun_packet->SetPriority(0x7e0000);
+		stun_packet->SetIceControlling(1);
 		s->Send(
 			reinterpret_cast<const char *>(stun_buffer), stun_packet->GetSize()
 		);

@@ -343,10 +343,10 @@ void ConnectionFactory::Connection::Close() {
   });
 }
 IceProber *ConnectionFactory::Connection::InitIceProber(
-  const std::string &ufrag, const std::string &pwd) {
+  const std::string &ufrag, const std::string &pwd, uint64_t priority) {
   TRACK();
   if (!ice_prober_) {
-    ice_prober_ = std::make_unique<IceProber>(ufrag, pwd);
+    ice_prober_ = std::make_unique<IceProber>(ufrag, pwd, priority);
   }
   return ice_prober_.get();
 }
@@ -918,14 +918,14 @@ namespace client {
   public:
     typedef typename BASE::Factory Factory;
     BaseSession(Factory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
-      const std::string &remote_uflag, const std::string &remote_pwd,
+      const std::string &remote_uflag, const std::string &remote_pwd, uint64_t priority,
       OnIceFailure &&on_ice_failure) : 
-      BASE(f, fd, addr, c), remote_uflag_(remote_uflag), remote_pwd_(remote_pwd),
+      BASE(f, fd, addr, c), remote_uflag_(remote_uflag), remote_pwd_(remote_pwd), priority_(priority),
       prober_(nullptr), on_ice_failure_(std::move(on_ice_failure)), rctc_(qrpc_time_sec(1), qrpc_time_sec(30)) {}
     int OnConnect() override {
       rctc_.Connected();
       // start ICE prober.
-      prober_ = BASE::connection_->InitIceProber(remote_uflag_, remote_pwd_);
+      prober_ = BASE::connection_->InitIceProber(remote_uflag_, remote_pwd_, priority_);
       if (alarm_id_ == AlarmProcessor::INVALID_ID) {
         alarm_id_ = BASE::factory().alarm_processor().Set([this]() { return this->operator()(); }, qrpc_time_now());
       } else {
@@ -957,6 +957,7 @@ namespace client {
     }
   private:
     std::string remote_uflag_, remote_pwd_;
+    uint64_t priority_;
     IceProber *prober_;
     OnIceFailure on_ice_failure_;
     AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
@@ -965,14 +966,18 @@ namespace client {
   class TcpSession : public BaseSession<ConnectionFactory::TcpSession> {
   public:
     TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
-      const std::string &remote_uflag, const std::string &remote_pwd, OnIceFailure &&oif
-    ) : BaseSession<ConnectionFactory::TcpSession>(f, fd, addr, c, remote_uflag, remote_pwd, std::move(oif)) {}
+      const Candidate &cand, OnIceFailure &&oif
+    ) : BaseSession<ConnectionFactory::TcpSession>(
+      f, fd, addr, c, std::get<3>(cand), std::get<4>(cand), std::get<5>(cand), std::move(oif)
+    ) {}
   };
   class UdpSession : public BaseSession<ConnectionFactory::UdpSession> {
   public:
     UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
-      const std::string &remote_uflag, const std::string &remote_pwd, OnIceFailure &&oif
-    ) : BaseSession<ConnectionFactory::UdpSession>(f, fd, addr, c, remote_uflag, remote_pwd, std::move(oif)) {}
+      const Candidate &cand, OnIceFailure &&oif
+    ) : BaseSession<ConnectionFactory::UdpSession>(
+      f, fd, addr, c, std::get<3>(cand), std::get<4>(cand), std::get<5>(cand), std::move(oif)
+    ) {}
   };
 }
 
@@ -999,8 +1004,8 @@ bool Client::Open(
   if (std::get<0>(cand)) {
     if (!udp_ports_[0].Connect(
       std::get<1>(cand), std::get<2>(cand),
-      [this, c, ufrag, pwd, on_failure](Fd fd, const Address a) mutable {
-        return new client::UdpSession(udp_ports_[0], fd, a, c, ufrag, pwd, std::move(on_failure));
+      [this, c, cand, on_failure](Fd fd, const Address a) mutable {
+        return new client::UdpSession(udp_ports_[0], fd, a, c, cand, std::move(on_failure));
       }, on_failure
     )) {
       logger::info({{"ev","fail to start session"},{"proto","udp"},
@@ -1010,8 +1015,8 @@ bool Client::Open(
   } else {
     if (!tcp_ports_[0].Connect(
       std::get<1>(cand), std::get<2>(cand),
-      [this, c, ufrag, pwd, on_failure](Fd fd, const Address a) mutable {
-        return new client::TcpSession(tcp_ports_[0], fd, a, c, ufrag, pwd, std::move(on_failure));
+      [this, c, cand, on_failure](Fd fd, const Address a) mutable {
+        return new client::TcpSession(tcp_ports_[0], fd, a, c, cand, std::move(on_failure));
       }, on_failure
     )) {
       logger::info({{"ev","fail to start session"},{"proto","tcp"},

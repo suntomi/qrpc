@@ -8,7 +8,7 @@
 
 namespace qrpc {
 void Worker::Process(Packet *p) {
-  // usually size of dispatcher isn't large, simple for loop run faster
+  // usually size of dispatcher isn't large, simple for-loop should run faster
   for (size_t i = 0; i < dispatchers_.size(); i++) {
     if (dispatchers_[i].first == p->port()) {
       dispatchers_[i].second->Process(p);

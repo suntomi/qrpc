@@ -83,7 +83,13 @@ a=max-message-size:%u
           ASSERT(false);
           continue;
         }
-        v.push_back(Candidate(dgram, *hostit, *portit, *uflagit, *pwdit));
+        auto prioit = cit->find("priority");
+        if (prioit == cit->end()) {
+          QRPC_LOGJ(warn, {{"ev","no priority value"},{"sdp",dump()}});
+          ASSERT(false);
+          continue;
+        }
+        v.push_back(Candidate(dgram, *hostit, *portit, *uflagit, *pwdit, *prioit));
       }
     }
     return v;

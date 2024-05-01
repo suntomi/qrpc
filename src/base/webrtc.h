@@ -18,7 +18,7 @@ namespace webrtc {
   typedef base::AlarmProcessor AlarmProcessor;
   typedef base::Connection BaseConnection;
   typedef IceProber::TxId TxId;
-  typedef std::tuple<bool, std::string, int, std::string, std::string> Candidate;
+  typedef std::tuple<bool, std::string, int, std::string, std::string, uint64_t> Candidate;
 
   // ConnectionFactory
   class ConnectionFactory {
@@ -135,7 +135,7 @@ namespace webrtc {
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
       int RunDtlsTransport();
-      IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd);
+      IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority);
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);

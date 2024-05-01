@@ -152,11 +152,11 @@ namespace webrtc {
     };
     typedef uint8_t TxId[12];
   public:
-    IceProber(const std::string &ufrag, const std::string &pwd) :
-			IceProber(ufrag, pwd, qrpc_time_sec(5), qrpc_time_sec(10)) {}
-    IceProber(const std::string &ufrag, const std::string &pwd,
+    IceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority) :
+			IceProber(ufrag, pwd, priority, qrpc_time_sec(5), qrpc_time_sec(10)) {}
+    IceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority,
 			qrpc_time_t disconnect_timeout, qrpc_time_t failed_timeout) :
-      uflag_(ufrag), pwd_(pwd),
+      uflag_(ufrag), pwd_(pwd), priority_(priority),
 			disconnect_timeout_(disconnect_timeout), failed_timeout_(failed_timeout) {}
     ~IceProber() {}
 		inline bool active() const { return state_ != NEW; }
@@ -166,6 +166,7 @@ namespace webrtc {
 		void SendBindingRequest(Session *s);
   private:
 		std::string uflag_, pwd_;
+		uint64_t priority_;
     State state_{NEW};
     qrpc_time_t last_success_{0ULL};
     qrpc_time_t disconnect_timeout_;
