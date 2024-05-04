@@ -270,6 +270,15 @@ namespace webrtc {
 			{
 				QRPC_LOG(debug, "STUN Binding Success Response processed");
 				this->listener->OnIceServerSuccessResponded(this, packet, session);
+
+				uint32_t nomination{ 0u };
+				if (packet->HasNomination())
+				{
+					nomination = packet->GetNomination();
+				}
+				
+				// Handle the session.
+				HandleTuple(session, packet->HasUseCandidate(), packet->HasNomination(), nomination);
 				break;
 			}
 

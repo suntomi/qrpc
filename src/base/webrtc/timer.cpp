@@ -66,8 +66,8 @@ namespace base {
     }
 
     if (this->alarm_id != 0) {
-      this->alarm_processor.Cancel(this->alarm_id);
       this->alarm_id = 0;
+      this->repeat = 0; // force stop repeat
     }
   }
 }  // namespace base

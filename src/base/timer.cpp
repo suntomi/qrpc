@@ -56,23 +56,36 @@ namespace base {
     Id id = id_factory_.New();
     handlers_.insert(std::make_pair(at, Entry(id, h)));
     schedule_times_.insert(std::make_pair(id, at));
+    logger::debug({{"ev","timer: create"},{"tid",id},{"ptr",str::dptr(this)}});
     return id;
   }
   bool TimerScheduler::Stop(Id id) {
+    if (processed_now_ == id) {
+      logger::warn({
+        {"ev","try stop current processed timer. try using return 0 to stop processed timer"},
+        {"tid",id}});
+      ASSERT(false);
+      return true;
+    }
     auto i = schedule_times_.find(id);
     if (i == schedule_times_.end()) {
-      logger::warn({{"ev","timer: id not found"},{"tid",id}});
+      logger::warn({{"ev","timer: id not found"},{"tid",id},{"ptr",str::dptr(this)}});
       ASSERT(false);
       return false;
     }
+    ASSERT(i->second != 0 && i->first != 0);
     auto range = handlers_.equal_range(i->second);
     for (auto &j = range.first; j != range.second; ++j) {
       Entry &e = j->second;
       if (e.id == id) {
+        logger::debug({{"ev","timer: stopped"},{"tid",id}});
         handlers_.erase(j);
+        schedule_times_.erase(id);
         return true;
       }
     }
+    logger::warn({{"ev","timer: handler entry not found"},{"tid",id},{"time",i->second}});
+    schedule_times_.erase(id);
     ASSERT(false);
     return false;
   }
@@ -124,15 +137,15 @@ namespace base {
       ASSERT(schedule_times_.find(ent.second.id) != schedule_times_.end() && 
         (*schedule_times_.find(ent.second.id)).second == ent.first);
       auto e = std::move(ent.second);
-      auto id = e.id;
+      processed_now_ = e.id;
       it = handlers_.erase(it);
-      schedule_times_.erase(id);
+      schedule_times_.erase(processed_now_);
       qrpc_time_t next = e.handler();
       if (next < now) {
         continue;
       }
       handlers_.insert(std::make_pair(next, e));
-      schedule_times_.insert(std::make_pair(id, next));
+      schedule_times_.insert(std::make_pair(processed_now_, next));
     }
   }
 
