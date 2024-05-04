@@ -311,7 +311,7 @@ int main(int argc, char *argv[]) {
     if (!l.ares().Initialize()) {
         DIE("fail to init resolver");
     }
-    TimerScheduler t(qrpc_time_msec(300));
+    TimerScheduler t(qrpc_time_msec(30));
     if (t.Init(l) < 0) {
         DIE("fail to start timer");
     }

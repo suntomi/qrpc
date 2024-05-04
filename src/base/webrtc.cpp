@@ -620,7 +620,7 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentAdded(
 }
 void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
-  logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"ufrag",usernameFragment}});
+  logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"c",str::dptr(this)},{"ufrag",usernameFragment}});
   auto ufrag = IceUFrag{usernameFragment};
   sv_.CloseConnection(ufrag);
 }
@@ -664,7 +664,7 @@ void ConnectionFactory::Connection::OnIceServerDisconnected(const IceServer *ice
 }
 void ConnectionFactory::Connection::OnIceServerSuccessResponded(
   const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) {
-  if (!ice_prober_ || dtls_role_ != DtlsTransport::Role::CLIENT) {
+  if (!ice_prober_ || dtls_role_ == DtlsTransport::Role::CLIENT) {
     logger::warn({{"ev","stun packet response receive with invalid state"},{"dtls_role",dtls_role_}});
     ASSERT(false);
     return;
@@ -953,7 +953,13 @@ namespace client {
     }
     qrpc_time_t operator()() {
       ASSERT(prober_ != nullptr);
-      return prober_->OnTimer(this);
+      auto next = prober_->OnTimer(this);
+      if (next == 0ULL) {
+        // prevent OnShutdown from canceling alarm
+        alarm_id_ = AlarmProcessor::INVALID_ID;
+        BASE::Close(QRPC_CLOSE_REASON_TIMEOUT, 0, "wait ice prober connected");
+      }
+      return next;
     }
   private:
     std::string remote_uflag_, remote_pwd_;

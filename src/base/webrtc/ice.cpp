@@ -700,6 +700,7 @@ namespace webrtc {
 	// IceProber
 	void IceProber::Success() {
 		last_success_ = qrpc_time_now();
+		state_ = CONNECTED;
 	}
 	void IceProber::SendBindingRequest(Session *s) {
 		static thread_local TxId tx_id;
@@ -708,8 +709,9 @@ namespace webrtc {
 		uint8_t stun_buffer[1024];
 		random::bytes(tx_id, sizeof(TxId));
 		stun_packet->Serialize(stun_buffer);
-		stun_packet->SetUsername(uflag_.c_str(), uflag_.length());
+		stun_packet->SetUsername((uflag_ + ":").c_str(), uflag_.length() + 1);
 		stun_packet->Authenticate(pwd_);
+		// https://speakerdeck.com/iwashi86/webrtc-ice-internals?slide=60
 		stun_packet->SetPriority(0x7e0000);
 		stun_packet->SetIceControlling(1);
 		s->Send(
@@ -717,14 +719,14 @@ namespace webrtc {
 		);
 	}
   qrpc_time_t IceProber::OnTimer(Session *s) {
+		// this interval setting is based on observing chrome's behaviour
+		// TODO: is there standard interval for this?
 		auto now = qrpc_time_now();
     SendBindingRequest(s);
     switch (state_) {
     case NEW:
-      if (last_success_ > 0ULL) {
-        state_ = CONNECTED;
-	      return now + qrpc_time_msec(2500);
-      }
+			state_ = DISCONNECTED;
+			last_success_ = now;
       return now + qrpc_time_msec(50);
     case CONNECTED:
       if (now - last_success_ > qrpc_time_msec(2500)) {
@@ -746,8 +748,7 @@ namespace webrtc {
     case FAILED:
       state_ = NEW;
 			last_success_ = 0;
-			s->Close(QRPC_CLOSE_REASON_TIMEOUT, 0, "");
-      return 0ULL; // stop alarm
+      return 0ULL; // alarm stops
     default:
       ASSERT(false);
       return 0ULL;
