@@ -276,7 +276,7 @@ namespace webrtc {
 				{
 					nomination = packet->GetNomination();
 				}
-				
+
 				// Handle the session.
 				HandleTuple(session, packet->HasUseCandidate(), packet->HasNomination(), nomination);
 				break;
@@ -717,12 +717,13 @@ namespace webrtc {
 			RTC::StunPacket::Class::REQUEST, RTC::StunPacket::Method::BINDING, tx_id, nullptr, 0);
 		uint8_t stun_buffer[1024];
 		random::bytes(tx_id, sizeof(TxId));
-		stun_packet->Serialize(stun_buffer);
+		ASSERT(!uflag_.empty() && !pwd_.empty());
 		stun_packet->SetUsername((uflag_ + ":").c_str(), uflag_.length() + 1);
 		stun_packet->Authenticate(pwd_);
 		// https://speakerdeck.com/iwashi86/webrtc-ice-internals?slide=60
 		stun_packet->SetPriority(0x7e0000);
 		stun_packet->SetIceControlling(1);
+		stun_packet->Serialize(stun_buffer);
 		s->Send(
 			reinterpret_cast<const char *>(stun_buffer), stun_packet->GetSize()
 		);

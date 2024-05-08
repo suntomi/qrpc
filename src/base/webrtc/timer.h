@@ -23,21 +23,9 @@ namespace base {
     ~Timer();
 
   public:
-    void Start(uint64_t timeout, uint64_t repeat = 0);
+    void Start(uint64_t timeout);
     void Stop();
     void Close();
-    uint64_t GetTimeout() const
-    {
-      return this->timeout;
-    }
-    uint64_t GetRepeat() const
-    {
-      return this->repeat;
-    }
-    bool IsActive() const
-    {
-      return this->alarm_id != 0;
-    }
 
   private:
     // Passed by argument.
@@ -46,8 +34,6 @@ namespace base {
     // Others.
     AlarmProcessor::Id alarm_id{ 0u };
     bool closed{ false };
-    uint64_t timeout{ 0u };
-    uint64_t repeat{ 0u };
   };
 }
 

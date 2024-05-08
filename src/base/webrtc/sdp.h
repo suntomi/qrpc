@@ -2,7 +2,6 @@
 
 #include <stdint.h>
 #include <string>
-#include <tuple>
 
 #include "base/webrtc.h"
 
@@ -122,6 +121,7 @@ namespace webrtc {
   public:
     std::vector<Candidate> Candidates() const;
   protected:
+    bool GetRemoteFingerPrint(const json::const_iterator &it, std::string &answer, DtlsTransport::Fingerprint &ret) const;
     std::string AnswerAs(const std::string &proto, const ConnectionFactory::Connection &c) const;
     uint32_t AssignPriority(uint32_t component_id) const;
   };

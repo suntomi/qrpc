@@ -7,6 +7,7 @@
 #include "base/webrtc/ice.h"
 #include "base/webrtc/sctp.h"
 #include "base/webrtc/dtls.h"
+#include "base/webrtc/candidate.h"
 
 // TODO: if enabling srtp, this also need to be replaced with homebrew version
 #include "RTC/SrtpSession.hpp"
@@ -18,7 +19,6 @@ namespace webrtc {
   typedef base::AlarmProcessor AlarmProcessor;
   typedef base::Connection BaseConnection;
   typedef IceProber::TxId TxId;
-  typedef std::tuple<bool, std::string, int, std::string, std::string, uint64_t> Candidate;
 
   // ConnectionFactory
   class ConnectionFactory {

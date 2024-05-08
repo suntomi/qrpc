@@ -35,6 +35,37 @@ a=max-message-size:%u
     );
     return QRPC_OK;
   }
+  bool SDP::GetRemoteFingerPrint(const json::const_iterator &it, std::string &answer, DtlsTransport::Fingerprint &ret) const {
+      auto root_fp = find("fingerprint");
+      auto fp = root_fp;
+      if (fp == end()) {
+        fp = it->find("fingerprint");
+        if (fp == it->end()) {
+          logger::error({{"ev","malform sdp"},{"reason","no fingerprint"}, {"as_json", dump()}});
+          // malicious?
+          answer = "no fingerprint found";
+          ASSERT(false);
+          return false;
+        }
+      }
+      auto type = fp->find("type");
+      auto hash = fp->find("hash");
+      if (type == fp->end() || hash == fp->end()) {
+        logger::error({{"ev","malform sdp"},{"reason","no fingerprint type or hash"}, {"as_json", dump()}});
+        // malicious?
+        answer = "no fingerprint type or hash found";
+        ASSERT(false);
+        return false;
+      }
+      auto algo = DtlsTransport::GetFingerprintAlgorithm(*type);
+      if (algo == DtlsTransport::FingerprintAlgorithm::NONE) {
+        answer = "unknown fingerprint algorithm:" + type->get<std::string>();
+        ASSERT(false);
+        return false;
+      }
+      ret = {.algorithm = algo, .value = *hash};
+      return true;     
+  }
   std::vector<Candidate> SDP::Candidates() const {
     std::vector<Candidate> v;
     auto mit = find("media");
@@ -89,7 +120,13 @@ a=max-message-size:%u
           ASSERT(false);
           continue;
         }
-        v.push_back(Candidate(dgram, *hostit, *portit, *uflagit, *pwdit, *prioit));
+        std::string answer;
+        DtlsTransport::Fingerprint fp;
+        if (!GetRemoteFingerPrint(it, answer, fp)) {
+          logger::warn({{"ev","failed to get remote fingerprint"},{"reason",answer}});
+          continue;
+        }
+        v.push_back(Candidate(dgram, *hostit, *portit, *uflagit, *pwdit, *prioit, fp));
       }
     }
     return v;
@@ -102,7 +139,6 @@ a=max-message-size:%u
       return false;
     }
     // firefox contains fingerprint in root section, not in media
-    auto root_fp = find("fingerprint");
     for (auto it = mit->begin(); it != mit->end(); ++it) {
       auto proto = it->find("protocol");
       if (proto == it->end()) {
@@ -121,34 +157,12 @@ a=max-message-size:%u
         continue;
       }
       // protocol found. set remote fingerprint
-      // TODO: move this to dedicated function but type declaration of it is not easy
-      auto fp = root_fp;
-      if (fp == end()) {
-        fp = it->find("fingerprint");
-        if (fp == it->end()) {
-          logger::error({{"ev","malform sdp"},{"reason","no fingerprint"}, {"as_json", dump()}});
-          // malicious?
-          answer = "no fingerprint found";
-          ASSERT(false);
-          return false;
-        }
+      DtlsTransport::Fingerprint fp;
+      if (!GetRemoteFingerPrint(it, answer, fp)) {
+        logger::warn({{"ev","failed to get remote fingerprint"},{"reason",answer}});
+        continue;
       }
-      auto type = fp->find("type");
-      auto hash = fp->find("hash");
-      if (type == fp->end() || hash == fp->end()) {
-        logger::error({{"ev","malform sdp"},{"reason","no fingerprint type or hash"}, {"as_json", dump()}});
-        // malicious?
-        answer = "no fingerprint type or hash found";
-        ASSERT(false);
-        return false;
-      }
-      auto algo = DtlsTransport::GetFingerprintAlgorithm(*type);
-      if (algo == DtlsTransport::FingerprintAlgorithm::NONE) {
-        answer = "unknown fingerprint algorithm:" + type->get<std::string>();
-        ASSERT(false);
-        return false;
-      }
-      c.dtls_transport().SetRemoteFingerprint({.algorithm = algo, .value = *hash});
+      c.dtls_transport().SetRemoteFingerprint(fp);
       return true;
     }
     answer = "no data channel media found";

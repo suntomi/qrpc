@@ -108,6 +108,7 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
   }
   // try to match the local ICE username fragment.
   auto key = GetLocalIceUFragFrom(packet);
+  ASSERT(!key.empty());
   auto it = connections_.find(key);
   delete packet;
 
@@ -878,6 +879,7 @@ namespace client {
         client_.CloseConnection(uf);
         return nullptr;
       }
+      auto c = client_.FindFromUfrag(uf);
       SDP sdp(s.fsm().body());
       auto candidates = sdp.Candidates();
       if (candidates.size() <= 0) {
@@ -886,7 +888,6 @@ namespace client {
         client_.CloseConnection(uf);
         return nullptr;
       }
-      auto c = client_.FindFromUfrag(uf);
       if (!client_.Open(candidates, 0, c)) {
         client_.CloseConnection(uf);
       }
@@ -1007,6 +1008,8 @@ bool Client::Open(
       this->CloseConnection(ufrag);
     }
   };
+  // set remote finger print
+  c->dtls_transport().SetRemoteFingerprint(std::get<6>(cand));
   if (std::get<0>(cand)) {
     if (!udp_ports_[0].Connect(
       std::get<1>(cand), std::get<2>(cand),
