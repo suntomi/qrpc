@@ -320,6 +320,8 @@ namespace webrtc {
     std::vector<UdpPort> udp_ports_;
     std::map<IceUFrag, std::shared_ptr<Connection>> connections_;
   private:
+    static uint32_t g_ref_count_;
+    static std::mutex g_ref_sync_mutex_;
     static int GlobalInit(AlarmProcessor &a);
     static void GlobalFin();
   };

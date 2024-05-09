@@ -66,11 +66,13 @@ void ConnectionFactory::Fin() {
     alarm_processor().Cancel(alarm_id_);
     alarm_id_ = AlarmProcessor::INVALID_ID;
   }
-  for (auto &p : udp_ports_) {
-    p.Fin();
+  for (auto it = udp_ports_.begin(); it != udp_ports_.end();) {
+    auto p = it++;
+    (*p).Fin();
   }
-  for (auto &p : tcp_ports_) {
-    p.Fin();
+  for (auto it = tcp_ports_.begin(); it != tcp_ports_.end();) {
+    auto p = it++;
+    (*p).Fin();
   }
   GlobalFin();
 }
@@ -129,18 +131,23 @@ ConnectionFactory::FindFromUfrag(const IceUFrag &ufrag) {
     }
     return it->second;
 }
+uint32_t ConnectionFactory::g_ref_count_ = 0;
+std::mutex ConnectionFactory::g_ref_sync_mutex_;
 int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 	try
 	{
-		// Initialize static stuff.
-		DepOpenSSL::ClassInit();
-		DepLibSRTP::ClassInit();
-		DepUsrSCTP::ClassInit(a);
-		DepLibWebRTC::ClassInit();
-		Utils::Crypto::ClassInit();
-		DtlsTransport::ClassInit();
-		RTC::SrtpSession::ClassInit();
-
+    std::lock_guard<std::mutex> lock(g_ref_sync_mutex_);
+    if (g_ref_count_ == 0) {
+      // Initialize static stuff.
+      DepOpenSSL::ClassInit();
+      DepLibSRTP::ClassInit();
+      DepUsrSCTP::ClassInit(a);
+      DepLibWebRTC::ClassInit();
+      Utils::Crypto::ClassInit();
+      DtlsTransport::ClassInit();
+      RTC::SrtpSession::ClassInit();
+    }
+    g_ref_count_++;
 		return QRPC_OK;
 	} catch (const MediaSoupError& error) {
 		logger::die({{"ev","mediasoup setup failure"},{"reason",error.what()}});
@@ -151,13 +158,17 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 void ConnectionFactory::GlobalFin() {
 	try
 	{
+    std::lock_guard<std::mutex> lock(g_ref_sync_mutex_);
+    g_ref_count_--;
+    if (g_ref_count_ > 1) {
+      return;
+    }
     // Free static stuff.
-		DepLibSRTP::ClassDestroy();
+		DtlsTransport::ClassDestroy();
 		Utils::Crypto::ClassDestroy();
 		DepLibWebRTC::ClassDestroy();
-		DtlsTransport::ClassDestroy();
 		DepUsrSCTP::ClassDestroy();
-		DepLibUV::ClassDestroy();
+		DepLibSRTP::ClassDestroy();
   }
   catch (const MediaSoupError& error) {
     logger::error({{"ev","mediasoup cleanup failure"},{"reason",error.what()}});
@@ -324,8 +335,9 @@ void ConnectionFactory::Connection::Fin() {
   if (dtls_transport_ != nullptr) {
     dtls_transport_->Close();
   }
-  for (auto &s : streams_) {
-    s.second->OnShutdown();
+  for (auto s = streams_.begin(); s != streams_.end();) {
+    auto cur = s++;
+    (*cur).second->OnShutdown();
   }
   OnShutdown();
   streams_.clear();
@@ -632,7 +644,7 @@ void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *ice
 }
 void ConnectionFactory::Connection::OnIceServerSessionRemoved(
   const IceServer *iceServer, Session *session) {
-  logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
+  logger::info({{"ev","OnIceServerSessionRemoved"},{"ss",str::dptr(session)}});
   // used for synching server's session/address map. 
   // use OnIceServerTupleRemoved to search mediasoup's example
 }

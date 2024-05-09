@@ -197,8 +197,9 @@ namespace base {
             sessions_.erase(s.addr());
         }
         virtual void Fin() {
-            for (const auto &s : sessions_) {
-                s.second->Close(QRPC_CLOSE_REASON_LOCAL, 0, "factory closed");
+            for (auto it = sessions_.begin(); it != sessions_.end();) {
+                auto s = it++;
+                (*s).second->Close(QRPC_CLOSE_REASON_LOCAL, 0, "factory closed");
             }
             if (alarm_id_ != AlarmProcessor::INVALID_ID) {
                 alarm_processor_.Cancel(alarm_id_);
@@ -301,6 +302,7 @@ namespace base {
         Fd fd() const { return fd_; }
         int port() const { return port_; }
         bool Listen(int port) {
+            ASSERT(fd_ == INVALID_FD);
             port_ = port;
             if ((fd_ = Syscall::Listen(port_)) < 0) {
                 logger::error({{"ev","Syscall::Listen() fails"},{"port",port},{"rc",fd_},{"errno",Syscall::Errno()}});
@@ -344,10 +346,11 @@ namespace base {
             }
         }
         void Fin() override {
-            SessionFactory::Fin();
+            TcpSessionFactory::Fin();
             if (fd_ != INVALID_FD) {
                 loop_.Del(fd_);
                 Syscall::Close(fd_);
+                fd_ = INVALID_FD;
             }
         }
         // implements IoProcessor
@@ -562,8 +565,9 @@ namespace base {
             }
         }
 		void OnClose(Fd fd) {
-            for (const auto &s : sessions_) {
-                s.second->Close(QRPC_CLOSE_REASON_LOCAL, 0, "listener closed");
+            for (auto it = sessions_.begin(); it != sessions_.end();) {
+                auto s = it++;
+                (*s).second->Close(QRPC_CLOSE_REASON_LOCAL, 0, "listener closed");
             }
         }
 		int OnOpen(Fd fd) {

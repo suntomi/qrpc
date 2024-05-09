@@ -129,6 +129,7 @@ namespace base {
   }
   void TimerScheduler::Poll() {
     qrpc_time_t now = qrpc_time_now();
+    ASSERT(processed_now_ == 0);
     for (auto it = handlers_.begin(); it != handlers_.end(); ) {
       auto &ent = *it;
       if (ent.first > now) {
@@ -147,6 +148,7 @@ namespace base {
       handlers_.insert(std::make_pair(next, e));
       schedule_times_.insert(std::make_pair(processed_now_, next));
     }
+    processed_now_ = 0;
   }
 
 }
