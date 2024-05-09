@@ -362,21 +362,27 @@ namespace webrtc {
   class AdhocClient : public Client {
   public:
     AdhocClient(Loop &l, Config &&c, Stream::Handler &&h) : Client(l, std::move(c), 
-      [&h](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h)));
+      [h = std::move(h)](const Stream::Config &config, base::Connection &conn) {
+        auto hh = h;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh)));
       }) {}
     AdhocClient(Loop &l, Config &&c,
       Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
-      Client(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h), std::move(ch), std::move(sh)));
+      Client(l, std::move(c), [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](
+        const Stream::Config &config, base::Connection &conn
+      ) {
+        auto hh = h; auto chh = ch; auto shh = sh;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
       }) {}
     AdhocClient(Loop &l, Config &&c, 
       AdhocConnection::ConnectHandler &&cch, AdhocConnection::ShutdownHandler &&csh,
       Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
-      Client(l, std::move(c), [&cch, &csh](ConnectionFactory &cf, DtlsTransport::Role role) {
-        return new AdhocConnection(cf, role, std::move(cch), std::move(csh));
-      }, [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h), std::move(ch), std::move(sh)));
+      Client(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, DtlsTransport::Role role) {
+        auto cchh = cch; auto cshh = csh;
+        return new AdhocConnection(cf, role, std::move(cchh), std::move(cshh));
+      }, [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](const Stream::Config &config, base::Connection &conn) {
+        auto hh = h; auto chh = ch; auto shh = sh;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
       }) {}
     ~AdhocClient() {}
   };  
@@ -409,21 +415,27 @@ namespace webrtc {
   class AdhocServer : public Server {
   public:
     AdhocServer(Loop &l, Config &&c, Stream::Handler &&h) : Server(l, std::move(c), 
-      [&h](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h)));
+      [h = std::move(h)](const Stream::Config &config, base::Connection &conn) {
+        auto hh = h;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh)));
       }) {}
     AdhocServer(Loop &l, Config &&c, 
       Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
-      Server(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h), std::move(ch), std::move(sh)));
+      Server(l, std::move(c), [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](
+        const Stream::Config &config, base::Connection &conn
+      ) {
+        auto hh = h; auto chh = ch; auto shh = sh;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
       }) {}
     AdhocServer(Loop &l, Config &&c, 
       AdhocConnection::ConnectHandler &&cch, AdhocConnection::ShutdownHandler &&csh,
       Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
-      Server(l, std::move(c), [&cch, &csh](ConnectionFactory &cf, DtlsTransport::Role role) {
-        return new AdhocConnection(cf, role, std::move(cch), std::move(csh));
-      }, [&h, &ch, &sh](const Stream::Config &config, base::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(h), std::move(ch), std::move(sh)));
+      Server(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, DtlsTransport::Role role) {
+        auto cchh = cch; auto cshh = csh;
+        return new AdhocConnection(cf, role, std::move(cchh), std::move(cshh));
+      }, [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](const Stream::Config &config, base::Connection &conn) {
+        auto hh = h; auto chh = ch; auto shh = sh;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
       }) {}
     ~AdhocServer() {}
   };  

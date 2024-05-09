@@ -268,7 +268,7 @@ namespace webrtc {
 
 			case RTC::StunPacket::Class::SUCCESS_RESPONSE:
 			{
-				QRPC_LOG(debug, "STUN Binding Success Response processed");
+				// QRPC_LOG(debug, "STUN Binding Success Response processed");
 				this->listener->OnIceServerSuccessResponded(this, packet, session);
 
 				uint32_t nomination{ 0u };

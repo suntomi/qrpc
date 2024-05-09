@@ -1039,7 +1039,7 @@ int Client::Offer(std::string &sdp, std::string &ufrag) {
   logger::info({{"ev","new client connection"}});
   // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
   // even if sdp anwser ask to do it.
-  auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::SERVER));
+  auto c = std::shared_ptr<Connection>(factory_method_(*this, DtlsTransport::Role::SERVER));
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return QRPC_EALLOC;
@@ -1118,7 +1118,7 @@ int Server::Accept(const std::string &client_sdp, std::string &server_sdp) {
   logger::info({{"ev","new server connection"},{"client_sdp", client_sdp}});
   // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
   // even if sdp anwser ask to do it.
-  auto c = std::shared_ptr<Connection>(new Connection(*this, DtlsTransport::Role::CLIENT));
+  auto c = std::shared_ptr<Connection>(factory_method_(*this, DtlsTransport::Role::CLIENT));
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return QRPC_EALLOC;
