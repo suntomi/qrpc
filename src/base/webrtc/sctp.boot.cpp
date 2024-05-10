@@ -96,7 +96,7 @@ namespace webrtc {
       numSctpAssociations   = 0u;
       nextSctpAssociationId = 0u;
 
-      DepUsrSCTP::mapIdSctpAssociation.clear();
+	    DepUsrSCTP::mapIdSctpAssociation.clear();
     }
   }
 

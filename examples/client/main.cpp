@@ -60,7 +60,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
                 return QRPC_EINVAL;
             }
             if (count < 2) {
-                QRPC_LOG(info, "Data channel latency", now - ts);
+                QRPC_LOG(info, "Data channel latency(%lld)", now - ts);
                 s.Send({{"hello", ctx.texts[count + 1]},{"count",count + 1},{"ts",now}});
             } else {
                 s.Close(QRPC_CLOSE_REASON_LOCAL);

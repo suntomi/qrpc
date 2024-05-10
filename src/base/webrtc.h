@@ -347,7 +347,7 @@ namespace webrtc {
       ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.alarm_processor) {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.alarm_processor) {}
-    ~Client() { Fin(); }
+    ~Client() {}
   public:
     // implement base::Client
     bool Connect(const std::string &host, int port, const std::string &path) override;
@@ -397,7 +397,7 @@ namespace webrtc {
       ConnectionFactory(l, std::move(config), std::move(sf)), http_listener_(l), router_() {}
     Server(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_listener_(l), router_() {}
-    ~Server() { Fin(); }
+    ~Server() {}
   public:
     int Accept(const std::string &client_sdp, std::string &server_sdp);
     // implements base::Server

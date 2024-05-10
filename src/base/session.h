@@ -80,14 +80,18 @@ namespace base {
                     factory_.Close(*this);
                     auto &ap = factory_.alarm_processor();
                     if (reconnect_timeout > 0 && 
+                        // if session is migrated or shutdown, reconnect setting is ignored
                         reason.code != QRPC_CLOSE_REASON_MIGRATED &&
+                        reason.code != QRPC_CLOSE_REASON_SHUTDOWN &&
                         &ap != &NopAlarmProcessor::Instance()) {
                         this->close_reason_->alarm_id = ap.Set(
                             [this]() { return this->Reconnect(); }, qrpc_time_now() + reconnect_timeout
                         );
                         return false;
                     } else {
-                        ASSERT(reconnect_timeout == 0);
+                        ASSERT(reconnect_timeout == 0 ||
+                            reason.code == QRPC_CLOSE_REASON_MIGRATED ||
+                            reason.code == QRPC_CLOSE_REASON_SHUTDOWN);
                         delete this;
                         return true;
                    }
@@ -199,7 +203,7 @@ namespace base {
         virtual void Fin() {
             for (auto it = sessions_.begin(); it != sessions_.end();) {
                 auto s = it++;
-                (*s).second->Close(QRPC_CLOSE_REASON_LOCAL, 0, "factory closed");
+                (*s).second->Close(QRPC_CLOSE_REASON_SHUTDOWN, 0, "factory closed");
             }
             if (alarm_id_ != AlarmProcessor::INVALID_ID) {
                 alarm_processor_.Cancel(alarm_id_);
@@ -567,7 +571,7 @@ namespace base {
 		void OnClose(Fd fd) {
             for (auto it = sessions_.begin(); it != sessions_.end();) {
                 auto s = it++;
-                (*s).second->Close(QRPC_CLOSE_REASON_LOCAL, 0, "listener closed");
+                (*s).second->Close(QRPC_CLOSE_REASON_SHUTDOWN, 0, "listener closed");
             }
         }
 		int OnOpen(Fd fd) {
