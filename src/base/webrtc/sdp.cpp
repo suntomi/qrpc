@@ -3,34 +3,40 @@
 #include "base/string.h"
 
 namespace base {
-  bool SDP::Answer(WebRTCServer::Connection &c, std::string &answer) const {
-    auto mit = find("media");
-    if (mit == end()) {
-      answer = "no media found";
-      ASSERT(false);
-      return false;
-    }
-    // firefox contains fingerprint in root section, not in media
-    auto root_fp = find("fingerprint");
-    for (auto it = mit->begin(); it != mit->end(); ++it) {
-      auto proto = it->find("protocol");
-      if (proto == it->end()) {
-        logger::warn({{"ev","media does not have protocol"}, {"media", *it}});
-        ASSERT(false);
-        continue;
-      }
-      if ((*proto) == "UDP/DTLS/SCTP") {
-        // answer udp port
-        answer = AnswerAs("UDP", c);
-      } else if ((*proto) == "TCP/DTLS/SCTP") {
-        // answer tcp port
-        answer = AnswerAs("TCP", c);
-      } else {
-        logger::debug({{"ev","non SCTP media protocol"}, {"proto", *proto}});
-        continue;
-      }
-      // protocol found. set remote finger pring
-      // TODO: move this to dedicated function but type declaration of it is not easy
+namespace webrtc {
+  int SDP::Offer(const ConnectionFactory::Connection &c,
+    const std::string &ufrag, const std::string &pwd, std::string &offer) {
+    auto now = qrpc_time_now();
+    // string value to the str::Format should be converted to c string like str.c_str()
+    offer = str::Format(R"sdp(v=0
+o=- %llu %llu IN IP4 0.0.0.0
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=extmap-allow-mixed
+a=msid-semantic: WMS
+m=application 9 %s/DTLS/SCTP webrtc-datachannel
+c=IN IP4 0.0.0.0
+b=AS:30
+a=ice-ufrag:%s
+a=ice-pwd:%s
+a=ice-options:trickle
+a=fingerprint:%s %s
+a=setup:active
+a=mid:0
+a=sctp-port:5000
+a=max-message-size:%u
+)sdp",
+      now, now,
+      c.factory().primary_proto().c_str(),
+      ufrag.c_str(), pwd.c_str(),
+      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
+      c.factory().config().send_buffer_size
+    );
+    return QRPC_OK;
+  }
+  bool SDP::GetRemoteFingerPrint(const json::const_iterator &it, std::string &answer, DtlsTransport::Fingerprint &ret) const {
+      auto root_fp = find("fingerprint");
       auto fp = root_fp;
       if (fp == end()) {
         fp = it->find("fingerprint");
@@ -57,7 +63,106 @@ namespace base {
         ASSERT(false);
         return false;
       }
-      c.dtls_transport().SetRemoteFingerprint({.algorithm = algo, .value = *hash});
+      ret = {.algorithm = algo, .value = *hash};
+      return true;     
+  }
+  std::vector<Candidate> SDP::Candidates() const {
+    std::vector<Candidate> v;
+    auto mit = find("media");
+    if (mit == end()) {
+      ASSERT(false);
+      return v;
+    }
+    for (auto it = mit->begin(); it != mit->end(); ++it) {
+      auto protoit = it->find("protocol");
+      bool dgram = false;
+      if ((*protoit) == "UDP/DTLS/SCTP") {
+        dgram = true;
+      } else if ((*protoit) == "TCP/DTLS/SCTP") {
+      } else {
+        QRPC_LOGJ(warn, {{"ev","non SCTP media protocol"}, {"proto", *protoit}});
+        continue;
+      }
+      auto cand = it->find("candidates");
+      if (cand == it->end()) {
+        QRPC_LOGJ(warn, {{"ev","no candidates value"},{"sdp",dump()}});
+        ASSERT(false);
+        continue;
+      }
+      auto uflagit = it->find("iceUfrag");
+      if (uflagit == it->end()) {
+        QRPC_LOGJ(warn, {{"ev","no ufrag value"},{"sdp",dump()}});
+        ASSERT(false);
+        continue;
+      }
+      auto pwdit = it->find("icePwd");
+      if (pwdit == it->end()) {
+        QRPC_LOGJ(warn, {{"ev","no pwd value"},{"sdp",dump()}});
+        ASSERT(false);
+        continue;
+      }
+      for (auto cit = cand->begin(); cit != cand->end(); ++cit) {
+        auto hostit = cit->find("ip");
+        if (hostit == cit->end()) {
+          QRPC_LOGJ(warn, {{"ev","no host value"},{"sdp",dump()}});
+          ASSERT(false);
+          continue;
+        }
+        auto portit = cit->find("port");
+        if (portit == cit->end()) {
+          QRPC_LOGJ(warn, {{"ev","non port valuests"},{"sdp",dump()}});
+          ASSERT(false);
+          continue;
+        }
+        auto prioit = cit->find("priority");
+        if (prioit == cit->end()) {
+          QRPC_LOGJ(warn, {{"ev","no priority value"},{"sdp",dump()}});
+          ASSERT(false);
+          continue;
+        }
+        std::string answer;
+        DtlsTransport::Fingerprint fp;
+        if (!GetRemoteFingerPrint(it, answer, fp)) {
+          logger::warn({{"ev","failed to get remote fingerprint"},{"reason",answer}});
+          continue;
+        }
+        v.push_back(Candidate(dgram, *hostit, *portit, *uflagit, *pwdit, *prioit, fp));
+      }
+    }
+    return v;
+  }
+  bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
+    auto mit = find("media");
+    if (mit == end()) {
+      answer = "no media found";
+      ASSERT(false);
+      return false;
+    }
+    // firefox contains fingerprint in root section, not in media
+    for (auto it = mit->begin(); it != mit->end(); ++it) {
+      auto proto = it->find("protocol");
+      if (proto == it->end()) {
+        logger::warn({{"ev","media does not have protocol"}, {"media", *it}});
+        ASSERT(false);
+        continue;
+      }
+      if ((*proto) == "UDP/DTLS/SCTP") {
+        // answer udp port
+        answer = AnswerAs("UDP", c);
+      } else if ((*proto) == "TCP/DTLS/SCTP") {
+        // answer tcp port
+        answer = AnswerAs("TCP", c);
+      } else {
+        logger::debug({{"ev","non SCTP media protocol"}, {"proto", *proto}});
+        continue;
+      }
+      // protocol found. set remote fingerprint
+      DtlsTransport::Fingerprint fp;
+      if (!GetRemoteFingerPrint(it, answer, fp)) {
+        logger::warn({{"ev","failed to get remote fingerprint"},{"reason",answer}});
+        continue;
+      }
+      c.dtls_transport().SetRemoteFingerprint(fp);
       return true;
     }
     answer = "no data channel media found";
@@ -69,12 +174,12 @@ namespace base {
     return 2113929216 + 16776960 + (256 - component_id);
   }
 
-  std::string SDP::AnswerAs(const std::string &proto, const WebRTCServer::Connection &c) const {
+  std::string SDP::AnswerAs(const std::string &proto, const ConnectionFactory::Connection &c) const {
     auto now = qrpc_time_now();
-    auto port = proto == "UDP" ? c.server().udp_port() : c.server().tcp_port();
+    auto port = proto == "UDP" ? c.factory().udp_port() : c.factory().tcp_port();
     auto candidates = std::string("");
     size_t idx = 0;
-    for (auto &a : c.server().config().ifaddrs) {
+    for (auto &a : c.factory().config().ifaddrs) {
       candidates += str::Format(
         "%sa=candidate:0 %u %s %u %s %u typ host",
         idx == 0 ? "" : "\n",
@@ -82,6 +187,7 @@ namespace base {
       );
       idx++;
     }
+    // string value to the str::Format should be converted to c string like str.c_str()
     return str::Format(R"sdp(v=0
 o=- %llu %llu IN IP4 0.0.0.0
 s=-
@@ -108,38 +214,9 @@ a=max-message-size:%u
       candidates.c_str(),
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
-      c.server().fingerprint_algorithm().c_str(), c.server().fingerprint().c_str(),
-      c.server().config().sctp_send_buffer_size
+      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
+      c.factory().config().send_buffer_size
     );
   }
-  bool SDP::Test() {
-    auto text = R"sdp(v=0
-o=- 2079181553264408257 2 IN IP4 127.0.0.1
-s=-
-t=0 0
-a=group:BUNDLE 0
-a=extmap-allow-mixed
-a=msid-semantic: WMS
-m=application 9 UDP/DTLS/SCTP webrtc-datachannel
-c=IN IP4 0.0.0.0
-b=AS:30
-a=ice-ufrag:5xf5
-a=ice-pwd:RaGh41Km50SazV5xD4cU0KNL
-a=ice-options:trickle
-a=fingerprint:sha-256 82:1E:F4:77:79:BF:31:AC:90:F6:0C:91:FB:FE:C5:0A:39:47:63:2E:18:A4:0F:36:7C:53:7A:D2:B8:91:42:A3
-a=setup:active
-a=mid:0
-a=sctp-port:5000
-a=max-message-size:262144
-)sdp";
-    SDP sdp(text);
-    logger::info(sdp);
-    auto m = sdp.find("media");
-    for (auto it = m->begin(); it != m->end(); ++it) {
-      logger::info({{"ev","media"}, {"media", *it}});
-      auto p = it->find("protocol");
-      logger::info({{"ev","media protocol"}, {"protocol", *p}});
-    }
-    return false;
-  }
-}
+} // namespace webrtc
+} // namespace base

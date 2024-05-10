@@ -1,76 +1,95 @@
 #pragma once
 
+#include "base/conn.h"
+#include "base/http.h"
 #include "base/id_factory.h"
 #include "base/session.h"
-#include "base/stream.h"
 #include "base/webrtc/ice.h"
 #include "base/webrtc/sctp.h"
 #include "base/webrtc/dtls.h"
+#include "base/webrtc/candidate.h"
 
 // TODO: if enabling srtp, this also need to be replaced with homebrew version
 #include "RTC/SrtpSession.hpp"
 
 namespace base {
-  class WebRTCServer {
+namespace webrtc {
+  typedef base::Stream Stream;
+  typedef base::AdhocStream AdhocStream;
+  typedef base::AlarmProcessor AlarmProcessor;
+  typedef base::Connection BaseConnection;
+  typedef IceProber::TxId TxId;
+
+  // ConnectionFactory
+  class ConnectionFactory {
   public:
-    class IceUFlag : public std::string {
+    class IceUFrag : public std::string {
     public:
-      IceUFlag(const std::string &s) : std::string(s) {}
-      IceUFlag(const std::string &&s) : std::string(s) {}
-      IceUFlag(const IceUFlag &f) : std::string(f) {}
-      IceUFlag(const IceUFlag &&f) : std::string(f) {}
+      IceUFrag() : std::string() {}
+      IceUFrag(const std::string &s) : std::string(s) {}
+      IceUFrag(const std::string &&s) : std::string(s) {}
+      IceUFrag(const IceUFrag &f) : std::string(f) {}
+      IceUFrag(const IceUFrag &&f) : std::string(f) {}
+      IceUFrag& operator=(IceUFrag&& other) noexcept {
+        if (this != &other) { dynamic_cast<std::string *>(this)->operator=(other); }
+        return *this;
+      }
     };
   public: // sessions
     class Connection;
     class TcpSession : public TcpListener::TcpSession {
     public:
-      TcpSession(TcpListener &f, Fd fd, const Address &addr) : 
-        TcpListener::TcpSession(f, fd, addr), connection_() {}
+      typedef TcpSessionFactory Factory;
+      TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+        TcpSession(f, fd, addr) { connection_ = c; }
+      TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) :
+        TcpSessionFactory::TcpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
-      void OnShutdown() override;
-    private:
+      qrpc_time_t OnShutdown() override;
+    protected:
       std::shared_ptr<Connection> connection_;
     };
     class UdpSession : public UdpListener::UdpSession {
     public:
-      UdpSession(UdpListener &f, Fd fd, const Address &addr) : 
-        UdpListener::UdpSession(f, fd, addr), connection_() {}
+      typedef UdpSessionFactory Factory;
+      UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+        UdpSession(f, fd, addr) { connection_ = c; }
+      UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) :
+        UdpSessionFactory::UdpSession(f, fd, addr), connection_() {}
       int OnRead(const char *p, size_t sz) override;
-      void OnShutdown() override;
-    private:
+      qrpc_time_t OnShutdown() override;
+    protected:
       std::shared_ptr<Connection> connection_;
     };
-  public: // servers
-    typedef TcpServer<TcpSession> BaseTcpServer;
-    typedef UdpServer<UdpSession> BaseUdpServer;
-    class TcpPort : public BaseTcpServer {
+    typedef TcpListenerOf<ConnectionFactory::TcpSession> TcpPortBase;
+    class TcpPort : public TcpPortBase {
     public:
-      TcpPort(WebRTCServer &ws) : BaseTcpServer(ws.loop()), webrtc_server_(ws) {}
-      WebRTCServer &webrtc_server() { return webrtc_server_; }
+      TcpPort(ConnectionFactory &cf) : TcpPortBase(cf.loop()), cf_(cf) {}
+      ConnectionFactory &connection_factory() { return cf_; }
     private:
-      WebRTCServer &webrtc_server_;
+      ConnectionFactory &cf_;
     };
-    class UdpPort : public BaseUdpServer {
+    typedef UdpListenerOf<ConnectionFactory::UdpSession> UdpPortBase;
+    class UdpPort : public UdpPortBase {
     public:
-      UdpPort(WebRTCServer &ws) : BaseUdpServer(ws.loop(), ws.udp_listener_config()), webrtc_server_(ws) {}
-      WebRTCServer &webrtc_server() { return webrtc_server_; }
+      UdpPort(ConnectionFactory &cf) : UdpPortBase(cf.loop(), cf.udp_listener_config()), cf_(cf) {}
+      ConnectionFactory &connection_factory() { return cf_; }
     private:
-      WebRTCServer &webrtc_server_;
+      ConnectionFactory &cf_;
     };
     class SyscallStream : public AdhocStream {
     public:
-      SyscallStream(Connection &c, const Config &config, const ConnectHandler &h) :
-        AdhocStream(c, config, Handler(Nop()), h, ShutdownHandler(Nop())) {}
+      SyscallStream(BaseConnection &c, const Config &config, ConnectHandler &&h) :
+        AdhocStream(c, config, std::move(Handler(Nop())), std::move(h), std::move(ShutdownHandler(Nop()))) {}
       ~SyscallStream() {}
     };
-    typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, WebRTCServer::Connection &)> StreamFactory;
   public: // connections
-    class Connection : public IceServer::Listener,
+    class Connection : public base::Connection, 
+                       public IceServer::Listener,
                        public DtlsTransport::Listener,
-                       public SctpAssociation::Listener,
-                       public Stream::Processor {
+                       public SctpAssociation::Listener {
     public:
-      Connection(WebRTCServer &sv, DtlsTransport::Role dtls_role) :
+      Connection(ConnectionFactory &sv, DtlsTransport::Role dtls_role) :
         sv_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr),
         srtp_send_(nullptr), srtp_recv_(nullptr), streams_(), stream_id_factory_(),
@@ -90,26 +109,38 @@ namespace base {
         }
       ~Connection() {}
     public:
-      virtual int OnConnect() { return QRPC_OK; }
-      virtual void OnShutdown() {}
-      void Close();
+      // implements base::Connection
+      void Close() override;
+      int Send(const char *p, size_t sz) override;
+      int Send(Stream &s, const char *p, size_t sz, bool binary) override;
+      void Close(Stream &s) override;
+      int Open(Stream &s) override;
+      std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override {
+        return OpenStream(c, factory().stream_factory());
+      }
+      int OnConnect() override { return QRPC_OK; }
+      void OnShutdown() override {}
     public:
       bool connected() const;
       inline bool closed() const { return closed_; }
-      inline WebRTCServer &server() { return sv_; }
-      inline const WebRTCServer &server() const { return sv_; }
+      inline ConnectionFactory &factory() { return sv_; }
+      inline const ConnectionFactory &factory() const { return sv_; }
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
       inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
+      // for now, qrpc server initiates dtls transport because safari does not initiate it
+      // even if we specify "setup: passive" in SDP of whip response
+      inline bool is_client() const { return dtls_role_ == DtlsTransport::Role::SERVER; }
     public:
-      int Init(std::string &uflag, std::string &pwd);
+      int Init(std::string &ufrag, std::string &pwd);
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
       int RunDtlsTransport();
+      IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority);
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
-      std::shared_ptr<Stream> NewStream(const Stream::Config &c, const WebRTCServer::StreamFactory &sf);
-      std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const WebRTCServer::StreamFactory &sf);
+      std::shared_ptr<Stream> NewStream(const Stream::Config &c, const StreamFactory &sf);
+      std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const StreamFactory &sf);
       bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
         return Session::CheckTimeout(last_active_, now, timeout, next_check);
       }
@@ -122,15 +153,6 @@ namespace base {
       int OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz);
       int OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz);      
     public:
-      // implements Stream::Processor
-      int Send(Stream &s, const char *p, size_t sz, bool binary) override;
-      void Close(Stream &s) override;
-      int Open(Stream &s) override;
-      std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override {
-        return OpenStream(c, server().stream_factory());
-      }
-      void CloseConnection() override { Close(); }
-
       // implements IceServer::Listener
 			void OnIceServerSendStunPacket(
 			  const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) override;
@@ -147,6 +169,10 @@ namespace base {
 			void OnIceServerCompleted(const IceServer *iceServer)    override;
 			void OnIceServerDisconnected(const IceServer *iceServer) override;
       bool OnIceServerCheckClosed(const IceServer *) override { return closed(); }
+			void OnIceServerSuccessResponded(
+					const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) override;
+			void OnIceServerErrorResponded(
+				const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) override;
 
       // implements DtlsTransport::Listener
 			void OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) override;
@@ -194,8 +220,9 @@ namespace base {
 			  SctpAssociation* sctpAssociation, uint32_t len) override;    
     protected:
       qrpc_time_t last_active_;
-      WebRTCServer &sv_;
+      ConnectionFactory &sv_;
       std::unique_ptr<IceServer> ice_server_; // ICE
+      std::unique_ptr<IceProber> ice_prober_; // ICE(client)
       DtlsTransport::Role dtls_role_;
       std::unique_ptr<DtlsTransport> dtls_transport_; // DTLS
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
@@ -204,6 +231,7 @@ namespace base {
       IdFactory<Stream::Id> stream_id_factory_;
       bool sctp_connected_, closed_;
     };
+    typedef std::function<Connection *(ConnectionFactory &, DtlsTransport::Role)> FactoryMethod;
     struct Port {
       enum Protocol {
         NONE = 0,
@@ -217,7 +245,7 @@ namespace base {
       std::string ip{""};
       std::vector<Port> ports;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
-      size_t sctp_send_buffer_size;
+      size_t send_buffer_size;
       qrpc_time_t udp_session_timeout;
       qrpc_time_t connection_timeout;
       AlarmProcessor &alarm_processor;
@@ -231,32 +259,41 @@ namespace base {
       int Derive(AlarmProcessor &ap);
     };
   public:
-    WebRTCServer(Loop &l, Config &&config, const StreamFactory &sf) :
-      loop_(l), config_(config), stream_factory_(sf),
-      tcp_ports_(), udp_ports_(), connections_() {}
-    ~WebRTCServer() {}
+    ConnectionFactory(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
+      loop_(l), config_(config), factory_method_(fm), stream_factory_(sf), connections_() {}
+    ConnectionFactory(Loop &l, Config &&config, StreamFactory &&sf) :
+      loop_(l), config_(config), factory_method_([this](ConnectionFactory &cf, DtlsTransport::Role role) {
+        return new Connection(cf, role);
+      }), stream_factory_(sf), connections_() {}
+    ~ConnectionFactory() { Fin(); }
   public:
     Loop &loop() { return loop_; }
     const Config &config() const { return config_; }
     StreamFactory &stream_factory() { return stream_factory_; }
     AlarmProcessor &alarm_processor() { return config_.alarm_processor; }
-    uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
-    uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
+    template <class F> inline F& to() { return reinterpret_cast<F &>(*this); }
+    template <class F> inline const F& to() const { return reinterpret_cast<const F &>(*this); }
     const std::string &fingerprint() const { return config_.fingerprint; }
     const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
-    const UdpPort::Config udp_listener_config() const {
+    const UdpSessionFactory::Config udp_listener_config() const {
       return { .alarm_processor = config_.alarm_processor, .session_timeout = config_.udp_session_timeout };
+    }
+    uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
+    uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
+    const std::string primary_proto() const {
+      return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";
     }
   public:
     int Init();
     void Fin();
-    int NewConnection(const std::string &client_sdp, std::string &server_sdp);
-    void CloseConnection(Connection &c);
+    std::shared_ptr<Connection> FindFromUfrag(const IceUFrag &ufrag);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
-    inline void RemoveUFlag(IceUFlag &uflag) {
-      // NOTE: this also called from destructor of Connection
-      // though raw pointer in map might be freed here, in above case, erase does nothing.
-      connections_.erase(uflag);
+    void CloseConnection(Connection &c);
+    void CloseConnection(const IceUFrag &ufrag) {
+      auto it = connections_.find(ufrag);
+      if (it != connections_.end()) {
+        CloseConnection(*it->second);
+      }
     }
     qrpc_time_t CheckTimeout() {
         qrpc_time_t now = qrpc_time_now();
@@ -277,26 +314,133 @@ namespace base {
     Loop &loop_;
     Config config_;
     AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
+    FactoryMethod factory_method_;
     StreamFactory stream_factory_;
     std::vector<TcpPort> tcp_ports_;
     std::vector<UdpPort> udp_ports_;
-    std::map<IceUFlag, std::shared_ptr<Connection>> connections_;
+    std::map<IceUFrag, std::shared_ptr<Connection>> connections_;
   private:
+    static uint32_t g_ref_count_;
+    static std::mutex g_ref_sync_mutex_;
     static int GlobalInit(AlarmProcessor &a);
     static void GlobalFin();
   };
-  class AdhocWebRTCServer : public WebRTCServer {
+  class AdhocConnection : public ConnectionFactory::Connection {
   public:
-    AdhocWebRTCServer(Loop &l, Config &&c, const Stream::Handler &h) : WebRTCServer(l, std::move(c), 
-      [&h](const Stream::Config &config, WebRTCServer::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, h));
-      }) {}
-    AdhocWebRTCServer(Loop &l, Config &&c, 
-      const Stream::Handler &h, const AdhocStream::ConnectHandler &ch, const AdhocStream::ShutdownHandler &sh) :
-      WebRTCServer(l, std::move(c), [&h, &ch, &sh](const Stream::Config &config, WebRTCServer::Connection &conn) {
-        return std::shared_ptr<Stream>(new AdhocStream(conn, config, h, ch, sh));
-      }) {}
-    ~AdhocWebRTCServer() {}
+    typedef std::function<int (ConnectionFactory::Connection &)> ConnectHandler;
+    typedef std::function<void (ConnectionFactory::Connection &)> ShutdownHandler;
+  public:
+    AdhocConnection(ConnectionFactory &sv, DtlsTransport::Role dtls_role, ConnectHandler &&ch, ShutdownHandler &&sh) :
+      Connection(sv, dtls_role), connect_handler_(std::move(ch)), shutdown_handler_(std::move(sh)) {};
+    int OnConnect() override { return connect_handler_(*this); }
+    void OnShutdown() override { shutdown_handler_(*this); }
+  private:
+    ConnectHandler connect_handler_;
+    ShutdownHandler shutdown_handler_;
   };
-  typedef WebRTCServer::Connection Connection;
+
+
+  // Client
+  class Client : public ConnectionFactory, public base::Client {
+  public:
+    Client(Loop &l, Config &&config, StreamFactory &&sf) :
+      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.alarm_processor) {}
+    Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.alarm_processor) {}
+    ~Client() {}
+  public:
+    // implement base::Client
+    bool Connect(const std::string &host, int port, const std::string &path) override;
+    void Close(BaseConnection &c) override { CloseConnection(dynamic_cast<Connection &>(c)); }
+  public:
+    int Offer(std::string &sdp, std::string &ufrag);
+    bool Open(const std::vector<Candidate> &candidate, size_t idx, std::shared_ptr<Connection> &c);
+  protected:
+    HttpClient http_client_;
+  };
+
+
+  // AdhocClient
+  class AdhocClient : public Client {
+  public:
+    AdhocClient(Loop &l, Config &&c, Stream::Handler &&h) : Client(l, std::move(c), 
+      [h = std::move(h)](const Stream::Config &config, base::Connection &conn) {
+        auto hh = h;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh)));
+      }) {}
+    AdhocClient(Loop &l, Config &&c,
+      Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
+      Client(l, std::move(c), [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](
+        const Stream::Config &config, base::Connection &conn
+      ) {
+        auto hh = h; auto chh = ch; auto shh = sh;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
+      }) {}
+    AdhocClient(Loop &l, Config &&c, 
+      AdhocConnection::ConnectHandler &&cch, AdhocConnection::ShutdownHandler &&csh,
+      Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
+      Client(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, DtlsTransport::Role role) {
+        auto cchh = cch; auto cshh = csh;
+        return new AdhocConnection(cf, role, std::move(cchh), std::move(cshh));
+      }, [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](const Stream::Config &config, base::Connection &conn) {
+        auto hh = h; auto chh = ch; auto shh = sh;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
+      }) {}
+    ~AdhocClient() {}
+  };  
+
+
+  // Server
+  class Server : public ConnectionFactory, public base::Server {
+  public:
+    Server(Loop &l, Config &&config, StreamFactory &&sf) :
+      ConnectionFactory(l, std::move(config), std::move(sf)), http_listener_(l), router_() {}
+    Server(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_listener_(l), router_() {}
+    ~Server() {}
+  public:
+    int Accept(const std::string &client_sdp, std::string &server_sdp);
+    // implements base::Server
+    void Close(BaseConnection &c) override { CloseConnection(dynamic_cast<Connection &>(c)); }
+    bool Listen(
+      int signaling_port, int port,
+      const std::string &listen_ip, const std::string &path
+    ) override;
+    HttpRouter &RestRouter() override { return router_; }
+  protected:
+    HttpListener http_listener_;
+    HttpRouter router_;
+  };
+
+
+  // AdhocServer
+  class AdhocServer : public Server {
+  public:
+    AdhocServer(Loop &l, Config &&c, Stream::Handler &&h) : Server(l, std::move(c), 
+      [h = std::move(h)](const Stream::Config &config, base::Connection &conn) {
+        auto hh = h;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh)));
+      }) {}
+    AdhocServer(Loop &l, Config &&c, 
+      Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
+      Server(l, std::move(c), [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](
+        const Stream::Config &config, base::Connection &conn
+      ) {
+        auto hh = h; auto chh = ch; auto shh = sh;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
+      }) {}
+    AdhocServer(Loop &l, Config &&c, 
+      AdhocConnection::ConnectHandler &&cch, AdhocConnection::ShutdownHandler &&csh,
+      Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
+      Server(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, DtlsTransport::Role role) {
+        auto cchh = cch; auto cshh = csh;
+        return new AdhocConnection(cf, role, std::move(cchh), std::move(cshh));
+      }, [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](const Stream::Config &config, base::Connection &conn) {
+        auto hh = h; auto chh = ch; auto shh = sh;
+        return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
+      }) {}
+    ~AdhocServer() {}
+  };  
+  typedef ConnectionFactory::Connection Connection;
+} //namespace webrtc
 } //namespace base

@@ -10,6 +10,8 @@
 #include <mutex>
 
 namespace base {
+namespace webrtc {
+  typedef base::AlarmProcessor AlarmProcessor;
   /* Static. */
 
   // static constexpr size_t CheckerInterval{ 10u }; // In ms.
@@ -94,7 +96,7 @@ namespace base {
       numSctpAssociations   = 0u;
       nextSctpAssociationId = 0u;
 
-      DepUsrSCTP::mapIdSctpAssociation.clear();
+	    DepUsrSCTP::mapIdSctpAssociation.clear();
     }
   }
 
@@ -178,4 +180,5 @@ namespace base {
     lastCalledAtMs = nowMs;
     return now + interval;
   }
+} // namespace webrtc
 } // namespace base

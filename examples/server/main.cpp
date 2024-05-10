@@ -11,13 +11,64 @@
 using json = nlohmann::json;
 using namespace base;
 
+class Handler {
+    static int count_;
+public:
+    static void Reset() {
+        count_ = 0;
+    }
+    int Connect(Session &s, std::string proto) {
+        logger::info({{"ev","session connected"},{"p",proto},{"a",s.addr().str()},{"c",count_}});
+        if (count_ == 0) {
+            logger::info({{"ev","kill session on connect"},{"p",proto},{"a",s.addr().str()}});
+            count_++;
+            return QRPC_EUSER;
+        } else {
+            return QRPC_OK;
+        }
+    }
+    int Read(Session &s, std::string proto, const char *p, size_t sz) {
+        auto pl = std::string(p, sz);
+        logger::info({{"ev","session read"},{"p",proto},{"a",s.addr().str()},{"pl", pl}});
+        if (pl == "die") {
+            logger::info({{"ev","kill session on read"},{"p",proto},{"a",s.addr().str()}});
+            return QRPC_EUSER;
+        } else if (pl == "timeout") {
+            logger::info({{"ev","nothing returns to make peer timedout"},{"p",proto},{"a",s.addr().str()}});
+            return QRPC_OK;
+        } else {
+            return s.Send(p, sz);
+        }
+    }
+    qrpc_time_t Shutdown(Session &s, std::string proto) {
+        logger::info({{"ev","session shutdown"},{"p",proto},{"a",s.addr().str()}});
+        return 0;
+    }
+};
+int Handler::count_ = 0;
+class TestUdpSession : public UdpSession {
+    Handler handler_;
+public:
+    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
+    int OnConnect() override {
+        return handler_.Connect(*this, "udp");
+    }
+    int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "udp", p, sz); }
+    qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "udp"); }
+};
+class TestTcpSession : public TcpSession {
+    Handler handler_;
+public:
+    TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
+    int OnConnect() override {
+        return handler_.Connect(*this, "tcp");
+    }
+    int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "tcp", p, sz); }
+    qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "tcp"); }
+};
+
 int main(int argc, char *argv[]) {
     bool alive = true;
-    // if (!SDP::Test()) {
-    //     exit(0);
-    // }
-    // loop and timerscheduler must be live longer than other objects
-    // and loop must be more longer than timerscheduler
     Loop l; {
     if (l.Open(1024) < 0) {
         DIE("fail to init loop");
@@ -50,14 +101,9 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    HttpServer s(l);
-    AdhocWebRTCServer w(l, WebRTCServer::Config {
-        .ports = {
-            {.protocol = WebRTCServer::Port::UDP, .port = 11111},
-            {.protocol = WebRTCServer::Port::TCP, .port = 11111}
-        },
+    webrtc::AdhocServer w(l, webrtc::ConnectionFactory::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
-        .sctp_send_buffer_size = 256 * 1024,
+        .send_buffer_size = 256 * 1024,
         .udp_session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
@@ -75,7 +121,7 @@ int main(int argc, char *argv[]) {
             }); // echo
         } else if (s.label() == "test2") {
             auto stream_name = req["streamName"].get<std::string>();
-            auto ns = s.processor().OpenStream({
+            auto ns = s.connection().OpenStream({
                 .label = stream_name
             });
             ASSERT(ns != nullptr);
@@ -90,7 +136,7 @@ int main(int argc, char *argv[]) {
             auto die = req["die"].get<bool>();
             if (die) {
                 logger::info({{"ev","recv die"}});
-                s.processor().CloseConnection();
+                s.connection().Close();
             } else {
                 return s.Send({{"msg", "byebye"}});
             }
@@ -102,13 +148,12 @@ int main(int argc, char *argv[]) {
     }, [](Stream &s, const Stream::CloseReason &reason) {
         logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
     });
-    if (w.Init() < 0) {
-        DIE("fail to init webrtc");
-    }
+    // signaling: 8888(http), webrtc: 11111(udp/tcp)
+    base::Server &bsv = w;
     std::filesystem::path p(__FILE__);
     auto rootpath = p.parent_path().string();
     auto htmlpath = rootpath + "/resources/client.html";
-    HttpRouter r = HttpRouter().
+    bsv.RestRouter().
     Route(std::regex("/"), [&htmlpath](HttpSession &s, std::cmatch &) {
         size_t htmlsz;
         auto html = Syscall::ReadFile(htmlpath, &htmlsz);
@@ -120,7 +165,7 @@ int main(int argc, char *argv[]) {
             {.key = "Content-Type", .val = "text/html"},
             {.key = "Content-Length", .val = htmlen.c_str()}
         };
-        s.Write(HRC_OK, h, 2, html.get(), htmlsz);
+        s.Respond(HRC_OK, h, 2, html.get(), htmlsz);
         return nullptr;
     }).
     Route(std::regex("/(.*)\\.(.*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
@@ -146,23 +191,8 @@ int main(int argc, char *argv[]) {
             {.key = "Content-Type", .val = ctypes[m[2].str()].c_str()},
             {.key = "Content-Length", .val = flen.c_str()}
         };
-        s.Write(HRC_OK, h, 2, file.get(), filesz);
+        s.Respond(HRC_OK, h, 2, file.get(), filesz);
         return nullptr;
-    }).
-    Route(std::regex("/accept"), [&w](HttpSession &s, std::cmatch &) {
-        int r;
-        std::string sdp;
-        if ((r = w.NewConnection(s.fsm().body(), sdp)) < 0) {
-            logger::error("fail to create connection");
-            s.ServerError("server error %d", r);
-        }
-        std::string sdplen = std::to_string(sdp.length());
-        HttpHeader h[] = {
-            {.key = "Content-Type", .val = "application/sdp"},
-            {.key = "Content-Length", .val = sdplen.c_str()}
-        };
-        s.Write(HRC_OK, h, 2, sdp.c_str(), sdp.length());
-	    return nullptr;
     }).
     Route(std::regex("/test"), [](HttpSession &s, std::cmatch &) {
         json j = {
@@ -174,25 +204,46 @@ int main(int argc, char *argv[]) {
             {.key = "Content-Type", .val = "application/json"},
             {.key = "Content-Length", .val = bodylen.c_str()}
         };
-        s.Write(HRC_OK, h, 2, body.c_str(), body.length());
+        s.Respond(HRC_OK, h, 2, body.c_str(), body.length());
+	    return nullptr;
+    }).
+    Route(std::regex("/reset"), [](HttpSession &s, std::cmatch &) {
+        HttpHeader h[] = {
+            {.key = "Content-Type", .val = "application/text"},
+            {.key = "Content-Length", .val = "5"}
+        };
+        Handler::Reset();
+        s.Respond(HRC_OK, h, 2, "reset", 5);
 	    return nullptr;
     }).
     Route(std::regex("/ws"), [](HttpSession &s, std::cmatch &) {
-        return WebSocketServer::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
+        return WebSocketListener::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
             // echo server
             return ws.Send(p, sz);
         });
     });
-    if (!s.Listen(8888, r)) {
-        DIE("fail to listen on http");
+    if (!bsv.Listen(8888, 11111)) {
+        DIE("fail to listen webrtc");
     }
-    AdhocUdpServer us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
+    AdhocUdpListener us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
     }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
     if (!us.Listen(9999)) {
         DIE("fail to listen on UDP");
+    }
+    UdpListener tu(l, [&tu](Fd fd, const Address &a) {
+        return new TestUdpSession(tu, fd, a);
+    }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
+    if (!tu.Listen(10000)) {
+        DIE("fail to listen on UDP for test");
+    }
+    TcpListener tt(l, [&tt](Fd fd, const Address &a) {
+        return new TestTcpSession(tt, fd, a);
+    });
+    if (!tt.Listen(10001)) {
+        DIE("fail to listen on TCP for test");
     }
     while (alive) {
         l.Poll();

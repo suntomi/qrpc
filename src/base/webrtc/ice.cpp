@@ -10,8 +10,9 @@
 #define QRPC_DISABLE_MS_TRACK
 #include "base/webrtc/mpatch.h"
 
-namespace base
-{
+namespace base {
+namespace webrtc {
+	// IceServer
 	/* Static. */
 
 	static constexpr size_t StunSerializeBufferSize{ 65536 };
@@ -267,15 +268,24 @@ namespace base
 
 			case RTC::StunPacket::Class::SUCCESS_RESPONSE:
 			{
-				QRPC_LOG(debug, "STUN Binding Success Response processed");
+				// QRPC_LOG(debug, "STUN Binding Success Response processed");
+				this->listener->OnIceServerSuccessResponded(this, packet, session);
 
+				uint32_t nomination{ 0u };
+				if (packet->HasNomination())
+				{
+					nomination = packet->GetNomination();
+				}
+
+				// Handle the session.
+				HandleTuple(session, packet->HasUseCandidate(), packet->HasNomination(), nomination);
 				break;
 			}
 
 			case RTC::StunPacket::Class::ERROR_RESPONSE:
 			{
 				QRPC_LOG(debug, "STUN Binding Error Response processed");
-
+				this->listener->OnIceServerErrorResponded(this, packet, session);
 				break;
 			}
 		}
@@ -695,4 +705,64 @@ namespace base
 		// Notify the listener.
 		this->listener->OnIceServerSelectedSession(this, this->selectedSession);
 	}
-} // namespace RTC
+
+	// IceProber
+	void IceProber::Success() {
+		last_success_ = qrpc_time_now();
+		state_ = CONNECTED;
+	}
+	void IceProber::SendBindingRequest(Session *s) {
+		static thread_local TxId tx_id;
+		static thread_local RTC::StunPacket *stun_packet = new RTC::StunPacket(
+			RTC::StunPacket::Class::REQUEST, RTC::StunPacket::Method::BINDING, tx_id, nullptr, 0);
+		uint8_t stun_buffer[1024];
+		random::bytes(tx_id, sizeof(TxId));
+		ASSERT(!uflag_.empty() && !pwd_.empty());
+		stun_packet->SetUsername((uflag_ + ":").c_str(), uflag_.length() + 1);
+		stun_packet->Authenticate(pwd_);
+		// https://speakerdeck.com/iwashi86/webrtc-ice-internals?slide=60
+		stun_packet->SetPriority(0x7e0000);
+		stun_packet->SetIceControlling(1);
+		stun_packet->Serialize(stun_buffer);
+		s->Send(
+			reinterpret_cast<const char *>(stun_buffer), stun_packet->GetSize()
+		);
+	}
+  qrpc_time_t IceProber::OnTimer(Session *s) {
+		// this interval setting is based on observing chrome's behaviour
+		// TODO: is there standard interval for this?
+		auto now = qrpc_time_now();
+    SendBindingRequest(s);
+    switch (state_) {
+    case NEW:
+			state_ = DISCONNECTED;
+			last_success_ = now;
+      return now + qrpc_time_msec(50);
+    case CONNECTED:
+      if (now - last_success_ > qrpc_time_msec(2500)) {
+        state_ = CHECKING;
+        return now + qrpc_time_sec(1);
+      }
+      return now + qrpc_time_msec(2500);
+    case CHECKING:
+      if (now - last_success_ > disconnect_timeout_) {
+        state_ = DISCONNECTED;
+        return now + qrpc_time_msec(50);
+      }
+      return now + qrpc_time_sec(1);
+    case DISCONNECTED:
+      if (now - last_success_ > failed_timeout_) {
+        state_ = FAILED;
+      }
+      return now + qrpc_time_msec(50);
+    case FAILED:
+      state_ = NEW;
+			last_success_ = 0;
+      return 0ULL; // alarm stops
+    default:
+      ASSERT(false);
+      return 0ULL;
+    }
+  }
+} // namespace webrtc
+} // namespace base

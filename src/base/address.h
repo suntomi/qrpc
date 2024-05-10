@@ -1,6 +1,9 @@
 #pragma once
 
+#include "base/assert.h"
+
 #include <sys/socket.h>
+#include <netinet/in.h>
 #include <string>
 
 namespace base {
@@ -24,11 +27,20 @@ namespace base {
     std::string hostip() const;
     int port() const;
     std::string str() const { return hostip() + ":" + std::to_string(port()); }
+    void Reset(const sockaddr_storage &sa, socklen_t al) {
+      ASSERT(al >= sizeof(sockaddr_in)); // probably too short
+      Reset(reinterpret_cast<const sockaddr *>(&sa), al);
+    }
+    void Reset(const sockaddr_in &sa) {
+      Reset(reinterpret_cast<const sockaddr *>(&sa), sizeof(sockaddr_in));
+    }
+    void Reset(const sockaddr_in6 &sa) {
+      Reset(reinterpret_cast<const sockaddr *>(&sa), sizeof(sockaddr_in6));
+    }
+    int Set(const std::string &host, int port);
+  private:
     void Reset(const sockaddr *a, socklen_t al) {
       assign(reinterpret_cast<const char *>(a), al);
-    }
-    void Reset(const sockaddr_storage &sa, socklen_t al) {
-      Reset(reinterpret_cast<const sockaddr *>(&sa), al);
     }
   };
 }

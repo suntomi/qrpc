@@ -160,6 +160,8 @@ typedef enum {
   QRPC_CLOSE_REASON_SYSCALL = 3,  //some library function call fails
   QRPC_CLOSE_REASON_RESOLVE = 4,  //dns resolve fails
   QRPC_CLOSE_REASON_MIGRATED = 5, //session migrated to other session (eg. http => websocket)
+  QRPC_CLOSE_REASON_TIMEOUT = 6,  //session does not established before configured timeout
+  QRPC_CLOSE_REASON_SHUTDOWN = 7, //parent client or server shutdown
 } qrpc_close_reason_code_t;
 
 typedef struct {

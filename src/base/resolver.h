@@ -64,8 +64,6 @@ class AsyncResolver {
     ~IoRequest() override {}
     // implements IoProcessor
     void OnEvent(Fd fd, const Event &e) override;
-    void OnClose(Fd fd) override {}
-    int OnOpen(Fd fd) override { return QRPC_OK; }
 
     uint32_t current_flags() const { return current_flags_; }
     bool alive() const { return alive_; }
@@ -78,13 +76,13 @@ class AsyncResolver {
   std::vector<Query*> queries_;
  public:
   AsyncResolver() : channel_(nullptr), io_requests_() {}
-  bool Initialize(const Config &config);
+  bool Initialize(const Config &config = Config());
   void Resolve(Query *q) { q->resolver_ = this; queries_.push_back(q); }
   void Resolve(const char *host, int family, Callback cb, void *arg);
   void Poll(Loop *l);
   inline bool Initialized() const { return channel_ != nullptr; }
   static inline int PtoN(const std::string &host, int *af, void *buff, qrpc_size_t buflen) {
-    *af = host.find(':') == std::string::npos ?  AF_INET : AF_INET6;
+    *af = (host.find(':') == std::string::npos ? AF_INET : AF_INET6);
     if (Syscall::GetIpAddrLen(*af) > buflen) {
       ASSERT(false);
       return -1;

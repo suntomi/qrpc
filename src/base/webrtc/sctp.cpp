@@ -16,6 +16,8 @@
 #define QRPC_DISABLE_MS_TRACK
 #include "base/webrtc/mpatch.h"
 
+typedef base::webrtc::DepUsrSCTP DepUsrSCTP;
+
 // Free send buffer threshold (in bytes) upon which send_cb will be executed.
 static const uint32_t SendBufferThreshold{ 256u };
 
@@ -46,7 +48,7 @@ inline static int onRecvSctpData(
   int flags,
   void* ulpInfo)
 {
-	auto* sctpAssociation = base::DepUsrSCTP::RetrieveSctpAssociation(reinterpret_cast<uintptr_t>(ulpInfo));
+	auto* sctpAssociation = DepUsrSCTP::RetrieveSctpAssociation(reinterpret_cast<uintptr_t>(ulpInfo));
 
 	if (!sctpAssociation)
 	{
@@ -91,7 +93,7 @@ inline static int onRecvSctpData(
 
 inline static int onSendSctpData(struct socket* /*sock*/, uint32_t freeBuffer, void* ulpInfo)
 {
-	auto* sctpAssociation = base::DepUsrSCTP::RetrieveSctpAssociation(reinterpret_cast<uintptr_t>(ulpInfo));
+	auto* sctpAssociation = DepUsrSCTP::RetrieveSctpAssociation(reinterpret_cast<uintptr_t>(ulpInfo));
 
 	if (!sctpAssociation)
 	{
@@ -106,6 +108,7 @@ inline static int onSendSctpData(struct socket* /*sock*/, uint32_t freeBuffer, v
 }
 
 namespace base {
+namespace webrtc {
 	/* Static. */
 
 	static constexpr size_t SctpMtu{ 1200 };
@@ -1036,4 +1039,5 @@ namespace base {
 			this->listener->OnSctpAssociationBufferedAmount(this, this->sctpBufferedAmount);
 		}
 	}
-} // namespace RTC
+} // namespace webrtc
+} // namespace base

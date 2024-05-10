@@ -118,10 +118,13 @@ namespace internal {
 			return register_from_flag(d, flag, EV_ADD | EV_ET | EV_EOF);
 		}
 		inline int Mod(Fd d, uint32_t flag) {
+			Del(d);
 			return register_from_flag(d, flag, EV_ADD | EV_ET | EV_EOF);
 		}
 		inline int Del(Fd d) {
-			return register_from_flag(d, EV_READ, EV_DELETE);
+			//　try remove all flag and ignore error (if not set, -1(ENOENT) is returned from kevent)
+			register_from_flag(d, EV_READ | EV_WRITE, EV_DELETE);
+			return QRPC_OK;
 		}
 		inline int Wait(Event *ev, int size, Timeout &to) {
 			return ::kevent(fd_, nullptr, 0, ev, size, &to);

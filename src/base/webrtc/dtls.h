@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
-namespace base
-{
+namespace base {
+namespace webrtc {
 	class DtlsTransport : public Timer::Listener
 	{
 	public:
@@ -230,6 +230,7 @@ namespace base
 		bool handshakeDoneNow{ false };
 		std::string remoteCert;
 	};
-} // namespace RTC
+} // namespace webrtc
+} // namespace base
 
 #endif

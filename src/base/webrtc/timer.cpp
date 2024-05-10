@@ -33,7 +33,7 @@ namespace base {
     this->closed = true;
   }
 
-  void Timer::Start(uint64_t timeout, uint64_t repeat)
+  void Timer::Start(uint64_t timeout)
   {
     MS_TRACE();
 
@@ -42,17 +42,14 @@ namespace base {
       MS_THROW_ERROR("closed");
     }
 
-    this->timeout = timeout;
-    this->repeat  = repeat;
-
-    if (this->IsActive())
-    {
-      Stop();
-    }
+    Stop();
 
     this->alarm_id = this->alarm_processor.Set([this]() {
+      // set alarm_id to 0 to prevent Stop() which is called in OnTimer() from calling AlarmProcessor::Cancal(),
+      // which causes assertion in TimerScheduler::Stop(). the alarm will be canceled by return value (return 0)
+      this->alarm_id = 0;
       this->listener->OnTimer(this); 
-      return this->repeat != 0 ? qrpc_time_now() + qrpc_time_msec(this->repeat) : 0;
+      return 0;
     }, qrpc_time_now() + qrpc_time_msec(timeout));
   }
 

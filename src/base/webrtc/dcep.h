@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 namespace base {
+namespace webrtc {
   enum PPID {
     WEBRTC_DCEP = 50,
     STRING = 51,
@@ -39,6 +40,7 @@ namespace base {
     // This lifetime starts when providing the user message to the protocol stack. 
     DATA_CHANNEL_PARTIAL_RELIABLE_TIMED_UNORDERED = 0x82
   };
+  typedef base::Stream Stream;
   class DcepRequest : public Stream::Config {
   public:
     typedef struct {
@@ -173,5 +175,6 @@ namespace base {
       return 1;
     }
   };
-}
+} // namespace webrtc
+} // namespace base
 

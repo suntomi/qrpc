@@ -15,15 +15,30 @@ namespace base {
       std::uniform_int_distribution<N> dist(min, max);
       return dist(prng());
     }
+    template <>
+    inline float gen<float>(float min, float max) {
+      std::uniform_real_distribution<float> dist(min, max);
+      return dist(prng());
+    }
+    template <>
+    inline double gen<double>(double min, double max) {
+      std::uniform_real_distribution<double> dist(min, max);
+      return dist(prng());
+    }
+    inline float genf32() {
+      return gen<float>(0.0f, 1.0f);
+    }
+    inline double genf64() {
+      return gen<double>(0.0, 1.0);
+    }
     inline uint32_t gen32() {
       return gen<uint32_t>(0, UINT32_MAX);
     }
     inline uint64_t gen64() {
       return gen<uint64_t>(0, UINT64_MAX);
     }
-    inline std::string bytes(size_t len) {
+    inline uint8_t *bytes(uint8_t *ret, size_t len) {
       // generate random bytes from std::mt19937
-      std::string ret(len, 0);
       for (size_t i = 0; i < len; ++i) {
         ret[i] = gen<uint8_t>(0, UINT8_MAX);
       }

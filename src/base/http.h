@@ -168,44 +168,68 @@ namespace base {
     /******* HttpServer *******/
     class HttpSession : public TcpSession {
     public:
+        typedef std::function<TcpSession *(HttpSession&)> Callback;
         struct Header {
             const char *key;
             const char *val;
         };
     public:
-        HttpSession(TcpListener &f, Fd fd, const Address &addr) : TcpSession(f, fd, addr) {
+        HttpSession(TcpSessionFactory &f, Fd fd, const Address &addr) : TcpSession(f, fd, addr) {
             fsm_.reset(1024);
         }
         ~HttpSession() override {}
-        inline TcpListener &listener() { return factory().to<TcpListener>(); }
         const HttpFSM &req() const { return fsm_; }
         const HttpFSM &fsm() const { return fsm_; }
         HttpFSM &fsm() { return fsm_; }
-        int Write(http_result_code_t rc, Header *h, size_t hsz, const char *body, size_t bsz) {
+        TcpSessionFactory &tcp_session_factory() { return factory().to<TcpSessionFactory>(); }
+        int Request(const char *method, const char *path, 
+            Header *h = nullptr, size_t hsz = 0, const char *body = nullptr, size_t bsz = 0) {
+            char buffer[4096];
+            return WriteCommon(
+                buffer, snprintf(buffer, sizeof(buffer), "%s %s HTTP/1.1\r\n", method, path),
+                h, hsz, body, bsz
+            );
+        }
+        int Respond(http_result_code_t rc, Header *h, size_t hsz, const char *body, size_t bsz) {
+            char buffer[256];
+            return WriteCommon(
+                buffer, snprintf(buffer, sizeof(buffer), "HTTP/1.1 %d\r\n", rc),
+                h, hsz, body, bsz
+            );
+        }
+        inline int WriteCommon(const char *first_line, size_t first_line_size,
+            Header *h, size_t hsz, const char *body, size_t bsz) {
             // +2 for status line and body
-            const char *ptrs[hsz + 2];
-            char buffers[hsz + 1][1024];
-            size_t sizes[hsz + 2];
-            sizes[0] = snprintf(buffers[0], sizeof(buffers[0]), "HTTP/1.1 %d\r\n", rc);
-            ptrs[0] = buffers[0];
+            const char *ptrs[hsz + 3];
+            char buffers[hsz][1024];
+            size_t sizes[hsz + 3];
+            sizes[0] = first_line_size;
+            ptrs[0] = first_line;
             for (size_t i = 1; i <= hsz; i++) {
-                ptrs[i] = buffers[i];
+                ptrs[i] = buffers[i - 1];
                 sizes[i] = snprintf(
-                    buffers[i], sizeof(buffers[i]), "%s: %s%s",
-                    h[i - 1].key, h[i - 1].val, i == hsz ? "\r\n\r\n" : "\r\n"
+                    buffers[i - 1], sizeof(buffers[i - 1]), "%s: %s\r\n",
+                    h[i - 1].key, h[i - 1].val
                 );
             }
-            ptrs[hsz + 1] = body;
-            sizes[hsz + 1] = bsz;
-            return Syscall::Writev(fd_, ptrs, sizes, hsz + 2);
+            sizes[hsz + 1] = 2;
+            ptrs[hsz + 1] = "\r\n";
+            if (body != nullptr) {
+                ptrs[hsz + 2] = body;
+                sizes[hsz + 2] = bsz;
+                return Syscall::Writev(fd_, ptrs, sizes, hsz + 3);
+            } else {
+                return Syscall::Writev(fd_, ptrs, sizes, hsz + 2);
+            }
         }
+        virtual Callback &callback() = 0;
         // implements Session
         int OnRead(const char *p, size_t sz) override;
         int Send(const char *p, size_t sz) override {
             DIE("Send does not supported. use HttpSession::Write instead");
             return QRPC_ENOTSUPPORT;
         }
-        // use default for OnConnect/OnClose
+        // use default for OnConnect/OnShutdown
     public: 
         // utilities
         template<class... Args>
@@ -217,7 +241,7 @@ namespace base {
                 {.key = "Content-Type", .val = "text/plain"},
                 {.key = "Content-Length", .val = lenstr.c_str()},
             };
-            return Write(rc, h, 2, buffer, len);
+            return Respond(rc, h, 2, buffer, len);
         }
         template<class... Args>
         int NotFound(const std::string &fmt, const Args... args) {
@@ -240,17 +264,77 @@ namespace base {
     };
 
 
-    /******* HttpServer *******/
-    class HttpServer : public TcpServer<HttpSession> {
+    /******* HttpSessionFactory *******/
+    class HttpClient : public TcpSessionFactory {
     public:
-        typedef std::function<TcpSession *(HttpSession&)> Callback;
+        class Processor {
+        public:
+            virtual ~Processor() {}
+            virtual TcpSession *HandleResponse(HttpSession &s) = 0;
+            virtual int SendRequest(HttpSession &s) = 0;
+        };
+        class HttpClientSession : public HttpSession {
+        public:
+            HttpClientSession(
+                HttpClient &c, Fd fd, const Address &a, Processor *p
+            ) : HttpSession(c, fd, a), processor_(p), cb_(
+                [this](HttpSession &s){ return processor_->HandleResponse(s); }
+            ) {}
+            Callback &callback() override { return cb_; }
+            int OnConnect() override { return processor_->SendRequest(*this); }
+        private:
+            std::unique_ptr<Processor> processor_;
+            Callback cb_;
+        };
     public:
-        HttpServer(Loop &l) : TcpServer<HttpSession>(l) {}
-        ~HttpServer() {}
+        // https://superuser.com/a/1271864 says chrome timeout is 300s
+        HttpClient(Loop &l, AlarmProcessor &ap) : TcpSessionFactory(l, ap, qrpc_time_sec(300)) {}
+        bool Connect(const std::string &host, int port, Processor *p) {
+            return TcpSessionFactory::Connect(host, port, [this, p](Fd fd, const Address &addr) {
+                return new HttpClientSession(*this, fd, addr, p);
+            });
+        }
+    };
+    class AdhocHttpClient : public HttpClient {
+    public:
+        typedef std::function<int (HttpSession &)> Sender;
+        typedef std::function<TcpSession *(HttpSession &)> Receiver;
+        class Processor : public HttpClient::Processor {
+        public:
+            Processor(Sender &&scb, Receiver &&rcb) : scb_(std::move(scb)), rcb_(std::move(rcb)) {}
+            TcpSession *HandleResponse(HttpSession &s) override { return rcb_(s); }
+            int SendRequest(HttpSession &s) override { return scb_(s); }
+        private:
+            Sender scb_;
+            Receiver rcb_;
+        };
+    public:
+        AdhocHttpClient(Loop &l, AlarmProcessor &ap) : HttpClient(l, ap) {}
+        bool Connect(const std::string &host, int port, Sender &&scb, Receiver &&rcb) {
+            return HttpClient::Connect(host, port, new Processor(std::move(scb), std::move(rcb)));
+        }
+    };
+
+
+    /******* HttpListener *******/
+    class HttpListener : public TcpListener {
+    public:
+        typedef HttpSession::Callback Callback;
+        class HttpServerSession : public HttpSession {
+        public:
+            HttpServerSession(HttpListener &l, Fd fd, const Address &a) : HttpSession(l, fd, a) {}
+            HttpListener &listener() { return factory().to<HttpListener>(); }
+            Callback &callback() override { return listener().cb(); }
+        };
+    public:
+        HttpListener(Loop &l) : TcpListener(l, [this](Fd fd, const Address &a) {
+            return new HttpServerSession(*this, fd, a);
+        }) {}
+        ~HttpListener() {}
         Callback &cb() { return callback_; }
-        bool Listen(int port, Callback cb) {
+        bool Listen(int port, const Callback &cb) {
             callback_ = cb;
-            return TcpServer<HttpSession>::Listen(port);
+            return TcpListener::Listen(port);
         }
     protected:
         Callback callback_;
@@ -417,24 +501,23 @@ namespace base {
         HttpFSM m_sm;
     public:
         // create client/server session from begining
-        WebSocketSession(TcpListener &f, Fd fd, const Address &addr, const std::string &hostname) : 
+        WebSocketSession(TcpSessionFactory &f, Fd fd, const Address &addr, const std::string &hostname) : 
             TcpSession(f, fd, addr),
             m_state(state_client_handshake),
             m_sm_body_read(0), m_hostname(hostname), m_ctrl_frame(), m_sm() {}
-        WebSocketSession(TcpListener &f, Fd fd, const Address &addr) : 
-            TcpSession(f, fd, addr),
+        WebSocketSession(TcpSessionFactory &f, Fd fd, const Address &addr) : TcpSession(f, fd, addr),
             m_state(state_server_handshake),
             m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {}
         // for upgrading from http session (as server session)
-        WebSocketSession(TcpListener &f, Fd fd, const Address &addr, HttpFSM &fsm) : 
-            TcpSession(f, fd, addr), m_state(state_established),
+        WebSocketSession(TcpSessionFactory &f, Fd fd, const Address &addr, HttpFSM &fsm) : TcpSession(f, fd, addr),
+            m_state(state_established),
             m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {
             m_sm.move_from(fsm);
         }
         ~WebSocketSession() override {}
 
         inline bool is_client() const { return m_hostname.length() > 0; }
-        inline TcpListener &listener() { return factory().to<TcpListener>(); }
+        inline TcpSessionFactory &tcp_session_factory() { return factory().to<TcpSessionFactory>(); }
     public:
         // implements Session
         int Send(const char *p, size_t sz) override {
@@ -449,8 +532,9 @@ namespace base {
             }
             return r;
         }
-        void OnShutdown() override {
+        qrpc_time_t OnShutdown() override {
             WebSocketSession::write_frame(fd(), "", 0, opcode_connection_close, false);
+            return 0;
         }
         // implements IoProcessor (override Session's one)
         void OnEvent(Fd fd, const Event &e) override {
@@ -465,13 +549,13 @@ namespace base {
                 }
             }
             size_t sz = 4096;
-            while (LIKELY(!closed())) {
+            while (true) {
                 char buffer[sz];
                 if ((r = read_frame(fd, buffer, sz)) < 0) {
                     if (r == QRPC_EAGAIN) {
                         return;
                     }
-                    Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
+                    Close(QRPC_CLOSE_REASON_SYSCALL, r);
                     break;
                 }
                 if (r == 0 || (r = OnRead(buffer, (size_t)r)) < 0) {
@@ -960,7 +1044,7 @@ namespace base {
     class AdhocWebSocketSession : public WebSocketSession {
     public:
         typedef std::function<int (WebSocketSession &, const char *, size_t)> RecvCallback;
-        AdhocWebSocketSession(TcpListener &f, Fd fd, const Address &addr, HttpFSM &fsm, RecvCallback cb) :
+        AdhocWebSocketSession(TcpSessionFactory &f, Fd fd, const Address &addr, HttpFSM &fsm, RecvCallback cb) :
             WebSocketSession(f, fd, addr, fsm), cb_(cb) {}
         ~AdhocWebSocketSession() {}
         int OnRead(const char *p, size_t l) override {
@@ -971,27 +1055,27 @@ namespace base {
     };
 
 
-    /******* WebSocketServer *******/
-    class WebSocketServer : public TcpServer<WebSocketSession> {
+    /******* WebSocketListener *******/
+    class WebSocketListener : public TcpListenerOf<WebSocketSession> {
     public:
         // intend to being called from HttpServer::Callback;
         template <class WS>
         static inline WebSocketSession *Upgrade(HttpSession &s) {
             static_assert(std::is_base_of<WebSocketSession, WS>(), "S must be a descendant of WebSocketSession");
             // ws will be created with established state
-            auto ws = new WS(s.listener(), s.fd(), s.addr(), s.fsm());
+            auto ws = new WS(s.tcp_session_factory(), s.fd(), s.addr(), s.fsm());
             return SetupUpgrade(ws, s);
         }
         static inline WebSocketSession *Upgrade(HttpSession &s, AdhocWebSocketSession::RecvCallback cb) {
-            auto ws = new AdhocWebSocketSession(s.listener(), s.fd(), s.addr(), s.fsm(), cb);
+            auto ws = new AdhocWebSocketSession(s.tcp_session_factory(), s.fd(), s.addr(), s.fsm(), cb);
             return SetupUpgrade(ws, s);
         }
         template <class WS>
         void Open(const std::string &host, int port) {
             static_assert(std::is_base_of<WebSocketSession, WS>(), "S must be a descendant of WebSocketSession");
-            TcpServer<WebSocketSession>::Resolve(AF_INET, host, port, [this, host](Fd fd, const Address &addr) {
+            TcpListenerOf<WebSocketSession>::Connect(host, port, [this, host](Fd fd, const Address &addr) {
                 return new WS(*this, fd, addr, host);
-            });
+            }, AF_INET);
         }
     protected:
         static inline WebSocketSession *SetupUpgrade(WebSocketSession *ws, HttpSession &s) {
@@ -1079,6 +1163,10 @@ namespace base {
         TcpSession *operator () (HttpSession &s) {
             char buff[256];
             const char *path = s.fsm().url(buff, sizeof(buff));
+            if (UNLIKELY(path == nullptr)) {
+                s.BadRequest("no path specified\n");
+                return nullptr; //session finished
+            }
             for (auto &it : route_) {
                 std::cmatch match;
                 if (std::regex_match(path, match, it.first)) {

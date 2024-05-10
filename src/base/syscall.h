@@ -64,7 +64,7 @@ public:
   }
   static inline bool EAgain() {
     int eno = Errno();
-    return (EINTR == eno || EAGAIN == eno || EWOULDBLOCK == eno);
+    return (EINTR == eno || EAGAIN == eno || EWOULDBLOCK == eno || EINPROGRESS == eno);
   }
   /* note that we treat EADDRNOTAVAIL and ENETUNREACH as blocked error, when reachability_tracked. 
   because it typically happens during network link change (eg. wifi-cellular handover)
@@ -105,6 +105,17 @@ public:
       return tmp->sin_len;
     }
     return true;
+  }
+  static int GetSockAddrFromFd(Fd fd, Address &a) {
+    sockaddr_storage sa;
+    socklen_t salen = sizeof(sa);
+    if (getsockname(fd, reinterpret_cast<sockaddr *>(&sa), &salen) != 0) {
+      logger::error({{"ev","Failed to get sockaddr from fd"},
+        {"fd",fd},{"errno",Errno()}});
+      return QRPC_ESYSCALL;
+    }
+    a = Address(sa, salen);
+    return QRPC_OK;
   }
   static const void *GetSockAddrPtr(const struct sockaddr_storage &addr) {
     if (addr.ss_family == AF_INET) {
@@ -287,7 +298,8 @@ public:
     return afd;
   }
 
-  static int Bind(Fd fd, int port, bool in6 = false) {
+  // if caller omit port, OS will allocate available port number
+  static int Bind(Fd fd, int port = 0, bool in6 = false) {
     struct sockaddr_storage sas;
     socklen_t salen = sizeof(sas);
     if ((salen = SetListenerAddress(sas, port, in6)) < 0) {
@@ -296,13 +308,17 @@ public:
       return QRPC_EINVAL;
     }
     if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), salen) < 0) {
-      logger::error({{"ev", "bind() fails"},{"errno", Errno()}});
+      logger::error({{"ev", "bind() fails"},{"errno", Errno()},{"port", port}});
       return QRPC_ESYSCALL;
     }
     return QRPC_OK;
   }
 
-  static Fd Connect(const sockaddr *sa, socklen_t salen, bool in6 = false) {
+  static Fd Connect(
+    const sockaddr *sa, socklen_t salen, bool in6 = false,
+    int send_buffer_size = kDefaultSocketSendBuffer,
+    int recv_buffer_size = kDefaultSocketReceiveBuffer
+  ) {
     int fd = socket(in6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
       logger::error({{"ev", "socket() failed"},{"errno", Errno()}});
@@ -310,6 +326,16 @@ public:
     }
     
     if (!SetNonblocking(fd)) {
+      Close(fd);
+      return INVALID_FD;
+    }
+    
+    if (!SetReceiveBufferSize(fd, recv_buffer_size)) {
+      Close(fd);
+      return INVALID_FD;
+    }
+
+    if (!SetSendBufferSize(fd, send_buffer_size)) {
       Close(fd);
       return INVALID_FD;
     }
@@ -322,11 +348,31 @@ public:
 
     return fd;
   }
-  static Fd Connect(const Address &a, bool in6 = false) {
-    return Connect(a.sa(), a.salen(), in6);
+  static Fd Connect(
+    const Address &a, bool in6 = false,
+    int send_buffer_size = kDefaultSocketSendBuffer,
+    int recv_buffer_size = kDefaultSocketReceiveBuffer
+  ) {
+    return Connect(a.sa(), a.salen(), in6, send_buffer_size, recv_buffer_size);
   }
 
-  static Fd Listen(int port, bool in6 = false) {
+  static Fd UdpConnect(
+    const sockaddr *sa, socklen_t salen, bool in6 = false,
+    int send_buffer_size = kDefaultSocketSendBuffer,
+    int recv_buffer_size = kDefaultSocketReceiveBuffer
+  ) {
+    bool overflow_supported = false;
+    Fd fd = CreateUDPSocket(in6 ? AF_INET6 : AF_INET, &overflow_supported, send_buffer_size, recv_buffer_size);
+    if (fd == INVALID_FD) {
+      return fd;
+    }
+  }
+
+  static Fd Listen(
+    int port, bool in6 = false,
+    int send_buffer_size = kDefaultSocketSendBuffer,
+    int recv_buffer_size = kDefaultSocketReceiveBuffer
+  ) {
     constexpr int MAX_BACKLOG = 128;
     int fd = socket(in6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -346,12 +392,12 @@ public:
       logger::warn({{"ev", "Socket overflow detection not supported"}});
     }
 
-    if (!SetReceiveBufferSize(fd, kDefaultSocketReceiveBuffer)) {
+    if (!SetReceiveBufferSize(fd, recv_buffer_size)) {
       Close(fd);
       return INVALID_FD;
     }
 
-    if (!SetSendBufferSize(fd, kDefaultSocketReceiveBuffer)) {
+    if (!SetSendBufferSize(fd, send_buffer_size)) {
       Close(fd);
       return INVALID_FD;
     }

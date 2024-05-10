@@ -120,7 +120,7 @@ class QRPClient {
     //Set local description
     await pc.setLocalDescription(offer);
 
-    //store ice uflag/pwd
+    //store ice ufrag/pwd
     this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)\r\n/)[1];
     this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)\r\n/)[1];
     

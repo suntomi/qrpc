@@ -4,15 +4,16 @@
 #include "common.hpp"
 #include "Utils.hpp"
 
+#include "base/alarm.h"
+#include "base/stream.h"
+
 #include <usrsctp.h>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
-namespace base
-{  
-  class Stream;
-  class AlarmProcessor;
+namespace base {
+namespace webrtc {  
 	class SctpAssociation
 	{
 	public:
@@ -163,6 +164,7 @@ namespace base
     static uintptr_t nextSctpAssociationId;
     static std::unordered_map<uintptr_t, SctpAssociation*> mapIdSctpAssociation;
   };  
+} // namespace webrtc
 } // namespace base
 
 #endif

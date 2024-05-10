@@ -91,6 +91,7 @@ using json = nlohmann::json;
 // a=max-message-size:262144
 
 namespace base {
+namespace webrtc {
   // v=0
   // o=- $timestamp $timestamp IN IP4 0.0.0.0
   // s=-
@@ -114,10 +115,15 @@ namespace base {
     ~SDP() {}
   public:
     // connection is not const reference because it might be configured with SDP
-    bool Answer(WebRTCServer::Connection &c, std::string &answer) const;
-    static bool Test();
+    bool Answer(ConnectionFactory::Connection &c, std::string &answer) const;
+    static int Offer(const ConnectionFactory::Connection &c, 
+      const std::string &ufrag, const std::string &pwd, std::string &offer);
+  public:
+    std::vector<Candidate> Candidates() const;
   protected:
-    std::string AnswerAs(const std::string &proto, const WebRTCServer::Connection &c) const;
+    bool GetRemoteFingerPrint(const json::const_iterator &it, std::string &answer, DtlsTransport::Fingerprint &ret) const;
+    std::string AnswerAs(const std::string &proto, const ConnectionFactory::Connection &c) const;
     uint32_t AssignPriority(uint32_t component_id) const;
   };
-}
+} // namespace webrtc
+} // namespace base

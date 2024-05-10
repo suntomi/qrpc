@@ -20,7 +20,7 @@
         div.innerText = result;
       };
       //Create whip client
-      const url = "http://localhost:8888/accept";
+      const url = "http://localhost:8888/qrpc";
       const c = new QRPClient(url);
       const context = { texts: ["aaaa", "bbbb", "cccc"] };
       const MAX_RECONNECT = 2;
@@ -44,7 +44,7 @@
       c.handle("test", {
         onopen: (s, event)=>{
           console.log("Data channel open", event);
-          s.send(JSON.stringify({hello: context.texts[0], count: 0, ts: Date.now()}));
+          s.send(JSON.stringify({hello: context.texts[closed], count: closed, ts: Date.now()}));
           return context;
         },
         onclose: (s, event)=>{
