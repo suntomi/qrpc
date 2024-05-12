@@ -2,6 +2,8 @@
 
 #include <map>
 
+#include <netdb.h>
+
 #include <ares.h>
 
 #include "base/defs.h"
@@ -45,6 +47,34 @@ class AsyncResolver {
       }
       q->OnComplete(status, timeouts, hostent);
       delete q;
+    }
+    int ConvertToSocketAddress(struct hostent *entries, int port, Address &addr) {
+      if (entries == nullptr) {
+          return QRPC_ERESOLVE;
+      }
+      struct sockaddr_storage address;
+      memset(&address, 0, sizeof(address));
+      switch (entries->h_addrtype) {
+        case AF_INET: {
+          auto *sa = reinterpret_cast<struct sockaddr_in *>(&address);
+          sa->sin_family = entries->h_addrtype;
+          sa->sin_port = Endian::HostToNet(static_cast<in_port_t>(port));
+          sa->sin_len = sizeof(sockaddr_in);
+          memcpy(&sa->sin_addr, entries->h_addr_list[0], sizeof(in_addr_t));
+          addr.Reset(*sa);
+        } break;
+        case AF_INET6: {
+          auto *sa = reinterpret_cast<sockaddr_in6 *>(&address);
+          sa->sin6_family = entries->h_addrtype;
+          sa->sin6_port = Endian::HostToNet(static_cast<in_port_t>(port));          
+          sa->sin6_len = sizeof(sockaddr_in6);
+          memcpy(&sa->sin6_addr, entries->h_addr_list[0], sizeof(in6_addr_t));
+          addr.Reset(*sa);
+        } break;
+        default:
+          return QRPC_ERESOLVE;
+      }
+      return 0;
     }
   };
   typedef ares_host_callback Callback;  

@@ -4,7 +4,7 @@
 
 #include "qrpc.h"
 
-namespace base {
+namespace qrpc {
 class HandlerMap {
  public:
   typedef enum {
@@ -59,5 +59,10 @@ class HandlerMap {
 
   inline qrpc_hdmap_t ToHandle() { return (qrpc_hdmap_t)this; }
   static inline HandlerMap *FromHandle(qrpc_hdmap_t hdm) { return (HandlerMap *)hdm; }
+
+  static inline HandlerMap &empty() {
+    static HandlerMap empty;
+    return empty;
+  }
 };
 }

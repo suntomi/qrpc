@@ -28,7 +28,7 @@ int ConnectionFactory::Init() {
   if ((r = GlobalInit(config_.alarm_processor)) < 0) {
     return r;
   }
-  if ((r = config_.Derive(config_.alarm_processor)) < 0) {
+  if ((r = config_.Derive()) < 0) {
     return r;
   }
   // setup TCP/UDP ports
@@ -177,7 +177,7 @@ void ConnectionFactory::GlobalFin() {
 }
 
 // ConnectionFactory::Config
-int ConnectionFactory::Config::Derive(AlarmProcessor &ap) {
+int ConnectionFactory::Config::Derive() {
   for (auto fp : DtlsTransport::GetLocalFingerprints()) {
     // TODO: SHA256 is enough?
     if (fp.algorithm == DtlsTransport::GetFingerprintAlgorithm(fingerprint_algorithm)) {
@@ -1089,8 +1089,8 @@ bool Client::Connect(const std::string &host, int port, const std::string &path)
   return http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, path));
 }
 
-// Server
-bool Server::Listen(
+// Listener
+bool Listener::Listen(
   int signaling_port, int port,
   const std::string &listen_ip, const std::string &path
 ) {
@@ -1127,7 +1127,7 @@ bool Server::Listen(
   }
   return true;
 }
-int Server::Accept(const std::string &client_sdp, std::string &server_sdp) {
+int Listener::Accept(const std::string &client_sdp, std::string &server_sdp) {
   logger::info({{"ev","new server connection"},{"client_sdp", client_sdp}});
   // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
   // even if sdp anwser ask to do it.

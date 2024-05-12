@@ -101,10 +101,10 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    webrtc::AdhocServer w(l, webrtc::ConnectionFactory::Config {
+    webrtc::AdhocListener w(l, webrtc::AdhocListener::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .send_buffer_size = 256 * 1024,
-        .udp_session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
+        .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
         .alarm_processor = t,
@@ -149,11 +149,10 @@ int main(int argc, char *argv[]) {
         logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
     });
     // signaling: 8888(http), webrtc: 11111(udp/tcp)
-    base::Server &bsv = w;
     std::filesystem::path p(__FILE__);
     auto rootpath = p.parent_path().string();
     auto htmlpath = rootpath + "/resources/client.html";
-    bsv.RestRouter().
+    w.RestRouter().
     Route(std::regex("/"), [&htmlpath](HttpSession &s, std::cmatch &) {
         size_t htmlsz;
         auto html = Syscall::ReadFile(htmlpath, &htmlsz);
@@ -222,7 +221,7 @@ int main(int argc, char *argv[]) {
             return ws.Send(p, sz);
         });
     });
-    if (!bsv.Listen(8888, 11111)) {
+    if (!w.Listen(8888, 11111)) {
         DIE("fail to listen webrtc");
     }
     AdhocUdpListener us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {

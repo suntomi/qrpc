@@ -12,6 +12,10 @@
 // Put this in the declarations for a class to be unassignable.
 #define DISALLOW_ASSIGN(TypeName) TypeName& operator=(const TypeName&) = delete
 
+#define DISALLOW_COPY_AND_ASSIGN(TypeName) \
+  DISALLOW_COPY(TypeName);                 \
+  DISALLOW_ASSIGN(TypeName)
+
 // Put this in the declarations for a class to be uncopyable and unassignable.
 #define DISALLOW_COPY_MOVE_ASSIGN(TypeName) \
   DISALLOW_COPY(TypeName);                 \

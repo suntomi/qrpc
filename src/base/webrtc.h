@@ -118,8 +118,9 @@ namespace webrtc {
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override {
         return OpenStream(c, factory().stream_factory());
       }
-      int OnConnect() override { return QRPC_OK; }
-      void OnShutdown() override {}
+    public: // callbacks
+      virtual int OnConnect() { return QRPC_OK; }
+      virtual void OnShutdown() {}
     public:
       bool connected() const;
       inline bool closed() const { return closed_; }
@@ -242,21 +243,21 @@ namespace webrtc {
       int port;
     };
     struct Config {
-      std::string ip{""};
+      std::string ip;
       std::vector<Port> ports;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
       size_t send_buffer_size;
-      qrpc_time_t udp_session_timeout;
+      qrpc_time_t session_timeout;
       qrpc_time_t connection_timeout;
-      AlarmProcessor &alarm_processor;
+      AlarmProcessor &alarm_processor{NopAlarmProcessor::Instance()};
       std::string fingerprint_algorithm;
       bool in6{false};
 
       // derived from above config values
-      std::string fingerprint{""};
+      std::string fingerprint;
       std::vector<std::string> ifaddrs;
     public:
-      int Derive(AlarmProcessor &ap);
+      int Derive();
     };
   public:
     ConnectionFactory(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
@@ -276,7 +277,7 @@ namespace webrtc {
     const std::string &fingerprint() const { return config_.fingerprint; }
     const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
     const UdpSessionFactory::Config udp_listener_config() const {
-      return { .alarm_processor = config_.alarm_processor, .session_timeout = config_.udp_session_timeout };
+      return { .alarm_processor = config_.alarm_processor, .session_timeout = config_.session_timeout };
     }
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
@@ -341,7 +342,7 @@ namespace webrtc {
 
 
   // Client
-  class Client : public ConnectionFactory, public base::Client {
+  class Client : public ConnectionFactory {
   public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.alarm_processor) {}
@@ -350,8 +351,8 @@ namespace webrtc {
     ~Client() {}
   public:
     // implement base::Client
-    bool Connect(const std::string &host, int port, const std::string &path) override;
-    void Close(BaseConnection &c) override { CloseConnection(dynamic_cast<Connection &>(c)); }
+    bool Connect(const std::string &host, int port, const std::string &path = "/qrpc");
+    void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
   public:
     int Offer(std::string &sdp, std::string &ufrag);
     bool Open(const std::vector<Candidate> &candidate, size_t idx, std::shared_ptr<Connection> &c);
@@ -390,56 +391,56 @@ namespace webrtc {
   };  
 
 
-  // Server
-  class Server : public ConnectionFactory, public base::Server {
+  // Listener
+  class Listener : public ConnectionFactory {
   public:
-    Server(Loop &l, Config &&config, StreamFactory &&sf) :
+    Listener(Loop &l, Config &&config, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(sf)), http_listener_(l), router_() {}
-    Server(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
+    Listener(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_listener_(l), router_() {}
-    ~Server() {}
+    ~Listener() {}
   public:
     int Accept(const std::string &client_sdp, std::string &server_sdp);
     // implements base::Server
-    void Close(BaseConnection &c) override { CloseConnection(dynamic_cast<Connection &>(c)); }
+    void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
     bool Listen(
       int signaling_port, int port,
-      const std::string &listen_ip, const std::string &path
-    ) override;
-    HttpRouter &RestRouter() override { return router_; }
+      const std::string &listen_ip = "", const std::string &path = "/qrpc"
+    );
+    HttpRouter &RestRouter() { return router_; }
   protected:
     HttpListener http_listener_;
     HttpRouter router_;
   };
 
 
-  // AdhocServer
-  class AdhocServer : public Server {
+  // AdhocListener
+  class AdhocListener : public Listener {
   public:
-    AdhocServer(Loop &l, Config &&c, Stream::Handler &&h) : Server(l, std::move(c), 
+    AdhocListener(Loop &l, Config &&c, Stream::Handler &&h) : Listener(l, std::move(c), 
       [h = std::move(h)](const Stream::Config &config, base::Connection &conn) {
         auto hh = h;
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh)));
       }) {}
-    AdhocServer(Loop &l, Config &&c, 
+    AdhocListener(Loop &l, Config &&c, 
       Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
-      Server(l, std::move(c), [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](
+      Listener(l, std::move(c), [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](
         const Stream::Config &config, base::Connection &conn
       ) {
         auto hh = h; auto chh = ch; auto shh = sh;
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
       }) {}
-    AdhocServer(Loop &l, Config &&c, 
+    AdhocListener(Loop &l, Config &&c, 
       AdhocConnection::ConnectHandler &&cch, AdhocConnection::ShutdownHandler &&csh,
       Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
-      Server(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, DtlsTransport::Role role) {
+      Listener(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, DtlsTransport::Role role) {
         auto cchh = cch; auto cshh = csh;
         return new AdhocConnection(cf, role, std::move(cchh), std::move(cshh));
       }, [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](const Stream::Config &config, base::Connection &conn) {
         auto hh = h; auto chh = ch; auto shh = sh;
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
       }) {}
-    ~AdhocServer() {}
+    ~AdhocListener() {}
   };  
   typedef ConnectionFactory::Connection Connection;
 } //namespace webrtc

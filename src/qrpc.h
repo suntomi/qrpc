@@ -41,7 +41,7 @@ extern "C" {
 //
 // --------------------------
 //alpn list
-#define QRPC_ALPN ("\x2nq")
+#define QRPC_ALPN ("\x2qrpc")
 #define QRPC_QRPC_ALPN ("\x4qrpc")
 #define QRPC_H3_ALPN ("\x2h3\x5h3-29\x5h3-30\x5h3-31\x5h3-32")
 #define QRPC_H09_ALPN ("\x0ahq-interop\x05hq-29\x05hq-28\x05hq-27\x08http/0.9")
@@ -99,7 +99,38 @@ typedef struct qrpc_alarm_tag {
   void *p;      //NqAlarm
 } qrpc_alarm_t;
 
-typedef struct qrpc_transport_config_tag {
+typedef enum {
+  QRPC_WIRE_PROTO_WEBRTC,
+  QRPC_WIRE_PROTO_WEBTRANSPORT, // for future
+} qrpc_wire_proto_t;
+
+struct qrpc_webrtc_config_tag {
+  // max outgoing stream of SCTP
+  // default 32
+  qrpc_size_t max_outgoing_stream_size;
+  // initial incoming stream of SCTP
+  // default 32
+  qrpc_size_t initial_incoming_stream_size;
+  // send buffer size of underlying session (TCP/UDP)
+  // default 256kb
+  qrpc_size_t send_buffer_size;
+  // timeout of underlying session
+  // default 15 sec
+  qrpc_time_t session_timeout;
+  // webrtc's SCTP session timeout
+  // default 60 sec
+  qrpc_time_t connection_timeout;
+  // fingerprint algorithm of DTLS
+  // any of "sha-1", "sha-224", "sha-256", "sha-384", "sha-512"
+  // default "sha-256"
+  const char *fingerprint_algorithm;
+  // WHIP signaling server path
+  // default "/qrpc"
+  const char *whip_path;
+};
+
+// for future. webtransport will be based QUIC, so below fields are basically required to configure QUIC
+struct qrpc_webtransport_config_tag {
   //applicaiton protocol (ALPN) data, if you want to use the library
   //for implementing http3 server/client, you should set here the value `QRPC_H3_ALPN`
   const char *alpn;
@@ -135,6 +166,13 @@ typedef struct qrpc_transport_config_tag {
 
   //length of source connection id in bytes
   qrpc_size_t source_connection_id_length;
+};
+typedef struct {
+  qrpc_wire_proto_t proto;
+  union {
+    qrpc_webrtc_config_tag webrtc;
+    qrpc_webtransport_config_tag webtransport;
+  };
 } qrpc_transport_config_t;
 
 typedef enum {
@@ -184,11 +222,7 @@ typedef enum {
   QRPC_REACHABLE_WWAN = 1,
 } qrpc_reachability_t;
 
-typedef enum {
-  QRPC_WIRE_PROTO_QUIC_NEGOTIATE, // only client side
-  QRPC_WIRE_PROTO_QUIC_V1,
-  QRPC_WIRE_PROTO_TCP // not supported now
-} qrpc_wire_proto_t;
+
 
 // --------------------------
 //
@@ -333,14 +367,8 @@ typedef struct {
   qrpc_on_client_conn_open_t on_open;
   qrpc_on_client_conn_close_t on_close;
 
-  //protocol type/version
-  qrpc_wire_proto_t protocol;
-
   //transport config
   qrpc_transport_config_t transport;
-
-  //set true to ignore proof verification
-  bool insecure; 
 
   //track reachability to the provide hostname and recreate socket if changed.
   //useful for mobile connection. currently iOS only. use qrpc_conn_reachability_change for android.
@@ -386,18 +414,14 @@ typedef struct {
   //transport config
   qrpc_transport_config_t transport;
 
-  //cert cache size. default 16 and how meny sessions accepted per loop. default 1024
-  int quic_cert_cache_size, accept_per_loop;
+  //how meny sessions accepted per loop. default 1024
+  int accept_per_loop;
 
   //allocation hint about max sessoin and max stream
   int max_session_hint, max_stream_hint;
 
   //if set to true, max_session_hint will be hard limit
-  bool use_max_session_hint_as_limit;
-
-  //total server shutdown wait/retry token timeout. default 5sec/30sec
-  //secret to generate retry token will be rotated every retry_token_timeout*2 seconds.
-  qrpc_time_t shutdown_timeout, retry_token_timeout;
+  bool hint_as_limit;
 } qrpc_svconf_t;
 
 // get default qrpc_svconf_t
@@ -478,7 +502,7 @@ QAPI_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_
 //get reconnect wait duration in us. 0 means does not wait reconnection
 QAPI_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn);
 //get context, which is set at on_conn_open
-QAPI_CLOSURECALL void *nq_conn_ctx(qrpc_conn_t conn);
+QAPI_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn);
 //check equality of qrpc_conn_t.
 QAPI_INLINE bool qrpc_conn_equal(qrpc_conn_t c1, qrpc_conn_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
 //manually set reachability change for current connection

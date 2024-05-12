@@ -26,7 +26,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
     webrtc::AdhocClient w(l, webrtc::ConnectionFactory::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .send_buffer_size = 256 * 1024,
-        .udp_session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
+        .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
         .alarm_processor = ap,
@@ -107,8 +107,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
         }
         return QRPC_OK;
     });
-    base::Client &bcl = w;
-    if (!bcl.Connect("localhost", 8888)) {
+    if (!w.Connect("localhost", 8888)) {
         DIE("fail to start webrtc client as connect");
     }
     while (error_msg.length() <= 0) {
