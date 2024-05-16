@@ -1,16 +1,16 @@
 #pragma once
 
-#include "base/conn.h"
 #include "base/id_factory.h"
 #include "base/logger.h"
 #include "base/loop.h"
-#include "base/stream.h"
+#include "base/timer.h"
+#include "base/alarm.h"
 
 namespace qrpc {
   template <typename T>
   using IdFactory = base::IdFactory<T>;
   using Loop = base::Loop;
   namespace logger = base::logger;
-  using Stream = base::Stream;
-  using Connection = base::Connection;
+  using Timer = base::TimerScheduler;
+  using AlarmProcessor = base::AlarmProcessor;
 }

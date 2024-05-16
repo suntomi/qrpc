@@ -12,6 +12,7 @@ namespace base {
   class Stream {
   public:
     typedef struct {
+      // TODO: use general stream parameter struct, instead of borrow from WebRTC
       RTC::SctpStreamParameters params;
       std::string label;
       std::string protocol; // now not used

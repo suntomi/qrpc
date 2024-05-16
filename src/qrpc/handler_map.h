@@ -65,4 +65,5 @@ class HandlerMap {
     return empty;
   }
 };
+typedef HandlerMap::HandlerEntry HandlerEntry;
 }

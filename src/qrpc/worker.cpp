@@ -4,20 +4,23 @@
 
 namespace qrpc {
 void Worker::Run(TaskQueue &q) {
+  int r;
+  if ((r = timer_.Init(loop_)) < 0) {
+    QRPC_LOGJ(fatal, {{"ev","Timer::Init() failed"},{"err", r}});
+    return;
+  }
   auto ls = Listen();
+  if (ls.size() == 0) {
+    QRPC_LOGJ(fatal, {{"ev" "no listener"}});
+    return;
+  }
   qrpc_time_t next_try_accept = 0;
   while (server_.alive()) {
-    //TODO(iyatomi): better way to handle this (eg. with timer system)
-    qrpc_time_t now = qrpc_time_now();
-    bool try_accept = false;
-    if ((next_try_accept + qrpc_time_msec(10)) < now) {
-      try_accept = true;
-      next_try_accept = now;
-    }
-    //consume queue
+    // consume queue. TODO: option to not use task queue
     Task t;
     while (q.try_dequeue(t)) { t(); }
-    loop_.Poll();
+    // TODO: option to use Poll()
+    loop_.PollAres();
   }
 }
 std::vector<std::unique_ptr<Listener>> Worker::Listen() {
