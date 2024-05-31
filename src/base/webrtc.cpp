@@ -300,17 +300,7 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::NewStream(
     logger::error({{"ev","stream id already used"},{"sid",c.params.streamId}});
     return nullptr;
   }
-  auto s = c.label == SyscallStream::NAME ? 
-    std::make_shared<SyscallStream>(*this, c, [this](Stream &s, const char *p, size_t sz) {
-      auto pl = std::string(p, sz);
-      QRPC_LOGJ(info, {{"ev", "recv from syscall stream"},{"pl",pl}});
-      auto data = json::parse(pl);
-      if (data["fn"].get<std::string>() == "close") {
-        QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
-        this->factory().CloseConnection(*this);
-      }
-      return QRPC_OK;
-    }) : sf(c, *this);
+  auto s = sf(c, *this);
   if (s == nullptr) {
     ASSERT(false);
     logger::error({{"ev","fail to create stream"},{"sid",c.params.streamId}});
@@ -366,11 +356,11 @@ void ConnectionFactory::Connection::Close() {
   if (closed()) {
     return;
   }
-  closed_ = true;
   OpenStream({
     .label = SyscallStream::NAME
   }, [this](const Stream::Config &config, base::Connection &conn) {
-    return std::make_shared<SyscallStream>(conn, config, [](Stream &s) {
+    return std::make_shared<SyscallStream>(conn, config, [this](Stream &s) {
+      closed_ = true;
       QRPC_LOGJ(info, {{"ev","server syscall stream opened"},{"sid",s.id()}});
       return s.Send({{"fn","close"}});
     });
@@ -842,6 +832,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
   int r;
   switch (*msg) {
   case DATA_CHANNEL_ACK: {
+    QRPC_LOGJ(info, {{"ev","DATA_CHANNEL_ACK received"},{"sid",streamId}});
     auto s = streams_.find(streamId);
     if (s == streams_.end()) {
       logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_ACK received for unknown stream"},{"sid",streamId}});
@@ -862,14 +853,24 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       return;
     }
     auto c = req->ToStreamConfig();
-    auto s = NewStream(c, factory().stream_factory());
+    auto s = NewStream(
+      c, c.label == SyscallStream::NAME ? 
+        [this](const Stream::Config &config, base::Connection &conn) {
+          return std::make_shared<SyscallStream>(conn, config, [this](Stream &s, const char *p, size_t sz) {
+            auto pl = std::string(p, sz);
+            QRPC_LOGJ(info, {{"ev", "recv from syscall stream"},{"pl",pl}});
+            auto data = json::parse(pl);
+            if (data["fn"].get<std::string>() == "close") {
+              QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
+              this->factory().CloseConnection(*this);
+            }
+            return QRPC_OK;
+          });
+        } : 
+        factory().stream_factory()
+    );
     if (s == nullptr) {
       logger::error({{"proto","sctp"},{"ev","fail to create stream"},{"stream_id",streamId}});
-      return;
-    }
-    if ((r = s->OnConnect()) < 0) {
-      logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_OPEN blocked for application reason"},{"rc",r}});
-      s->Close(QRPC_CLOSE_REASON_LOCAL, r, "stream closed by application OnConnect");
       return;
     }
     // send dcep ack
@@ -883,6 +884,13 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       return;
     }
     QRPC_LOGJ(info, {{"ev","DATA_CHANNEL_ACK sent"},{"sid",streamId}});
+    // because OnConnect may send packet, it should be done after ack, 
+    // to assure stream open callback called before first stream read callback
+    if ((r = s->OnConnect()) < 0) {
+      logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_OPEN blocked for application reason"},{"rc",r}});
+      s->Close(QRPC_CLOSE_REASON_LOCAL, r, "stream closed by application OnConnect");
+      return;
+    }
   } break;
   }
 }
