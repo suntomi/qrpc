@@ -3,6 +3,8 @@
 #include "qrpc/base.h"
 #include "qrpc/handler_map.h"
 
+#include "base/conn.h"
+
 namespace qrpc {
   class Client {
   public:
@@ -10,7 +12,7 @@ namespace qrpc {
     virtual ~Client() = default;
   public:
     virtual HandlerMap &handler_map() = 0;
-    virtual void Close(Connection &) = 0;
+    virtual void Close(base::Connection &) = 0;
     virtual bool Connect(
       const std::string &host, int port, const qrpc_clconf_t &config
     ) = 0;

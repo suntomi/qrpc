@@ -79,8 +79,11 @@ namespace webrtc {
     };
     class SyscallStream : public AdhocStream {
     public:
+      static constexpr char *NAME = "$syscall";
       SyscallStream(BaseConnection &c, const Config &config, ConnectHandler &&h) :
         AdhocStream(c, config, std::move(Handler(Nop())), std::move(h), std::move(ShutdownHandler(Nop()))) {}
+      SyscallStream(BaseConnection &c, const Config &config, Handler &&h) :
+        AdhocStream(c, config, std::move(h), std::move(ConnectHandler(Nop())), std::move(ShutdownHandler(Nop()))) {}
       ~SyscallStream() {}
     };
   public: // connections

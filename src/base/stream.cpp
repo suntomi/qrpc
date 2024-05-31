@@ -8,7 +8,6 @@ namespace base {
   void Stream::Close(const CloseReason &reason) {
     if (!closed()) {
       close_reason_ = std::make_unique<CloseReason>(reason);
-      OnShutdown();
       conn_.Close(*this);
     }
   }

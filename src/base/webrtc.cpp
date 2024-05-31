@@ -78,7 +78,6 @@ void ConnectionFactory::Fin() {
   GlobalFin();
 }
 void ConnectionFactory::CloseConnection(Connection &c) {
-  // how to close?
   logger::info({{"ev","close webrtc connection"},{"ufrag",c.ice_server().GetUsernameFragment()}});
   c.Fin(); // cleanup resources if not yet
   connections_.erase(c.ice_server().GetUsernameFragment());
@@ -109,6 +108,7 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
     QRPC_LOG(warn, "ignoring wrong STUN packet received");
     return nullptr;
   }
+  QRPC_LOGJ(info, {{"ev","STUN packet received"},{"username",packet->GetUsername()}})
   // try to match the local ICE username fragment.
   auto key = GetLocalIceUFragFrom(packet);
   ASSERT(!key.empty());
@@ -295,7 +295,17 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::NewStream(
     logger::error({{"ev","stream id already used"},{"sid",c.params.streamId}});
     return nullptr;
   }
-  auto s = sf(c, *this);
+  auto s = c.label == SyscallStream::NAME ? 
+    std::make_shared<SyscallStream>(*this, c, [this](Stream &s, const char *p, size_t sz) {
+      auto pl = std::string(p, sz);
+      QRPC_LOGJ(info, {{"ev", "recv from syscall stream"},{"pl",pl}});
+      auto data = json::parse(pl);
+      if (data["fn"].get<std::string>() == "close") {
+        QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
+        this->factory().CloseConnection(*this);
+      }
+      return QRPC_OK;
+    }) : sf(c, *this);
   if (s == nullptr) {
     ASSERT(false);
     logger::error({{"ev","fail to create stream"},{"sid",c.params.streamId}});
@@ -320,7 +330,11 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::OpenStream(
     return nullptr;
   }
   auto s = NewStream(c, sf);
-  if (s == nullptr) { return nullptr; }
+  if (s == nullptr) {
+    QRPC_LOGJ(error, {{"ev","fail to create stream"},{"sid",c.params.streamId},{"l",c.label}});
+    ASSERT(false);
+    return nullptr;
+  }
   // allocate stream Id
   sctp_association_->HandleDataConsumer(s.get());
   // TODO: send DCEP OPEN messsage to peer
@@ -349,9 +363,10 @@ void ConnectionFactory::Connection::Close() {
   }
   closed_ = true;
   OpenStream({
-    .label = "$syscall"
-  }, [](const Stream::Config &config, base::Connection &conn) {
+    .label = SyscallStream::NAME
+  }, [this](const Stream::Config &config, base::Connection &conn) {
     return std::make_shared<SyscallStream>(conn, config, [](Stream &s) {
+      QRPC_LOGJ(info, {{"ev","server syscall stream opened"},{"sid",s.id()}});
       return s.Send({{"fn","close"}});
     });
   });
@@ -599,8 +614,16 @@ int ConnectionFactory::Connection::Send(const char *p, size_t sz) {
 }
 
 void ConnectionFactory::Connection::Close(Stream &s) {
-  sctp_association_->DataConsumerClosed(&s);
-  streams_.erase(s.id()); // s might destroyed
+  if (!s.reset()) {
+    // client: even is outgoing, odd is incoming
+    // server: even is incoming, odd is outgoing
+    // bool isOutgoing = (dtls_role_ == DtlsTransport::Role::CLIENT) == ((s.id() % 2) == 0);
+    sctp_association_->DataConsumerClosed(&s);
+    s.SetReset();
+  } else {
+    QRPC_LOGJ(debug, {{"ev","do not send reset because already reset"},{"stream",s.id()}});
+  }
+  // stream removed after Connection::OnSctpStreamReset called
 }
 int ConnectionFactory::Connection::Open(Stream &s) {
   int r;
@@ -752,7 +775,7 @@ void ConnectionFactory::Connection::OnDtlsTransportSendData(
     logger::warn({{"proto","dtls"},{"ev","no selected tuple set, cannot send DTLS packet"}});
     return;
   }
-  logger::info({{"ev","send dtls packet"},{"sz",len},{"to",session->addr().str()}});
+  // logger::info({{"ev","send dtls packet"},{"sz",len},{"to",session->addr().str()}});
   session->Send(reinterpret_cast<const char *>(data), len);
   // may need to implement equivalent
   // RTC::Transport::DataSent(len);
@@ -790,7 +813,8 @@ void ConnectionFactory::Connection::OnSctpStreamReset(
     logger::error({{"proto","sctp"},{"ev","reset stream not found"},{"sid",streamId}});
     return;
   }
-  s->second->Close(QRPC_CLOSE_REASON_REMOTE);
+  s->second->OnShutdown();
+  streams_.erase(s);
 }
 void ConnectionFactory::Connection::OnSctpAssociationSendData(
   SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) {
@@ -800,6 +824,7 @@ void ConnectionFactory::Connection::OnSctpAssociationSendData(
       {"dtls_state",dtls_transport_->GetState()}});
     return;
   }
+  logger::debug({{"proto","stcp"},{"ev","send data"},{"sz",len}});
   dtls_transport_->SendApplicationData(data, len);
 }
 void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
@@ -814,7 +839,8 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
   case DATA_CHANNEL_ACK: {
     auto s = streams_.find(streamId);
     if (s == streams_.end()) {
-      logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_ACK received for unknown stream"}});
+      logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_ACK received for unknown stream"},{"sid",streamId}});
+      ASSERT(false);
       return;
     }
     if ((r = s->second->OnConnect()) < 0) {
@@ -825,6 +851,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
   } break;
   case DATA_CHANNEL_OPEN: {
     auto req = DcepRequest::Parse(streamId, msg, len);
+    QRPC_LOGJ(info, {{"ev","DATA_CHANNEL_OPEN received"},{"sid",streamId}});
     if (req == nullptr) {
       logger::error({{"proto","sctp"},{"ev","invalid DCEP request received"}});
       return;
@@ -833,6 +860,11 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
     auto s = NewStream(c, factory().stream_factory());
     if (s == nullptr) {
       logger::error({{"proto","sctp"},{"ev","fail to create stream"},{"stream_id",streamId}});
+      return;
+    }
+    if ((r = s->OnConnect()) < 0) {
+      logger::error({{"proto","sctp"},{"ev","DATA_CHANNEL_OPEN blocked for application reason"},{"rc",r}});
+      s->Close(QRPC_CLOSE_REASON_LOCAL, r, "stream closed by application OnConnect");
       return;
     }
     // send dcep ack
@@ -845,6 +877,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       s->Close(QRPC_CLOSE_REASON_LOCAL, r, "fail to send DCEP ACK");
       return;
     }
+    QRPC_LOGJ(info, {{"ev","DATA_CHANNEL_ACK sent"},{"sid",streamId}});
   } break;
   }
 }
@@ -1050,7 +1083,7 @@ bool Client::Open(
 }
 int Client::Offer(std::string &sdp, std::string &ufrag) {
   logger::info({{"ev","new client connection"}});
-  // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
+  // client connection's dtls role is server, workaround fo osx safari (16.4) does not initiate DTLS handshake
   // even if sdp anwser ask to do it.
   auto c = std::shared_ptr<Connection>(factory_method_(*this, DtlsTransport::Role::SERVER));
   if (c == nullptr) {

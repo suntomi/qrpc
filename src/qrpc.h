@@ -248,7 +248,7 @@ typedef enum {
 //optionally you can set arbiter pointer via last argument, which can be retrieved via qrpc_conn_ctx afterward.
 //TODO(iyatomi): give more imformation for deciding shutdown connection from qrpc_conn_t
 //TODO(iyatomi): re-evaluate we should call this twice (now mainly because to make open/close callback surely called as pair)
-QRPC_DECL_CLOSURE(void, qrpc_on_client_conn_open_t, void *, qrpc_conn_t, void **);
+QRPC_DECL_CLOSURE(int, qrpc_on_client_conn_open_t, void *, qrpc_conn_t, void **);
 //client connection closed. after this called, qrpc_stream_t/qrpc_rpc_t created by given qrpc_conn_t, will be invalid.
 //last boolean indicates connection is closed from local(false) or remote(true).
 //if this function returns positive value,

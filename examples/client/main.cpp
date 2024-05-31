@@ -47,7 +47,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
     }, [&error_msg](Stream &s, const char *p, size_t sz) -> int {
         auto pl = std::string(p, sz);
         auto resp = json::parse(pl);
-        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
+        logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
         if (s.label() == "test") {
             auto now = qrpc_time_now();
             auto hello = resp["hello"].get<std::string>();
@@ -69,7 +69,8 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
             error_msg = ("test2.onread should not be called");
         } else if (s.label() == "test3") {
             auto count = resp["count"].get<uint64_t>();
-            s.Send({{"count", count + 1}});
+            s.context<Test3StreamContext>().count = count + 1;
+            s.Send({{"count", s.context<Test3StreamContext>().count}});
         } else if (s.label() == "recv") {
             auto msg = resp["msg"].get<std::string>();
             if (msg != "byebye") {
@@ -101,6 +102,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
         } else if (s.label() == "test2") {
         } else if (s.label() == "test3") {
             if (s.context<Test3StreamContext>().count != 2) {
+                logger::error({{"ev","invalid count"},{"count", s.context<Test3StreamContext>().count}});
                 error_msg = ("test3.onclose count should be 2");
             }
         } else if (s.label() == "recv") {
@@ -113,7 +115,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
     while (error_msg.length() <= 0) {
         l.PollAres();
     }
-    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1)) {
+    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
         return true;
     } else {
         DIE(error_msg);

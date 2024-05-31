@@ -113,7 +113,10 @@ namespace webrtc {
 			case RTC::StunPacket::Class::REQUEST:
 			{
 				if (this->listener->OnIceServerCheckClosed(this)) {
-					QRPC_LOG(debug, "parent connection already closed: STUN Binding Request => 401");				
+					QRPC_LOGJ(debug, {
+						{"ev","parent connection already closed: STUN Binding Request => 401"},
+						{"username",packet->GetUsername()}
+					});
 					RTC::StunPacket* response = packet->CreateErrorResponse(401);
 
 					response->Serialize(StunSerializeBuffer);
@@ -284,7 +287,7 @@ namespace webrtc {
 
 			case RTC::StunPacket::Class::ERROR_RESPONSE:
 			{
-				QRPC_LOG(debug, "STUN Binding Error Response processed");
+				QRPC_LOGJ(debug, {{"ev","STUN Binding Error Response processed"},{"username",packet->GetUsername()}});
 				this->listener->OnIceServerErrorResponded(this, packet, session);
 				break;
 			}

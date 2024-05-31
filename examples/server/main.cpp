@@ -110,7 +110,7 @@ int main(int argc, char *argv[]) {
         .alarm_processor = t,
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
-        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
+        logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
         auto req = json::parse(pl);
         if (s.label() == "test") {
             // echo + label name
