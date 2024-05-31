@@ -111,12 +111,17 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
   QRPC_LOGJ(info, {{"ev","STUN packet received"},{"username",packet->GetUsername()}})
   // try to match the local ICE username fragment.
   auto key = GetLocalIceUFragFrom(packet);
-  ASSERT(!key.empty());
+  // stun binding response from server does not contains username fragment
+  // usually client session created with Connection object, no FindFromStunRequest call needed.
+  // but when client give up one endpoint in SDP and using next one, packet from old endpoint might be received.
+  // in that case, session for that endoint will be created again without provided connection object,
+  // control flow will reach to here. so for client, we ignore that error
+  ASSERT(!key.empty() || is_client());
   auto it = connections_.find(key);
   delete packet;
 
   if (it == this->connections_.end()) {
-    logger::error({
+    logger::warn({
       {"ev","ignoring received STUN packet with unknown remote ICE usernameFragment"},
       {"ufrag",key}
     });

@@ -287,6 +287,7 @@ namespace webrtc {
     const std::string primary_proto() const {
       return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";
     }
+    virtual bool is_client() const = 0;
   public:
     int Init();
     void Fin();
@@ -353,9 +354,10 @@ namespace webrtc {
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.alarm_processor) {}
     ~Client() {}
   public:
-    // implement base::Client
     bool Connect(const std::string &host, int port, const std::string &path = "/qrpc");
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
+    // implement ConnectionFactory
+    virtual bool is_client() const override { return true; }
   public:
     int Offer(std::string &sdp, std::string &ufrag);
     bool Open(const std::vector<Candidate> &candidate, size_t idx, std::shared_ptr<Connection> &c);
@@ -404,13 +406,14 @@ namespace webrtc {
     ~Listener() {}
   public:
     int Accept(const std::string &client_sdp, std::string &server_sdp);
-    // implements base::Server
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
     bool Listen(
       int signaling_port, int port,
       const std::string &listen_ip = "", const std::string &path = "/qrpc"
     );
     HttpRouter &RestRouter() { return router_; }
+    // implement ConnectionFactory
+    virtual bool is_client() const override { return false; }
   protected:
     HttpListener http_listener_;
     HttpRouter router_;
