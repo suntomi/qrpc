@@ -759,6 +759,7 @@ namespace webrtc {
       }
       return now + qrpc_time_msec(50);
     case FAILED:
+		case STOPPED:
       state_ = NEW;
 			last_success_ = 0;
       return 0ULL; // alarm stops

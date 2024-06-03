@@ -72,7 +72,9 @@ namespace webrtc {
     typedef UdpListenerOf<ConnectionFactory::UdpSession> UdpPortBase;
     class UdpPort : public UdpPortBase {
     public:
-      UdpPort(ConnectionFactory &cf) : UdpPortBase(cf.loop(), cf.udp_listener_config()), cf_(cf) {}
+      UdpPort(ConnectionFactory &cf) : UdpPortBase(cf.loop(), cf.udp_listener_config()), cf_(cf) {
+        ASSERT(&alarm_processor_ != &NopAlarmProcessor::Instance());
+      }
       ConnectionFactory &connection_factory() { return cf_; }
     private:
       ConnectionFactory &cf_;
@@ -250,7 +252,7 @@ namespace webrtc {
       std::vector<Port> ports;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
       size_t send_buffer_size;
-      qrpc_time_t session_timeout;
+      qrpc_time_t session_timeout, http_timeout;
       qrpc_time_t connection_timeout;
       AlarmProcessor &alarm_processor{NopAlarmProcessor::Instance()};
       std::string fingerprint_algorithm;
@@ -281,6 +283,9 @@ namespace webrtc {
     const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
     const UdpSessionFactory::Config udp_listener_config() const {
       return { .alarm_processor = config_.alarm_processor, .session_timeout = config_.session_timeout };
+    }
+    const UdpSessionFactory::Config http_listener_config() const {
+      return { .alarm_processor = config_.alarm_processor, .session_timeout = config_.http_timeout };
     }
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
@@ -400,9 +405,11 @@ namespace webrtc {
   class Listener : public ConnectionFactory {
   public:
     Listener(Loop &l, Config &&config, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(sf)), http_listener_(l), router_() {}
+      ConnectionFactory(l, std::move(config), std::move(sf)),
+      http_listener_(l, http_listener_config()), router_() {}
     Listener(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_listener_(l), router_() {}
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)),
+      http_listener_(l, http_listener_config()), router_() {}
     ~Listener() {}
   public:
     int Accept(const std::string &client_sdp, std::string &server_sdp);

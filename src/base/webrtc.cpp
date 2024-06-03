@@ -345,12 +345,21 @@ void ConnectionFactory::Connection::Fin() {
   if (dtls_transport_ != nullptr) {
     dtls_transport_->Close();
   }
+  if (ice_prober_ != nullptr) {
+    ice_prober_->Reset();
+  }
   for (auto s = streams_.begin(); s != streams_.end();) {
     auto cur = s++;
     (*cur).second->OnShutdown();
   }
   OnShutdown();
   streams_.clear();
+  if (ice_server_ != nullptr) {
+    for (auto it = ice_server_->GetSessions().begin(); it != ice_server_->GetSessions().end();) {
+      auto s = it++;
+      (*s)->Close(QRPC_CLOSE_REASON_SHUTDOWN, 0, "parent webrtc connection closed");
+    }
+  }
 }
 void ConnectionFactory::Connection::Close() {
   if (closed()) {
@@ -866,8 +875,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
             }
             return QRPC_OK;
           });
-        } : 
-        factory().stream_factory()
+        } : factory().stream_factory()
     );
     if (s == nullptr) {
       logger::error({{"proto","sctp"},{"ev","fail to create stream"},{"stream_id",streamId}});

@@ -327,9 +327,9 @@ namespace base {
             Callback &callback() override { return listener().cb(); }
         };
     public:
-        HttpListener(Loop &l) : TcpListener(l, [this](Fd fd, const Address &a) {
+        HttpListener(Loop &l, Config c = Config::Default()) : TcpListener(l, [this](Fd fd, const Address &a) {
             return new HttpServerSession(*this, fd, a);
-        }) {}
+        }, c) {}
         ~HttpListener() {}
         Callback &cb() { return callback_; }
         bool Listen(int port, const Callback &cb) {

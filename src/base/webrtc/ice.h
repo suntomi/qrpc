@@ -60,6 +60,7 @@ namespace webrtc {
 
 	public:
 		void ProcessStunPacket(RTC::StunPacket* packet, Session *session);
+		std::list<Session*> &GetSessions() { return this->sessions; }
 		const std::string& GetUsernameFragment() const
 		{
 			return this->usernameFragment;
@@ -149,6 +150,7 @@ namespace webrtc {
       CHECKING,
       DISCONNECTED,
       FAILED,
+			STOPPED,
     };
     typedef uint8_t TxId[12];
   public:
@@ -163,6 +165,7 @@ namespace webrtc {
   public:
     qrpc_time_t OnTimer(Session *s);
     void Success();
+		void Reset() { state_ = NEW; last_success_ = 0; }
 		void SendBindingRequest(Session *s);
   private:
 		std::string uflag_, pwd_;

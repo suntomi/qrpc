@@ -92,7 +92,13 @@ namespace base {
                         ASSERT(reconnect_timeout == 0 ||
                             reason.code == QRPC_CLOSE_REASON_MIGRATED ||
                             reason.code == QRPC_CLOSE_REASON_SHUTDOWN);
-                        delete this;
+                        if (&ap != &NopAlarmProcessor::Instance()) {
+                            this->close_reason_->alarm_id = ap.Set(
+                                [this]() { return this->Finalize(); }, qrpc_time_now()
+                            );
+                        } else {
+                            delete this;
+                        }
                         return true;
                    }
                 }
@@ -132,6 +138,12 @@ namespace base {
                     this->fd_ = fd;
                     return this;
                 });
+            }
+            inline qrpc_time_t Finalize() {
+                // prevent destructor from trying to cancel alarm
+                this->close_reason_->alarm_id = AlarmProcessor::INVALID_ID;
+                delete this;
+                return 0; // stop alarm
             }
         protected:
             SessionFactory &factory_;
@@ -300,8 +312,8 @@ namespace base {
     };
     class TcpListener : public TcpSessionFactory, public IoProcessor {
     public:
-        TcpListener(Loop &l, FactoryMethod &&m) : 
-            TcpSessionFactory(l, std::move(m)), fd_(INVALID_FD), port_(0) {}
+        TcpListener(Loop &l, FactoryMethod &&m, Config c = Config::Default()) : 
+            TcpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0) {}
         TcpListener(TcpListener &&rhs) = default;
         Fd fd() const { return fd_; }
         int port() const { return port_; }
@@ -370,7 +382,8 @@ namespace base {
     template <class S>
     class TcpListenerOf : public TcpListener {
     public:
-        TcpListenerOf(Loop &l, FactoryMethod &&m) : TcpListener(l, std::move(m)) {}
+        TcpListenerOf(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
+            TcpListener(l, std::move(m), c) {}
         TcpListenerOf(Loop &l) : TcpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<TcpSession, S>(), "S must be a descendant of TcpSession");
             return new S(*this, fd, a);
