@@ -66,6 +66,8 @@ namespace webrtc {
     public:
       TcpPort(ConnectionFactory &cf) : TcpPortBase(cf.loop()), cf_(cf) {}
       ConnectionFactory &connection_factory() { return cf_; }
+      // if client mode, does not create unified socket to allow multiple socket connect to same host&port
+      bool Init(int port) { return cf_.is_client() ? true : Listen(port); }
     private:
       ConnectionFactory &cf_;
     };
@@ -76,6 +78,8 @@ namespace webrtc {
         ASSERT(&alarm_processor_ != &NopAlarmProcessor::Instance());
       }
       ConnectionFactory &connection_factory() { return cf_; }
+      // if client mode, does not create unified socket to allow multiple socket connect to same host&port
+      bool Init(int port) { return cf_.is_client() ? true : Listen(port); }
     private:
       ConnectionFactory &cf_;
     };
@@ -112,7 +116,7 @@ namespace webrtc {
               break;          
           }
         }
-      ~Connection() {}
+      virtual ~Connection() {}
     public:
       // implements base::Connection
       void Close() override;
@@ -125,13 +129,15 @@ namespace webrtc {
       }
     public: // callbacks
       virtual int OnConnect() { return QRPC_OK; }
-      virtual void OnShutdown() {}
+      virtual qrpc_time_t OnShutdown() { return 0; }
+      virtual void OnFinalize();
     public:
       bool connected() const;
       inline bool closed() const { return closed_; }
       inline ConnectionFactory &factory() { return sv_; }
       inline const ConnectionFactory &factory() const { return sv_; }
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
+      inline const IceUFrag &ufrag() const { return ice_server().GetUsernameFragment(); }
       inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
       // for now, qrpc server initiates dtls transport because safari does not initiate it
       // even if we specify "setup: passive" in SDP of whip response
@@ -268,10 +274,10 @@ namespace webrtc {
     ConnectionFactory(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       loop_(l), config_(config), factory_method_(fm), stream_factory_(sf), connections_() {}
     ConnectionFactory(Loop &l, Config &&config, StreamFactory &&sf) :
-      loop_(l), config_(config), factory_method_([this](ConnectionFactory &cf, DtlsTransport::Role role) {
+      loop_(l), config_(config), factory_method_([](ConnectionFactory &cf, DtlsTransport::Role role) {
         return new Connection(cf, role);
       }), stream_factory_(sf), connections_() {}
-    ~ConnectionFactory() { Fin(); }
+    virtual ~ConnectionFactory() { Fin(); }
   public:
     Loop &loop() { return loop_; }
     const Config &config() const { return config_; }
@@ -338,12 +344,12 @@ namespace webrtc {
   class AdhocConnection : public ConnectionFactory::Connection {
   public:
     typedef std::function<int (ConnectionFactory::Connection &)> ConnectHandler;
-    typedef std::function<void (ConnectionFactory::Connection &)> ShutdownHandler;
+    typedef std::function<qrpc_time_t (ConnectionFactory::Connection &)> ShutdownHandler;
   public:
     AdhocConnection(ConnectionFactory &sv, DtlsTransport::Role dtls_role, ConnectHandler &&ch, ShutdownHandler &&sh) :
       Connection(sv, dtls_role), connect_handler_(std::move(ch)), shutdown_handler_(std::move(sh)) {};
     int OnConnect() override { return connect_handler_(*this); }
-    void OnShutdown() override { shutdown_handler_(*this); }
+    qrpc_time_t OnShutdown() override { return shutdown_handler_(*this); }
   private:
     ConnectHandler connect_handler_;
     ShutdownHandler shutdown_handler_;
@@ -353,21 +359,29 @@ namespace webrtc {
   // Client
   class Client : public ConnectionFactory {
   public:
+    struct Endpoint {
+      std::string host, path;
+      int port;
+    };
+  public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.alarm_processor) {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.alarm_processor) {}
-    ~Client() {}
+    ~Client() override {}
+  public:
+    std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
   public:
     bool Connect(const std::string &host, int port, const std::string &path = "/qrpc");
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
     // implement ConnectionFactory
     virtual bool is_client() const override { return true; }
   public:
-    int Offer(std::string &sdp, std::string &ufrag);
+    int Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag);
     bool Open(const std::vector<Candidate> &candidate, size_t idx, std::shared_ptr<Connection> &c);
   protected:
     HttpClient http_client_;
+    std::map<IceUFrag, Endpoint> endpoints_;
   };
 
 
@@ -397,7 +411,7 @@ namespace webrtc {
         auto hh = h; auto chh = ch; auto shh = sh;
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
       }) {}
-    ~AdhocClient() {}
+    ~AdhocClient() override {}
   };  
 
 
@@ -410,7 +424,7 @@ namespace webrtc {
     Listener(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)),
       http_listener_(l, http_listener_config()), router_() {}
-    ~Listener() {}
+    ~Listener() override {}
   public:
     int Accept(const std::string &client_sdp, std::string &server_sdp);
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
@@ -453,7 +467,7 @@ namespace webrtc {
         auto hh = h; auto chh = ch; auto shh = sh;
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
       }) {}
-    ~AdhocListener() {}
+    ~AdhocListener() override {}
   };  
   typedef ConnectionFactory::Connection Connection;
 } //namespace webrtc

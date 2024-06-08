@@ -409,7 +409,7 @@ namespace base {
             char padd[4];
         };
     public:
-        class UdpSession : public Session {
+        class UdpSession : public Session, public IoProcessor {
         public:
             UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : 
                 Session(f, fd, addr) { AllocIovec(); }
@@ -420,6 +420,39 @@ namespace base {
             const char *proto() const { return "udp"; }
             int Send(const char *data, size_t sz) override {
                 return Write(data, sz, addr());
+            }
+            // implements IoProcessor
+            void OnEvent(Fd fd, const Event &e) override {
+                ASSERT(fd == fd_);
+                if (Loop::Writable(e)) {
+                    int r;
+                    if ((r = factory().loop().Mod(fd_, Loop::EV_READ)) < 0) {
+                        Close(QRPC_CLOSE_REASON_SYSCALL, r);
+                        return;
+                    }
+                    if ((r = OnConnect()) < 0) {
+                        Close(QRPC_CLOSE_REASON_LOCAL, r);
+                        return;
+                    }
+                }
+                if (Loop::Readable(e)) {
+                    while (true) {
+                        char buffer[4096];
+                        int sz = sizeof(buffer);
+                        if ((sz = Syscall::Read(fd, buffer, sz)) < 0) {
+                            int err = Syscall::Errno();
+                            if (Syscall::WriteMayBlocked(err, false)) {
+                                return;
+                            }
+                            Close(QRPC_CLOSE_REASON_SYSCALL, err, Syscall::StrError(err));
+                            break;
+                        }
+                        if (sz == 0 || (sz = OnRead(buffer, sz)) < 0) {
+                            Close(sz == 0 ? QRPC_CLOSE_REASON_REMOTE : QRPC_CLOSE_REASON_LOCAL, sz);
+                            break;
+                        }
+                    }
+                }
             }
         protected:
             bool AllocIovec() {
@@ -521,39 +554,49 @@ namespace base {
                 logger::warn({{"ev","already initialized"},{"fd",fd_},{"port",port_}});
                 return true;
             }
-            port_ = port;
             // create udp socket
-            if ((fd_ = Syscall::CreateUDPSocket(AF_INET, &overflow_supported_)) < 0) {
+            if ((fd_ = CreateSocket(port, &overflow_supported_)) < 0) {
                 return false;
             }
-            if (Syscall::Bind(fd_, port_) != QRPC_OK) {
-                Syscall::Close(fd_);
-                fd_ = INVALID_FD;
-                return false;
-            }
-            if (port_ == 0) {
+            if (port == 0) {
                 port_ = AssignedPort(fd_);
                 logger::info({{"ev", "listen port auto assigned"},{"proto","tcp"},{"port",port_}});
-            }
-            if (loop_.Add(fd_, this, Loop::EV_READ) < 0) {
-                logger::error({{"ev","Loop::Add fails"},{"fd",fd_}});
-                Syscall::Close(fd_);
-                fd_ = INVALID_FD;
-                return false;
+            } else {
+                port_ = port;
             }
             return true;
         }
+        Fd CreateSocket(int port, bool *overflow_supported) {
+            Fd fd;
+            // create udp socket
+            if ((fd = Syscall::CreateUDPSocket(AF_INET, overflow_supported)) < 0) {
+                return INVALID_FD;
+            }
+            if (Syscall::Bind(fd, port) != QRPC_OK) {
+                Syscall::Close(fd);
+                return INVALID_FD;
+            }
+            if (loop_.Add(fd, this, Loop::EV_READ) < 0) {
+                logger::error({{"ev","Loop::Add fails"},{"fd",fd}});
+                Syscall::Close(fd);
+                return INVALID_FD;
+            }
+            return fd;
+        }
         Session *Open(const Address &a, FactoryMethod m) override {
-            ASSERT(fd_ >= 0); // forget to call Bind or Listen?
+            bool overflow_supported;
+            Fd fd = fd_ != INVALID_FD ? fd_ : CreateSocket(a.port(), &overflow_supported);
             auto s = Create(fd_, a, m);
             if (s == nullptr) {
                 ASSERT(false);
                 return nullptr;
             }
-            int r;
-            if ((r = s->OnConnect()) < 0) {
-                s->Close(QRPC_CLOSE_REASON_LOCAL, r, "OnConnect() fails");
-                return nullptr;
+            if (fd == fd_) {
+                int r;
+                if ((r = s->OnConnect()) < 0) {
+                    s->Close(QRPC_CLOSE_REASON_LOCAL, r, "OnConnect() fails");
+                    return nullptr;
+                }
             }
             return s;
         }

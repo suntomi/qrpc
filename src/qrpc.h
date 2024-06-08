@@ -385,7 +385,7 @@ QAPI_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl);
 // close connections and destroy client object. after call this, do not call qrpc_client_* API.
 QAPI_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl);
 // create conn from client. can get qrpc_conn_t via argument of qrpc_clconf_t::on_open
-// return false conn on error. TODO(iyatomi): make it QAPI_THREADSAFE
+// return false on error. TODO(iyatomi): make it QAPI_THREADSAFE
 QAPI_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_addr_t *addr, const qrpc_clconf_t *conf);
 // get handler map of the client. 
 QAPI_BOOTSTRAP qrpc_hdmap_t qrpc_client_hdmap(qrpc_client_t cl);

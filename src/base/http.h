@@ -267,11 +267,14 @@ namespace base {
     /******* HttpSessionFactory *******/
     class HttpClient : public TcpSessionFactory {
     public:
+        typedef HttpSession::CloseReason CloseReason;
         class Processor {
         public:
+            typedef HttpSession::CloseReason CloseReason;
             virtual ~Processor() {}
             virtual TcpSession *HandleResponse(HttpSession &s) = 0;
             virtual int SendRequest(HttpSession &s) = 0;
+            virtual void HandleClose(HttpSession &s, const CloseReason &r) = 0;
         };
         class HttpClientSession : public HttpSession {
         public:
@@ -282,6 +285,10 @@ namespace base {
             ) {}
             Callback &callback() override { return cb_; }
             int OnConnect() override { return processor_->SendRequest(*this); }
+            qrpc_time_t OnShutdown() override {
+                processor_->HandleClose(*this, close_reason());
+                return 0;
+            }
         private:
             std::unique_ptr<Processor> processor_;
             Callback cb_;
@@ -299,14 +306,24 @@ namespace base {
     public:
         typedef std::function<int (HttpSession &)> Sender;
         typedef std::function<TcpSession *(HttpSession &)> Receiver;
+        typedef std::function<void (HttpSession &, const CloseReason &)> Closer;
         class Processor : public HttpClient::Processor {
         public:
-            Processor(Sender &&scb, Receiver &&rcb) : scb_(std::move(scb)), rcb_(std::move(rcb)) {}
+            Processor(Sender &&scb, Receiver &&rcb, Closer &&ccb) :
+                scb_(std::move(scb)), rcb_(std::move(rcb)), ccb_(std::move(ccb)) {}
+            Processor(Sender &&scb, Receiver &&rcb) : 
+                Processor(std::move(scb), std::move(rcb), Closer(Nop())) {}
             TcpSession *HandleResponse(HttpSession &s) override { return rcb_(s); }
             int SendRequest(HttpSession &s) override { return scb_(s); }
+            void HandleClose(HttpSession &s, const CloseReason &r) override { ccb_(s, r); }
+        public:
+            struct Nop {
+                void operator()(HttpSession &, const CloseReason &) {}
+            };
         private:
             Sender scb_;
             Receiver rcb_;
+            Closer ccb_;
         };
     public:
         AdhocHttpClient(Loop &l, AlarmProcessor &ap) : HttpClient(l, ap) {}
