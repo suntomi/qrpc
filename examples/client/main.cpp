@@ -265,12 +265,12 @@ bool test_tcp_session(Loop &l, AlarmProcessor &ap) {
     TcpSessionFactory tf(l, ap, qrpc_time_sec(1));
     return test_session<TcpSessionFactory, TestTcpSession>(l, tf, 10001);
 }
-bool test_udp_session(Loop &l, AlarmProcessor &ap) {
+bool test_udp_session(Loop &l, AlarmProcessor &ap, bool bind) {
     if (!reset_test_state(l, ap)) {
         return false;
     }
     UdpSessionFactory uf(l, ap, qrpc_time_sec(1));
-    if (!uf.Bind()) {
+    if (bind && !uf.Bind()) {
         DIE("fail to bind");
     }
     return test_session<UdpSessionFactory, TestUdpSession>(l, uf, 10000);
@@ -304,6 +304,23 @@ bool test_http_client(Loop &l, AlarmProcessor &ap) {
     return true;
 }
 
+bool test_address() {
+    Address a;
+    if (a.Set("1.2.3.4", 5678) < 0) {
+        DIE("fail to set address");
+    }
+    if (a.port() != 5678) {
+        DIE("fail to get port");
+    }
+    if (a.hostip() != "1.2.3.4") {
+        DIE("fail to get hostip");
+    }
+    if (a.str() != "1.2.3.4:5678") {
+        DIE("fail to get str");
+    }
+    return true;
+}
+
 int main(int argc, char *argv[]) {
     bool alive = true;
     Loop l;
@@ -332,6 +349,13 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
+    if (!test_address()) {
+        return 1;
+    }
+    TRACE("======== test_udp_session (unbind) ========");
+    if (!test_udp_session(l, t, false)) {
+        return 1;
+    }
     TRACE("======== test_webrtc_client ========");
     if (!test_webrtc_client(l, t)) {
         return 1;
@@ -344,8 +368,8 @@ int main(int argc, char *argv[]) {
     if (!test_http_client(l, t)) {
         return 1;
     }
-    TRACE("======== test_udp_session ========");
-    if (!test_udp_session(l, t)) {
+    TRACE("======== test_udp_session (bind) ========");
+    if (!test_udp_session(l, t, true)) {
         return 1;
     }
     return 0;

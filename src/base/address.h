@@ -18,6 +18,7 @@ namespace base {
     Address(const void *p, socklen_t salen) : std::string(
       reinterpret_cast<const char *>(p), salen
     ) {}
+    Address(const std::string &host, uint16_t port) : std::string() { Set(host, port); }
     Address(const Address &a) : std::string(a) {}
     Address() : std::string() {}
     const sockaddr *sa() const { return reinterpret_cast<const sockaddr *>(c_str()); }
@@ -37,7 +38,7 @@ namespace base {
     void Reset(const sockaddr_in6 &sa) {
       Reset(reinterpret_cast<const sockaddr *>(&sa), sizeof(sockaddr_in6));
     }
-    int Set(const std::string &host, int port);
+    int Set(const std::string &host, uint16_t port);
   private:
     void Reset(const sockaddr *a, socklen_t al) {
       assign(reinterpret_cast<const char *>(a), al);

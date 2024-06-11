@@ -584,9 +584,13 @@ namespace base {
             return fd;
         }
         Session *Open(const Address &a, FactoryMethod m) override {
+            QRPC_LOGJ(info, {{"ev","Open"},{"a",a.str()}});
             bool overflow_supported;
-            Fd fd = fd_ != INVALID_FD ? fd_ : CreateSocket(a.port(), &overflow_supported);
-            auto s = Create(fd_, a, m);
+            // use unified fd (with recv/send mmsg) or create original fd for connection.
+            Fd fd = fd_ != INVALID_FD ? fd_ : CreateSocket(0, &overflow_supported);
+            auto a2 = fd == fd_ ? a : Address(a.hostip(), AssignedPort(fd));
+            QRPC_LOGJ(info, {{"ev","Open2"},{"a",a2.str()}});
+            auto s = Create(fd, a2, m);
             if (s == nullptr) {
                 ASSERT(false);
                 return nullptr;
