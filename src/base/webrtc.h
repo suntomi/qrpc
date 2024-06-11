@@ -257,7 +257,7 @@ namespace webrtc {
       std::string ip;
       std::vector<Port> ports;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
-      size_t send_buffer_size;
+      size_t send_buffer_size, udp_batch_size;
       qrpc_time_t session_timeout, http_timeout;
       qrpc_time_t connection_timeout;
       AlarmProcessor &alarm_processor{NopAlarmProcessor::Instance()};
@@ -288,17 +288,19 @@ namespace webrtc {
     const std::string &fingerprint() const { return config_.fingerprint; }
     const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
     const UdpSessionFactory::Config udp_listener_config() const {
-      return { .alarm_processor = config_.alarm_processor, .session_timeout = config_.session_timeout };
+      return UdpSessionFactory::Config(config_.alarm_processor, config_.session_timeout, config_.udp_batch_size);
     }
-    const UdpSessionFactory::Config http_listener_config() const {
-      return { .alarm_processor = config_.alarm_processor, .session_timeout = config_.http_timeout };
+    const SessionFactory::Config http_listener_config() const {
+      return SessionFactory::Config(config_.alarm_processor, config_.http_timeout);
     }
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
     const std::string primary_proto() const {
       return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";
     }
+  public:
     virtual bool is_client() const = 0;
+    virtual int Setup() { return QRPC_OK; }
   public:
     int Init();
     void Fin();

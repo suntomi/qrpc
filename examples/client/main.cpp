@@ -262,18 +262,27 @@ bool test_tcp_session(Loop &l, AlarmProcessor &ap) {
     if (!reset_test_state(l, ap)) {
         return false;
     }
-    TcpSessionFactory tf(l, ap, qrpc_time_sec(1));
+    TcpClient tf(l, ap, qrpc_time_sec(1));
     return test_session<TcpSessionFactory, TestTcpSession>(l, tf, 10001);
 }
-bool test_udp_session(Loop &l, AlarmProcessor &ap, bool bind) {
+bool test_udp_session(Loop &l, AlarmProcessor &ap, bool listen) {
     if (!reset_test_state(l, ap)) {
         return false;
     }
-    UdpSessionFactory uf(l, ap, qrpc_time_sec(1));
-    if (bind && !uf.Bind()) {
-        DIE("fail to bind");
+    if (listen) {
+        auto uc = UdpListener(l, [](Fd fd, const Address &a) -> Session* {
+            DIE("client should not call this, provide factory via SessionFactory::Connect");
+            return (Session *)nullptr;
+        }, UdpListener::Config(ap, qrpc_time_sec(1), 1));
+        if (!uc.Bind()) {
+            DIE("fail to bind");
+            return false;
+        }
+        return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
+    } else {
+        auto uc = UdpClient(l, ap, qrpc_time_sec(1));
+        return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
     }
-    return test_session<UdpSessionFactory, TestUdpSession>(l, uf, 10000);
 }
 
 bool test_http_client(Loop &l, AlarmProcessor &ap) {
@@ -352,8 +361,12 @@ int main(int argc, char *argv[]) {
     if (!test_address()) {
         return 1;
     }
-    TRACE("======== test_udp_session (unbind) ========");
+    TRACE("======== test_udp_session (client) ========");
     if (!test_udp_session(l, t, false)) {
+        return 1;
+    }
+    TRACE("======== test_udp_session (server) ========");
+    if (!test_udp_session(l, t, true)) {
         return 1;
     }
     TRACE("======== test_webrtc_client ========");
@@ -366,10 +379,6 @@ int main(int argc, char *argv[]) {
     }
     TRACE("======== test_http_client ========");
     if (!test_http_client(l, t)) {
-        return 1;
-    }
-    TRACE("======== test_udp_session (bind) ========");
-    if (!test_udp_session(l, t, true)) {
         return 1;
     }
     return 0;

@@ -265,7 +265,7 @@ namespace base {
 
 
     /******* HttpSessionFactory *******/
-    class HttpClient : public TcpSessionFactory {
+    class HttpClient : public TcpClient {
     public:
         typedef HttpSession::CloseReason CloseReason;
         class Processor {
@@ -295,7 +295,7 @@ namespace base {
         };
     public:
         // https://superuser.com/a/1271864 says chrome timeout is 300s
-        HttpClient(Loop &l, AlarmProcessor &ap) : TcpSessionFactory(l, ap, qrpc_time_sec(300)) {}
+        HttpClient(Loop &l, AlarmProcessor &ap) : TcpClient(l, ap, qrpc_time_sec(300)) {}
         bool Connect(const std::string &host, int port, Processor *p) {
             return TcpSessionFactory::Connect(host, port, [this, p](Fd fd, const Address &addr) {
                 return new HttpClientSession(*this, fd, addr, p);

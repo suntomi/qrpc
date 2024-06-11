@@ -229,13 +229,13 @@ int main(int argc, char *argv[]) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
-    }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
+    }, AdhocUdpListener::Config(t, qrpc_time_sec(5), 1));
     if (!us.Listen(9999)) {
         DIE("fail to listen on UDP");
     }
     UdpListener tu(l, [&tu](Fd fd, const Address &a) {
         return new TestUdpSession(tu, fd, a);
-    }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
+    }, AdhocUdpListener::Config(t, qrpc_time_sec(5), 1));
     if (!tu.Listen(10000)) {
         DIE("fail to listen on UDP for test");
     }
