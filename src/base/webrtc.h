@@ -35,53 +35,31 @@ namespace webrtc {
         return *this;
       }
     };
-  public: // sessions
+  public: // connection
     class Connection;
-    class TcpSession : public TcpListener::TcpSession {
+    class TcpSession : public TcpSessionFactory::TcpSession {
     public:
-      typedef TcpSessionFactory Factory;
       TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
         TcpSession(f, fd, addr) { connection_ = c; }
       TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) :
         TcpSessionFactory::TcpSession(f, fd, addr), connection_() {}
+      virtual ConnectionFactory &connection_factory() = 0;
       int OnRead(const char *p, size_t sz) override;
       qrpc_time_t OnShutdown() override;
     protected:
       std::shared_ptr<Connection> connection_;
     };
-    class UdpSession : public UdpListener::UdpSession {
+    class UdpSession : public UdpSessionFactory::UdpSession {
     public:
-      typedef UdpSessionFactory Factory;
       UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
         UdpSession(f, fd, addr) { connection_ = c; }
       UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) :
         UdpSessionFactory::UdpSession(f, fd, addr), connection_() {}
+      virtual ConnectionFactory &connection_factory() = 0;
       int OnRead(const char *p, size_t sz) override;
       qrpc_time_t OnShutdown() override;
     protected:
       std::shared_ptr<Connection> connection_;
-    };
-    typedef TcpListenerOf<ConnectionFactory::TcpSession> TcpPortBase;
-    class TcpPort : public TcpPortBase {
-    public:
-      TcpPort(ConnectionFactory &cf) : TcpPortBase(cf.loop()), cf_(cf) {}
-      ConnectionFactory &connection_factory() { return cf_; }
-      // if client mode, does not create unified socket to allow multiple socket connect to same host&port
-      bool Init(int port) { return cf_.is_client() ? true : Listen(port); }
-    private:
-      ConnectionFactory &cf_;
-    };
-    typedef UdpListenerOf<ConnectionFactory::UdpSession> UdpPortBase;
-    class UdpPort : public UdpPortBase {
-    public:
-      UdpPort(ConnectionFactory &cf) : UdpPortBase(cf.loop(), cf.udp_listener_config()), cf_(cf) {
-        ASSERT(&alarm_processor_ != &NopAlarmProcessor::Instance());
-      }
-      ConnectionFactory &connection_factory() { return cf_; }
-      // if client mode, does not create unified socket to allow multiple socket connect to same host&port
-      bool Init(int port) { return cf_.is_client() ? true : Listen(port); }
-    private:
-      ConnectionFactory &cf_;
     };
     class SyscallStream : public AdhocStream {
     public:
@@ -293,14 +271,13 @@ namespace webrtc {
     const SessionFactory::Config http_listener_config() const {
       return SessionFactory::Config(config_.alarm_processor, config_.http_timeout);
     }
-    uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
-    uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
     const std::string primary_proto() const {
       return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";
     }
   public:
     virtual bool is_client() const = 0;
-    virtual int Setup() { return QRPC_OK; }
+    virtual int Setup() = 0;
+    virtual void Cleanup() = 0;
   public:
     int Init();
     void Fin();
@@ -334,8 +311,6 @@ namespace webrtc {
     AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
     FactoryMethod factory_method_;
     StreamFactory stream_factory_;
-    std::vector<TcpPort> tcp_ports_;
-    std::vector<UdpPort> udp_ports_;
     std::map<IceUFrag, std::shared_ptr<Connection>> connections_;
   private:
     static uint32_t g_ref_count_;
@@ -366,10 +341,43 @@ namespace webrtc {
       int port;
     };
   public:
+    class TcpClient : public base::TcpClient {
+    public:
+      TcpClient(ConnectionFactory &cf) :
+        base::TcpClient(cf.loop(), cf.alarm_processor(), cf.config().session_timeout), cf_(cf) {}
+      ConnectionFactory &connection_factory() { return cf_; }
+    private:
+      ConnectionFactory &cf_;
+    };
+    class TcpSession : public ConnectionFactory::TcpSession {
+    public:
+      typedef TcpClient Factory;
+      TcpSession(TcpClient &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+        ConnectionFactory::TcpSession(f, fd, addr, c) {}
+      ConnectionFactory &connection_factory() override { return factory().to<TcpClient>().connection_factory(); }
+    };
+    class UdpClient : public base::UdpClient {
+    public:
+      UdpClient(ConnectionFactory &cf) :
+        base::UdpClient(cf.loop(), cf.alarm_processor(), cf.config().session_timeout), cf_(cf) {}
+      ConnectionFactory &connection_factory() { return cf_; }
+    private:
+      ConnectionFactory &cf_;
+    };
+    class UdpSession : public ConnectionFactory::UdpSession {
+    public:
+      typedef UdpClient Factory;
+      UdpSession(UdpClient &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+        ConnectionFactory::UdpSession(f, fd, addr, c) {}
+      ConnectionFactory &connection_factory() override { return factory().to<UdpClient>().connection_factory(); }
+    };
+  public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.alarm_processor) {}
+      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.alarm_processor),
+      tcp_clients_(), udp_clients_() {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.alarm_processor) {}
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.alarm_processor),
+      tcp_clients_(), udp_clients_() {}
     ~Client() override {}
   public:
     std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
@@ -378,12 +386,16 @@ namespace webrtc {
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
     // implement ConnectionFactory
     virtual bool is_client() const override { return true; }
+    virtual int Setup() override;
+    virtual void Cleanup() override;
   public:
     int Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag);
     bool Open(const std::vector<Candidate> &candidate, size_t idx, std::shared_ptr<Connection> &c);
   protected:
     HttpClient http_client_;
     std::map<IceUFrag, Endpoint> endpoints_;
+    std::vector<TcpClient> tcp_clients_;
+    std::vector<UdpClient> udp_clients_;
   };
 
 
@@ -420,13 +432,47 @@ namespace webrtc {
   // Listener
   class Listener : public ConnectionFactory {
   public:
+    class TcpSession : public ConnectionFactory::TcpSession {
+    public:
+      TcpSession(TcpListener &f, Fd fd, const Address &addr) :
+        ConnectionFactory::TcpSession(f, fd, addr) {}
+      ConnectionFactory &connection_factory() override;
+    };
+    typedef TcpListenerOf<TcpSession> TcpPortBase;
+    class TcpPort : public TcpPortBase {
+    public:
+      TcpPort(ConnectionFactory &cf) : TcpPortBase(cf.loop()), cf_(cf) {}
+      ConnectionFactory &connection_factory() { return cf_; }
+    private:
+      ConnectionFactory &cf_;
+    };
+    class UdpSession : public ConnectionFactory::UdpSession {
+    public:
+      UdpSession(UdpListener &f, Fd fd, const Address &addr) :
+        ConnectionFactory::UdpSession(f, fd, addr) {}
+      ConnectionFactory &connection_factory() override;
+    };
+    typedef UdpListenerOf<UdpSession> UdpPortBase;
+    class UdpPort : public UdpPortBase {
+    public:
+      UdpPort(ConnectionFactory &cf) : UdpPortBase(cf.loop(), cf.udp_listener_config()), cf_(cf) {
+        ASSERT(&alarm_processor_ != &NopAlarmProcessor::Instance());
+      }
+      ConnectionFactory &connection_factory() { return cf_; }
+    private:
+      ConnectionFactory &cf_;
+    };  
+  public:
     Listener(Loop &l, Config &&config, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(sf)),
-      http_listener_(l, http_listener_config()), router_() {}
+      http_listener_(l, http_listener_config()), router_(), tcp_ports_(), udp_ports_() {}
     Listener(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)),
-      http_listener_(l, http_listener_config()), router_() {}
+      http_listener_(l, http_listener_config()), router_(), tcp_ports_(), udp_ports_() {}
     ~Listener() override {}
+  public:
+    uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
+    uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
   public:
     int Accept(const std::string &client_sdp, std::string &server_sdp);
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
@@ -437,9 +483,13 @@ namespace webrtc {
     HttpRouter &RestRouter() { return router_; }
     // implement ConnectionFactory
     virtual bool is_client() const override { return false; }
+    virtual int Setup() override;
+    virtual void Cleanup() override;
   protected:
     HttpListener http_listener_;
     HttpRouter router_;
+    std::vector<TcpPort> tcp_ports_;
+    std::vector<UdpPort> udp_ports_;
   };
 
 

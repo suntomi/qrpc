@@ -31,27 +31,8 @@ int ConnectionFactory::Init() {
   if ((r = config_.Derive()) < 0) {
     return r;
   }
-  // setup TCP/UDP ports
-  for (auto port : config_.ports) {
-    switch (port.protocol) {
-      case Port::Protocol::UDP: {
-        auto &p = udp_ports_.emplace_back(*this);
-      if (!p.Init(port.port)) {
-          logger::error({{"ev","fail to listen"},{"port",port.port}});
-          return r;
-        }
-      } break;
-      case Port::Protocol::TCP: {
-        auto &p = tcp_ports_.emplace_back(*this);
-        if (!p.Init(port.port)) {
-          logger::error({{"ev","fail to listen"},{"port",port.port}});
-          return r;
-        }
-      } break;
-      default:
-        logger::error({{"ev","unsupported protocol"},{"proto",port.protocol}});
-        return QRPC_ENOTSUPPORT;
-    }
+  if ((r = Setup())) {
+    return r;
   }
   if (config_.connection_timeout > 0) {
     alarm_processor().Set(
@@ -67,14 +48,7 @@ void ConnectionFactory::Fin() {
     alarm_processor().Cancel(alarm_id_);
     alarm_id_ = AlarmProcessor::INVALID_ID;
   }
-  for (auto it = udp_ports_.begin(); it != udp_ports_.end();) {
-    auto p = it++;
-    (*p).Fin();
-  }
-  for (auto it = tcp_ports_.begin(); it != tcp_ports_.end();) {
-    auto p = it++;
-    (*p).Fin();
-  }
+  Cleanup();
   GlobalFin();
 }
 void ConnectionFactory::CloseConnection(Connection &c) {
@@ -211,7 +185,7 @@ int ConnectionFactory::Config::Derive() {
 int ConnectionFactory::TcpSession::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
   if (connection_ == nullptr) {
-    connection_ = factory().to<TcpPort>().connection_factory().FindFromStunRequest(up, sz);
+    connection_ = connection_factory().FindFromStunRequest(up, sz);
     if (connection_ == nullptr) {
       QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}});
       return QRPC_EINVAL;
@@ -231,7 +205,7 @@ qrpc_time_t ConnectionFactory::TcpSession::OnShutdown() {
 int ConnectionFactory::UdpSession::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
   if (connection_ == nullptr) {
-    connection_ = factory().to<UdpPort>().connection_factory().FindFromStunRequest(up, sz);
+    connection_ = connection_factory().FindFromStunRequest(up, sz);
     if (connection_ == nullptr) {
       QRPC_LOGJ(info, {{"ev","fail to find connection from stun request"}});
       return QRPC_EINVAL;
@@ -1068,19 +1042,19 @@ namespace client {
     AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
     base::Session::ReconnectionTimeoutCalculator rctc_;
   };
-  class TcpSession : public BaseSession<ConnectionFactory::TcpSession> {
+  class TcpSession : public BaseSession<Client::TcpSession> {
   public:
-    TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
+    TcpSession(Factory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
       const Candidate &cand, OnIceFailure &&oif
-    ) : BaseSession<ConnectionFactory::TcpSession>(
+    ) : BaseSession<Client::TcpSession>(
       f, fd, addr, c, std::get<3>(cand), std::get<4>(cand), std::get<5>(cand), std::move(oif)
     ) {}
   };
-  class UdpSession : public BaseSession<ConnectionFactory::UdpSession> {
+  class UdpSession : public BaseSession<Client::UdpSession> {
   public:
-    UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
+    UdpSession(Factory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
       const Candidate &cand, OnIceFailure &&oif
-    ) : BaseSession<ConnectionFactory::UdpSession>(
+    ) : BaseSession<Client::UdpSession>(
       f, fd, addr, c, std::get<3>(cand), std::get<4>(cand), std::get<5>(cand), std::move(oif)
     ) {}
   };
@@ -1109,10 +1083,10 @@ bool Client::Open(
   // set remote finger print
   c->dtls_transport().SetRemoteFingerprint(std::get<6>(cand));
   if (std::get<0>(cand)) {
-    if (!udp_ports_[0].Connect(
+    if (!udp_clients_[0].Connect(
       std::get<1>(cand), std::get<2>(cand),
       [this, c, cand, on_failure](Fd fd, const Address a) mutable {
-        return new client::UdpSession(udp_ports_[0], fd, a, c, cand, std::move(on_failure));
+        return new client::UdpSession(udp_clients_[0], fd, a, c, cand, std::move(on_failure));
       }, on_failure
     )) {
       logger::info({{"ev","fail to start session"},{"proto","udp"},
@@ -1120,10 +1094,10 @@ bool Client::Open(
       return false;
     }
   } else {
-    if (!tcp_ports_[0].Connect(
+    if (!tcp_clients_[0].Connect(
       std::get<1>(cand), std::get<2>(cand),
       [this, c, cand, on_failure](Fd fd, const Address a) mutable {
-        return new client::TcpSession(tcp_ports_[0], fd, a, c, cand, std::move(on_failure));
+        return new client::TcpSession(tcp_clients_[0], fd, a, c, cand, std::move(on_failure));
       }, on_failure
     )) {
       logger::info({{"ev","fail to start session"},{"proto","tcp"},
@@ -1176,7 +1150,43 @@ bool Client::Connect(const std::string &host, int port, const std::string &path)
     .host = host, .port = port, .path = path
   }));
 }
+int Client::Setup() {
+  // setup TCP/UDP ports
+  for (auto port : config_.ports) {
+    switch (port.protocol) {
+      case Port::Protocol::UDP:
+        udp_clients_.emplace_back(*this);
+        break;
+      case Port::Protocol::TCP:
+        tcp_clients_.emplace_back(*this);
+        break;
+      default:
+        logger::error({{"ev","unsupported protocol"},{"proto",port.protocol}});
+        return QRPC_ENOTSUPPORT;
+    }
+  }
+  return QRPC_OK;
+}
+void Client::Cleanup() {
+  for (auto it = udp_clients_.begin(); it != udp_clients_.end();) {
+    auto p = it++;
+    (*p).Fin();
+  }
+  for (auto it = tcp_clients_.begin(); it != tcp_clients_.end();) {
+    auto p = it++;
+    (*p).Fin();
+  }
+}
 
+
+// Listener::TcpSession
+ConnectionFactory &Listener::TcpSession::connection_factory() {
+  return factory().to<TcpPort>().connection_factory();
+}
+// Listener::UdpSession
+ConnectionFactory &Listener::UdpSession::connection_factory() {
+  return factory().to<UdpPort>().connection_factory();
+}
 // Listener
 bool Listener::Listen(
   int signaling_port, int port,
@@ -1237,6 +1247,41 @@ int Listener::Accept(const std::string &client_sdp, std::string &server_sdp) {
   }
   connections_.emplace(std::move(ufrag), c);
   return QRPC_OK;
+}
+int Listener::Setup() {
+  // setup TCP/UDP ports
+  for (auto port : config_.ports) {
+    switch (port.protocol) {
+      case Port::Protocol::UDP: {
+        auto &p = udp_ports_.emplace_back(*this);
+      if (!p.Listen(port.port)) {
+          logger::error({{"ev","fail to listen"},{"port",port.port}});
+          return QRPC_ESYSCALL;
+        }
+      } break;
+      case Port::Protocol::TCP: {
+        auto &p = tcp_ports_.emplace_back(*this);
+        if (!p.Listen(port.port)) {
+          logger::error({{"ev","fail to listen"},{"port",port.port}});
+          return QRPC_ESYSCALL;
+        }
+      } break;
+      default:
+        logger::error({{"ev","unsupported protocol"},{"proto",port.protocol}});
+        return QRPC_ENOTSUPPORT;
+    }
+  }
+  return QRPC_OK;
+}
+void Listener::Cleanup() {
+  for (auto it = udp_ports_.begin(); it != udp_ports_.end();) {
+    auto p = it++;
+    (*p).Fin();
+  }
+  for (auto it = tcp_ports_.begin(); it != tcp_ports_.end();) {
+    auto p = it++;
+    (*p).Fin();
+  }
 }
 } //namespace webrtc
 } //namespace base
