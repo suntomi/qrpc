@@ -358,6 +358,11 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
+    TRACE("======== test_webrtc_client ========");
+    if (!test_webrtc_client(l, t)) {
+        return 1;
+    }
+    TRACE("======== test_address ========");
     if (!test_address()) {
         return 1;
     }
@@ -367,10 +372,6 @@ int main(int argc, char *argv[]) {
     }
     TRACE("======== test_udp_session (server) ========");
     if (!test_udp_session(l, t, true)) {
-        return 1;
-    }
-    TRACE("======== test_webrtc_client ========");
-    if (!test_webrtc_client(l, t)) {
         return 1;
     }
     TRACE("======== test_tcp_session ========");

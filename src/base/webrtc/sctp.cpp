@@ -963,22 +963,17 @@ namespace webrtc {
 					  streamIds.c_str());
 				}
 
-				// 2024/05/31 iyatomi: i dont think this is required. 
-				// even if comment out this, still usrsctp itself seems to send response (SCTP_STR_RESET_RESPONSE) at sctp_input.c:4212
-				// and client invoke the code in here from sctp_handle_stream_reset_response with SCTP_STREAM_RESET_RESULT_PERFORMED
-				// calling ResetSctpStream here causes duplicated above process and errors
-
 				// // Special case for WebRTC DataChannels in which we must also reset our
 				// // outgoing SCTP stream.
-				// if (incoming && !outgoing && this->isDataChannel)
-				// {
-				// 	for (uint16_t i{ 0 }; i < numStreams; ++i)
-				// 	{
-				// 		auto streamId = notification->sn_strreset_event.strreset_stream_list[i];
+				if (incoming && !outgoing && this->isDataChannel)
+				{
+					for (uint16_t i{ 0 }; i < numStreams; ++i)
+					{
+						auto streamId = notification->sn_strreset_event.strreset_stream_list[i];
 
-				// 		ResetSctpStream(streamId, StreamDirection::OUTGOING);
-				// 	}
-				// }
+						ResetSctpStream(streamId, StreamDirection::OUTGOING);
+					}
+				}
 				for (uint16_t i{ 0 }; i < numStreams; ++i)
 				{
 					auto streamId = notification->sn_strreset_event.strreset_stream_list[i];
