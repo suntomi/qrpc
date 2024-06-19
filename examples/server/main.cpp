@@ -73,10 +73,6 @@ int main(int argc, char *argv[]) {
     if (l.Open(1024) < 0) {
         DIE("fail to init loop");
     }
-    TimerScheduler t(qrpc_time_msec(10)); { // 10ms resolution
-    if (t.Init(l) < 0) {
-        DIE("fail to start timer");
-    }
     SignalHandler sh;
     // in here, return type annotation is required for making compiler happy
     if (!sh.Init(l, [&alive](SignalHandler &s) -> SignalHandler & {
@@ -108,7 +104,6 @@ int main(int argc, char *argv[]) {
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
-        .alarm_processor = t,
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
         logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
@@ -229,13 +224,13 @@ int main(int argc, char *argv[]) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
-    }, AdhocUdpListener::Config(t, qrpc_time_sec(5), 1));
+    }, AdhocUdpListener::Config(qrpc_time_sec(5), 1));
     if (!us.Listen(9999)) {
         DIE("fail to listen on UDP");
     }
     UdpListener tu(l, [&tu](Fd fd, const Address &a) {
         return new TestUdpSession(tu, fd, a);
-    }, AdhocUdpListener::Config(t, qrpc_time_sec(5), 1));
+    }, AdhocUdpListener::Config(qrpc_time_sec(5), 1));
     if (!tu.Listen(10000)) {
         DIE("fail to listen on UDP for test");
     }
@@ -248,6 +243,6 @@ int main(int argc, char *argv[]) {
     while (alive) {
         l.Poll();
     }
-    }}
+    }
     return 0;
 }

@@ -295,7 +295,7 @@ namespace base {
         };
     public:
         // https://superuser.com/a/1271864 says chrome timeout is 300s
-        HttpClient(Loop &l, AlarmProcessor &ap) : TcpClient(l, ap, qrpc_time_sec(300)) {}
+        HttpClient(Loop &l) : TcpClient(l, qrpc_time_sec(300)) {}
         bool Connect(const std::string &host, int port, Processor *p) {
             return TcpSessionFactory::Connect(host, port, [this, p](Fd fd, const Address &addr) {
                 return new HttpClientSession(*this, fd, addr, p);
@@ -326,7 +326,7 @@ namespace base {
             Closer ccb_;
         };
     public:
-        AdhocHttpClient(Loop &l, AlarmProcessor &ap) : HttpClient(l, ap) {}
+        AdhocHttpClient(Loop &l) : HttpClient(l) {}
         bool Connect(const std::string &host, int port, Sender &&scb, Receiver &&rcb) {
             return HttpClient::Connect(host, port, new Processor(std::move(scb), std::move(rcb)));
         }

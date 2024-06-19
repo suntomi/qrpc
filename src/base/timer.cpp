@@ -7,7 +7,16 @@
 #endif
 
 namespace base {
-  int TimerScheduler::Init(Loop &l) {
+  int TimerScheduler::Init(Loop &l, qrpc_time_t granularity) {
+    if (fd_ != INVALID_FD) {
+      logger::error({{"ev","timer: already initialized"},{"fd",fd_}});
+      return QRPC_EINVAL;
+    }
+    if (granularity_ == 0) {
+      logger::error({{"ev","timer: granularity cannot be less than 0"},{"granularity",granularity}});
+      return QRPC_EINVAL;
+    }
+    granularity_ = granularity;
   #if defined(__ENABLE_EPOLL__)
     if ((fd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK)) < 0) {
       logger::error({{"ev","timerfd_create fails"},{"errno",Syscall::Errno()}});

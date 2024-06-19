@@ -15,6 +15,7 @@ class AsyncResolver {
  public:
   struct Config : ares_options {
     int optmask;
+    qrpc_time_t granularity;
     ares_addr_port_node *server_list;
     Config();
     ~Config();
@@ -25,6 +26,7 @@ class AsyncResolver {
     void SetRotateDns();
     void SetStayOpen();
     void SetLookup(bool use_hosts, bool use_dns);
+    void SetGranularity(qrpc_time_t g) { granularity = g; }
 
     //methods may fail sometimes
     bool SetServerHostPort(const std::string &host, int port = 53);
@@ -91,7 +93,7 @@ class AsyncResolver {
    public:
     IoRequest(Channel channel, Fd fd, uint32_t flags) : 
       current_flags_(flags), alive_(true), channel_(channel), fd_(fd) {}
-    ~IoRequest() override {}
+    virtual ~IoRequest() {}
     // implements IoProcessor
     void OnEvent(Fd fd, const Event &e) override;
 
@@ -102,14 +104,19 @@ class AsyncResolver {
     Fd fd() const { return fd_; }
   };
   Channel channel_;
+  Loop &loop_;
+  AlarmProcessor::Id alarm_id_;
   std::map<Fd, IoRequest*> io_requests_;
   std::vector<Query*> queries_;
  public:
-  AsyncResolver() : channel_(nullptr), io_requests_() {}
+  AsyncResolver(Loop &l) : channel_(nullptr), loop_(l),
+    alarm_id_(AlarmProcessor::INVALID_ID), io_requests_(), queries_() {}
+  ~AsyncResolver() { Finalize(); }
   bool Initialize(const Config &config = Config());
+  void Finalize();
   void Resolve(Query *q) { q->resolver_ = this; queries_.push_back(q); }
   void Resolve(const char *host, int family, Callback cb, void *arg);
-  void Poll(Loop *l);
+  void Poll();
   inline bool Initialized() const { return channel_ != nullptr; }
   static inline int PtoN(const std::string &host, int *af, void *buff, qrpc_size_t buflen) {
     *af = (host.find(':') == std::string::npos ? AF_INET : AF_INET6);

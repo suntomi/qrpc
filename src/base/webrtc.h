@@ -76,11 +76,13 @@ namespace webrtc {
                        public DtlsTransport::Listener,
                        public SctpAssociation::Listener {
     public:
+      friend class ConnectionFactory;
+    public:
       Connection(ConnectionFactory &sv, DtlsTransport::Role dtls_role) :
         sv_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr),
         srtp_send_(nullptr), srtp_recv_(nullptr), streams_(), stream_id_factory_(),
-        sctp_connected_(false), closed_(false) {
+        alarm_id_(AlarmProcessor::INVALID_ID), sctp_connected_(false), closed_(false) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case DtlsTransport::Role::CLIENT:
@@ -94,7 +96,11 @@ namespace webrtc {
               break;          
           }
         }
-      virtual ~Connection() {}
+      virtual ~Connection() {
+        if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+          sv_.alarm_processor().Cancel(alarm_id_);
+        }
+      }
     public:
       // implements base::Connection
       void Close() override;
@@ -219,6 +225,7 @@ namespace webrtc {
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       IdFactory<Stream::Id> stream_id_factory_;
+      AlarmProcessor::Id alarm_id_;
       bool sctp_connected_, closed_;
     };
     typedef std::function<Connection *(ConnectionFactory &, DtlsTransport::Role)> FactoryMethod;
@@ -238,7 +245,6 @@ namespace webrtc {
       size_t send_buffer_size, udp_batch_size;
       qrpc_time_t session_timeout, http_timeout;
       qrpc_time_t connection_timeout;
-      AlarmProcessor &alarm_processor{NopAlarmProcessor::Instance()};
       std::string fingerprint_algorithm;
       bool in6{false};
 
@@ -260,16 +266,16 @@ namespace webrtc {
     Loop &loop() { return loop_; }
     const Config &config() const { return config_; }
     StreamFactory &stream_factory() { return stream_factory_; }
-    AlarmProcessor &alarm_processor() { return config_.alarm_processor; }
+    AlarmProcessor &alarm_processor() { return loop_.alarm_processor(); }
     template <class F> inline F& to() { return reinterpret_cast<F &>(*this); }
     template <class F> inline const F& to() const { return reinterpret_cast<const F &>(*this); }
     const std::string &fingerprint() const { return config_.fingerprint; }
     const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
     const UdpSessionFactory::Config udp_listener_config() const {
-      return UdpSessionFactory::Config(config_.alarm_processor, config_.session_timeout, config_.udp_batch_size);
+      return UdpSessionFactory::Config(config_.session_timeout, config_.udp_batch_size);
     }
     const SessionFactory::Config http_listener_config() const {
-      return SessionFactory::Config(config_.alarm_processor, config_.http_timeout);
+      return SessionFactory::Config(config_.http_timeout);
     }
     const std::string primary_proto() const {
       return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";
@@ -283,7 +289,21 @@ namespace webrtc {
     void Fin();
     std::shared_ptr<Connection> FindFromUfrag(const IceUFrag &ufrag);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
+    void ScheduleClose(Connection &c) {
+      c.closed_ = true;
+      c.alarm_id_ = alarm_processor().Set([this, &c]() {
+        c.alarm_id_ = AlarmProcessor::INVALID_ID; // prevent AlarmProcessor::Cancel to be called
+        CloseConnection(c);
+        return 0; // because this return value stops the alarm
+      }, qrpc_time_now());
+    }
     void CloseConnection(Connection &c);
+    void ScheduleClose(const IceUFrag &ufrag) {
+      auto it = connections_.find(ufrag);
+      if (it != connections_.end()) {
+        ScheduleClose(*it->second);
+      }
+    }
     void CloseConnection(const IceUFrag &ufrag) {
       auto it = connections_.find(ufrag);
       if (it != connections_.end()) {
@@ -344,7 +364,7 @@ namespace webrtc {
     class TcpClient : public base::TcpClient {
     public:
       TcpClient(ConnectionFactory &cf) :
-        base::TcpClient(cf.loop(), cf.alarm_processor(), cf.config().session_timeout), cf_(cf) {}
+        base::TcpClient(cf.loop(), cf.config().session_timeout), cf_(cf) {}
       ConnectionFactory &connection_factory() { return cf_; }
     private:
       ConnectionFactory &cf_;
@@ -359,7 +379,7 @@ namespace webrtc {
     class UdpClient : public base::UdpClient {
     public:
       UdpClient(ConnectionFactory &cf) :
-        base::UdpClient(cf.loop(), cf.alarm_processor(), cf.config().session_timeout), cf_(cf) {}
+        base::UdpClient(cf.loop(), cf.config().session_timeout), cf_(cf) {}
       ConnectionFactory &connection_factory() { return cf_; }
     private:
       ConnectionFactory &cf_;
@@ -373,10 +393,10 @@ namespace webrtc {
     };
   public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.alarm_processor),
+      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l),
       tcp_clients_(), udp_clients_() {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.alarm_processor),
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l),
       tcp_clients_(), udp_clients_() {}
     ~Client() override {}
   public:

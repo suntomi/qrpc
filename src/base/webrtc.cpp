@@ -367,7 +367,7 @@ void ConnectionFactory::Connection::Close() {
     .label = SyscallStream::NAME
   }, [this](const Stream::Config &config, base::Connection &conn) {
     return std::make_shared<SyscallStream>(conn, config, [this](Stream &s) {
-      closed_ = true;
+      this->closed_ = true;
       QRPC_LOGJ(info, {{"ev","server syscall stream opened"},{"sid",s.id()}});
       return s.Send({{"fn","close"}});
     });
@@ -449,7 +449,7 @@ void ConnectionFactory::Connection::OnDtlsEstablished() {
   int r;
   if ((r = OnConnect()) < 0) {
     logger::error({{"ev","application reject connection"},{"rc",r}});
-    factory().CloseConnection(*this);
+    factory().ScheduleClose(*this);
   }
 }
 void ConnectionFactory::Connection::OnTcpSessionShutdown(Session *s) {
@@ -661,7 +661,7 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
   logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"c",str::dptr(this)},{"ufrag",usernameFragment}});
   auto ufrag = IceUFrag{usernameFragment};
-  sv_.CloseConnection(ufrag);
+  sv_.ScheduleClose(ufrag);
 }
 void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
@@ -685,7 +685,7 @@ void ConnectionFactory::Connection::OnIceServerConnected(const IceServer *iceSer
   // If ready, run the DTLS handler.
   if (RunDtlsTransport() < 0) {
     logger::error({{"ev","fail to run DTLS transport"}});
-    factory().CloseConnection(*this);
+    factory().ScheduleClose(*this);
     return;
   }
 
@@ -766,7 +766,7 @@ void ConnectionFactory::Connection::OnDtlsTransportClosed(const DtlsTransport* d
   // RTC::Transport::Disconnected();
   // above notifies TransportCongestionControlClient and TransportCongestionControlServer
   // may need to implement equivalent for performance
-  factory().CloseConnection(*this); // this might be freed here, so don't touch after the line
+  factory().ScheduleClose(*this); // this might be freed here, so don't touch after the line
 }
 // Need to send DTLS data to the peer.
 void ConnectionFactory::Connection::OnDtlsTransportSendData(
@@ -869,7 +869,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
             auto data = json::parse(pl);
             if (data["fn"].get<std::string>() == "close") {
               QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
-              this->factory().CloseConnection(*this);
+              this->factory().ScheduleClose(*this);
             }
             return QRPC_OK;
           });
@@ -938,6 +938,8 @@ namespace client {
     void SetUFrag(std::string &&ufrag) { ufrag_ = IceUFrag(ufrag); }
   public:
     base::TcpSession *HandleResponse(HttpSession &s) override {
+      // in here, session that related with webrtc connection is not actively callbacked, 
+      // so we can call CloseConnection
       const auto &uf = ufrag();
       if (s.fsm().rc() != HRC_OK) {
         logger::error({{"ev","signaling server returns error response"},
@@ -975,6 +977,8 @@ namespace client {
       return s.Request("POST", ep_.path.c_str(), h, 2, sdp.c_str(), sdp.length());
     }
     void HandleClose(HttpSession &, const CloseReason &r) override {
+      // in here, session that related with webrtc connection is not actively callbacked, 
+      // so we can call CloseConnection
       if (r.code != QRPC_CLOSE_REASON_LOCAL || r.detail_code != QRPC_EGOAWAY) {
         QRPC_LOGJ(info, {{"ev","close webrtc connection by whip failure"},{"rc",r.code},{"dc",r.detail_code}});
         client_.CloseConnection(ufrag_);

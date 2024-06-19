@@ -32,6 +32,8 @@ namespace internal {
 		typedef int Timeout;
 		
 		Epoll() : fd_(INVALID_FD) {}
+
+		Fd fd() const { return fd_; }
 		
 		//instance method
 		inline int Open(int max_nfd) {
@@ -100,7 +102,9 @@ namespace internal {
 		typedef struct timespec Timeout;
 
 		Kqueue() : fd_(INVALID_FD) {}
-		
+
+		Fd fd() const { return fd_; }
+
 		//instance method
 		inline int Open(int max_nfd) {
 			fd_ = ::kqueue();
@@ -173,33 +177,34 @@ public:
 	constexpr static uint32_t EV_WRITE = 0x02;
 	typedef struct {} Event;
 	typedef int Timeout;
-		inline int Open(int max_nfd) {
-			return QRPC_OK;
-		}
-		inline void Close() {}
-		inline int Errno() { return 0; }
-		inline bool EAgain() { return false; }
-		inline int Add(Fd d, uint32_t flag) {
-			return QRPC_OK;
-		}
-		inline int Mod(Fd d, uint32_t flag) {
-			return QRPC_OK;
-		}
-		inline int Del(Fd d) {
-			return QRPC_OK;
-		}
-		inline int Wait(Event *ev, int size, Timeout &to) {
-			return QRPC_OK;
-		}
+	Fd fd() const { return INVALID_FD; }
+	inline int Open(int max_nfd) {
+		return QRPC_OK;
+	}
+	inline void Close() {}
+	inline int Errno() { return 0; }
+	inline bool EAgain() { return false; }
+	inline int Add(Fd d, uint32_t flag) {
+		return QRPC_OK;
+	}
+	inline int Mod(Fd d, uint32_t flag) {
+		return QRPC_OK;
+	}
+	inline int Del(Fd d) {
+		return QRPC_OK;
+	}
+	inline int Wait(Event *ev, int size, Timeout &to) {
+		return QRPC_OK;
+	}
 
-		//static method
-		static inline void InitEvent(Event &e, Fd fd = INVALID_FD) {}
-		static inline Fd From(const Event &e) {return 0; }
-		static inline bool Readable(const Event &e) { return true; }
-		static inline bool Writable(const Event &e) { return true; }
-		static inline bool Closed(const Event &e) { return true; }
-		static inline void ToTimeout(uint64_t timeout_ns, Timeout &to) {
-			to = timeout_ns / (1000 * 1000);
-		}	
+	//static method
+	static inline void InitEvent(Event &e, Fd fd = INVALID_FD) {}
+	static inline Fd From(const Event &e) {return 0; }
+	static inline bool Readable(const Event &e) { return true; }
+	static inline bool Writable(const Event &e) { return true; }
+	static inline bool Closed(const Event &e) { return true; }
+	static inline void ToTimeout(uint64_t timeout_ns, Timeout &to) {
+		to = timeout_ns / (1000 * 1000);
+	}
 };
 #endif

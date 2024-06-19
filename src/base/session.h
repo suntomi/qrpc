@@ -14,12 +14,12 @@ namespace base {
     class SessionFactory {
     public:
         struct Config {
-            Config(AlarmProcessor &ap, qrpc_time_t st) : alarm_processor(ap), session_timeout(st) {}
+            Config(qrpc_time_t st) : session_timeout(st) {}
             static inline Config Default() { 
-                return Config(NopAlarmProcessor::Instance(), qrpc_time_sec(0));
+                // default no timeout
+                return Config(qrpc_time_sec(0));
             }
         public:
-            AlarmProcessor &alarm_processor;
             qrpc_time_t session_timeout;
         };
         class Session {
@@ -35,6 +35,7 @@ namespace base {
                     double unit = (double)(unit_);
                     auto factor = 1ULL << std::min(kMaxRetryCount, retry_count_);
                     auto base = std::min((double)max_, unit * factor);
+                    // TODO: configurable jitter
                     return (qrpc_time_t)(base * random::gen(0.8, 1.2));
                 }
             private:
@@ -60,53 +61,38 @@ namespace base {
             inline const SessionFactory &factory() const { return factory_; }
             inline const Address &addr() const { return addr_; }
             inline bool closed() const { return close_reason_ != nullptr; }
-            inline CloseReason &close_reason() { return *close_reason_; }            
-            // Close should not be called inside OnXXXX callbacks of session.
-            // Instead, return negative value from them to close.
-            inline bool Close(qrpc_close_reason_code_t code,
-                int64_t detail_code = 0, const std::string &msg = "") {
-                Close({ .code = code, .detail_code = detail_code, .msg = msg });
-            }
-            bool timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
+            inline CloseReason &close_reason() { return *close_reason_; }
+            inline bool timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
                 return CheckTimeout(last_active_, qrpc_time_now(), timeout, next_check);
             }
-            void Touch(qrpc_time_t at) { last_active_ = at; }
-            bool Close(const CloseReason &reason) {
-                if (!closed()) {
-                    logger::info({
-                        {"ev","close"},{"fd",fd()},{"a",addr().str()},
-                        {"code",reason.code},{"dcode",reason.detail_code},{"rmsg",reason.msg}
-                    });
-                    SetCloseReason(reason);
-                    auto reconnect_timeout = OnShutdown();
-                    factory_.Close(*this);
-                    auto &ap = factory_.alarm_processor();
-                    if (reconnect_timeout > 0 && 
-                        // if session is migrated or shutdown, reconnect setting is ignored
-                        reason.code != QRPC_CLOSE_REASON_MIGRATED &&
-                        reason.code != QRPC_CLOSE_REASON_SHUTDOWN &&
-                        &ap != &NopAlarmProcessor::Instance()) {
-                        this->close_reason_->alarm_id = ap.Set(
-                            [this]() { return this->Reconnect(); }, qrpc_time_now() + reconnect_timeout
-                        );
-                        return false;
-                    } else {
-                        ASSERT(reconnect_timeout == 0 ||
-                            reason.code == QRPC_CLOSE_REASON_MIGRATED ||
-                            reason.code == QRPC_CLOSE_REASON_SHUTDOWN);
-                        if (&ap != &NopAlarmProcessor::Instance()) {
-                            this->close_reason_->alarm_id = ap.Set(
-                                [this]() { return this->Finalize(); }, qrpc_time_now()
-                            );
-                        } else {
-                            delete this;
-                        }
-                        return true;
-                   }
-                }
-                ASSERT(false);
-                return false;
+            // Close should not be called inside OnXXXX callbacks of session.
+            // Instead, return negative value from them to close, or call Shutdown()
+            inline bool Close(qrpc_close_reason_code_t code,
+                int64_t detail_code = 0, const std::string &msg = "") {
+                return Close({ .code = code, .detail_code = detail_code, .msg = msg });
             }
+            // this closes session and safely callable from OnRead(), OnConnect()
+            // but recommended to return negative value from them to close. use this only when there is no other way.
+            inline bool ScheduleClose(qrpc_close_reason_code_t code,
+                int64_t detail_code = 0, const std::string &msg = "") {
+                // set close reason first so that cancel the alarm when session is deleted before alarm raised
+                SetCloseReason({ .code = code, .detail_code = detail_code, .msg = msg });
+                this->close_reason_->alarm_id = factory().alarm_processor().Set(
+                    [this]() {
+                        std::unique_ptr<CloseReason> cr = std::move(this->close_reason_);
+                        ASSERT(close_reason_ == nullptr);
+                        if (cr != nullptr) {
+                            this->Close(*cr);
+                        } else {
+                            QRPC_LOGJ(error,{{"ev","alarm fired but close reason is already reset"}});
+                            ASSERT(false);
+                            this->Close(QRPC_CLOSE_REASON_SHUTDOWN, 0, "invalid shutdown: no close reason");
+                        }
+                        return 0; // stop alarm
+                    }, qrpc_time_now()
+                );
+            }
+            inline void Touch(qrpc_time_t at) { last_active_ = at; }
             // virtual functions to override
             virtual int Send(const char *data, size_t sz) {
                 return Syscall::Write(fd_, data, sz);
@@ -133,6 +119,37 @@ namespace base {
                 ASSERT(close_reason_ != nullptr);
             }
         protected:
+            bool Close(const CloseReason &reason) {
+                if (!closed()) {
+                    logger::info({
+                        {"ev","close"},{"fd",fd()},{"a",addr().str()},
+                        {"code",reason.code},{"dcode",reason.detail_code},{"rmsg",reason.msg}
+                    });
+                    SetCloseReason(reason);
+                    auto reconnect_timeout = OnShutdown();
+                    factory_.Close(*this);
+                    auto &ap = factory_.alarm_processor();
+                    if (reconnect_timeout > 0 && 
+                        // if session is migrated or shutdown, reconnect setting is ignored
+                        reason.code != QRPC_CLOSE_REASON_MIGRATED &&
+                        reason.code != QRPC_CLOSE_REASON_SHUTDOWN &&
+                        &ap != &NopAlarmProcessor::Instance()) {
+                        this->close_reason_->alarm_id = ap.Set(
+                            [this]() { return this->Reconnect(); }, qrpc_time_now() + reconnect_timeout
+                        );
+                        return false;
+                    } else {
+                        ASSERT(reconnect_timeout == 0 ||
+                            reason.code == QRPC_CLOSE_REASON_MIGRATED ||
+                            reason.code == QRPC_CLOSE_REASON_SHUTDOWN);
+                        ASSERT(this->close_reason_->alarm_id == AlarmProcessor::INVALID_ID);
+                        delete this;
+                        return true;
+                   }
+                }
+                ASSERT(false);
+                return false;
+            }
             inline qrpc_time_t Reconnect() {
                 factory().Open(addr(), [this](Fd fd, const Address &) {
                     // reuse this session with new fd
@@ -140,12 +157,6 @@ namespace base {
                     this->fd_ = fd;
                     return this;
                 });
-                return 0; // stop alarm
-            }
-            inline qrpc_time_t Finalize() {
-                // prevent destructor from trying to cancel alarm
-                this->close_reason_->alarm_id = AlarmProcessor::INVALID_ID;
-                delete this;
                 return 0; // stop alarm
             }
         protected:
@@ -159,10 +170,10 @@ namespace base {
         typedef std::function<void (int)> DnsErrorHandler;
     public:
         SessionFactory(Loop &l, FactoryMethod &&m) :
-            loop_(l), alarm_processor_(NopAlarmProcessor::Instance()),
+            loop_(l), alarm_processor_(l.alarm_processor()),
             factory_method_(m), session_timeout_(0ULL) { Init(); }
         SessionFactory(Loop &l, FactoryMethod &&m, Config c) :
-            loop_(l), alarm_processor_(c.alarm_processor),
+            loop_(l), alarm_processor_(l.alarm_processor()),
             factory_method_(m), session_timeout_(c.session_timeout) { Init(); }
         virtual ~SessionFactory() {}
         virtual Session *Open(const Address &a, FactoryMethod m) = 0;
@@ -303,8 +314,8 @@ namespace base {
             if (fd != INVALID_FD) {
                 loop_.Del(fd);
                 Syscall::Close(fd);
+                sessions_.erase(fd);
             }
-            sessions_.erase(fd);
         }
         Session *Create(int fd, const Address &a, FactoryMethod &m) override {
             auto s = m(fd, a);
@@ -318,11 +329,11 @@ namespace base {
     };
     class TcpClient : public TcpSessionFactory {
     public:
-        TcpClient(Loop &l, AlarmProcessor &ap, qrpc_time_t timeout = qrpc_time_sec(120)) : 
+        TcpClient(Loop &l, qrpc_time_t timeout = qrpc_time_sec(120)) : 
             TcpSessionFactory(l, [this](Fd fd, const Address &a) -> Session* {
                 DIE("client should not call this, provide factory via SessionFactory::Connect");
                 return (Session *)nullptr;
-            }, Config(ap, timeout)) {}
+            }, Config(timeout)) {}
         TcpClient(TcpClient &&rhs) = default;
     };
     class TcpListener : public TcpSessionFactory, public IoProcessor {
@@ -349,7 +360,12 @@ namespace base {
                 return false;
             }
             if (port_ == 0) {
-                port_ = AssignedPort(fd_);
+                if ((port_ = AssignedPort(fd_)) < 0) {
+                    QRPC_LOGJ(error, {{"ev","AssignedPort() fails"},{"fd",fd_},{"r",port_}});
+                    Syscall::Close(fd_);
+                    fd_ = INVALID_FD;
+                    return false;
+                }
                 logger::info({{"ev", "listen port auto assigned"},{"proto","tcp"},{"port",port_}});
             }
             if (loop_.Add(fd_, this, Loop::EV_READ) < 0) {
@@ -414,8 +430,8 @@ namespace base {
         #else
             static constexpr int BATCH_SIZE = 1;
         #endif
-            Config(AlarmProcessor &ap, qrpc_time_t st, int mbs) :
-                SessionFactory::Config(ap, st), max_batch_size(
+            Config(qrpc_time_t st, int mbs) :
+                SessionFactory::Config(st), max_batch_size(
                 #if defined(__QRPC_USE_RECVMMSG__)
                     mbs
                 #else
@@ -593,12 +609,12 @@ namespace base {
     class UdpClient : public UdpSessionFactory {
     public:
         UdpClient(
-            Loop &l, AlarmProcessor &ap, qrpc_time_t session_timeout = qrpc_time_sec(120),
+            Loop &l, qrpc_time_t session_timeout = qrpc_time_sec(120),
             int batch_size = Config::BATCH_SIZE
         ) : UdpSessionFactory(l, [this](Fd fd, const Address &ap) {
             DIE("client should not call this, provide factory with SessionFactory::Connect");
             return (Session *)nullptr;
-        }, Config(ap, session_timeout, batch_size)) {}
+        }, Config(session_timeout, batch_size)) {}
         UdpClient(UdpClient &&rhs) = default;
         ~UdpClient() override { Fin(); }
         void Fin() { FinSessions(sessions_); }
@@ -618,7 +634,7 @@ namespace base {
                 ASSERT(false);
                 return nullptr;
             }
-            if (loop_.Add(fd, dynamic_cast<UdpSession *>(s), Loop::EV_READ) < 0) {
+            if (loop_.Add(fd, dynamic_cast<UdpSession *>(s), Loop::EV_WRITE) < 0) {
                 logger::error({{"ev","Loop::Add fails"},{"fd",fd}});
                 s->Close(QRPC_CLOSE_REASON_LOCAL, Syscall::Errno(), "Loop::Add fails");
                 return nullptr;
@@ -627,11 +643,12 @@ namespace base {
         }
         void Close(Session &s) override {
             Fd fd = s.fd();
+            QRPC_LOGJ(info, {{"ev","Udp::Close"},{"fd",fd},{"ps",str::dptr(&s)}});
             if (fd != INVALID_FD) {
                 loop_.Del(fd);
                 Syscall::Close(fd);
+                sessions_.erase(fd);
             }
-            sessions_.erase(fd);
         }
         qrpc_time_t CheckTimeout() override { return CheckSessionTimeout(sessions_); }
     protected:
@@ -669,13 +686,18 @@ namespace base {
                 return false;
             }
             if (loop_.Add(fd_, this, Loop::EV_READ) < 0) {
-                logger::error({{"ev","Loop::Add fails"},{"fd",fd_}});
+                QRPC_LOGJ(error, {{"ev","Loop::Add fails"},{"fd",fd_}});
                 Syscall::Close(fd_);
                 return false;
             }
             if (port == 0) {
-                port_ = AssignedPort(fd_);
-                logger::info({{"ev", "listen port auto assigned"},{"proto","tcp"},{"port",port_}});
+                if ((port_ = AssignedPort(fd_)) < 0) {
+                    QRPC_LOGJ(error, {{"ev","AssignedPort() fails"},{"fd",fd_},{"r",port_}});
+                    Syscall::Close(fd_);
+                    fd_ = INVALID_FD;
+                    return false;
+                }
+                logger::info({{"ev", "listen port auto assigned"},{"proto","udp"},{"port",port_}});
             } else {
                 port_ = port;
             }

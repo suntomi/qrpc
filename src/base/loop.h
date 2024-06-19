@@ -2,26 +2,29 @@
 
 #include <cstdlib>
 
+#include "base/alarm.h"
 #include "base/loop_impl.h"
 #include "base/io_processor.h"
 #include "base/resolver.h"
 #include "base/string.h"
+#include "base/timer.h"
 
 namespace base {
 class Loop : public LoopImpl, IoProcessor {
   // because objects that behave as IoProcessor are allocated both on heap and stack,
   // using smart pointer like shared_ptr is not easy.
   IoProcessor **processors_;
+  TimerScheduler timer_;
   int max_nfd_;
-  AsyncResolver ares_;
   LoopImpl::Timeout timeout_;
 public:
   static const int kMinimumProcessorArraySize = 16;
   typedef LoopImpl::Event Event;
-  Loop() : LoopImpl(), processors_(nullptr), max_nfd_(-1), ares_() {}
+  Loop() : LoopImpl(), processors_(nullptr), timer_(), max_nfd_(-1) {}
   ~Loop() { Close(); }
   template <class T> T *ProcessorAt(int fd) { return (T *)processors_[fd]; }
-  inline AsyncResolver &ares() { return ares_; }
+  inline AlarmProcessor &alarm_processor() { return timer_; }
+  inline Fd fd() const { return LoopImpl::fd(); }
   inline int Open(int max_nfd, uint64_t timeout_ns = 1000 * 1000) {
     if (max_nfd < kMinimumProcessorArraySize) {
       max_nfd = kMinimumProcessorArraySize;
@@ -43,7 +46,7 @@ public:
     CheckAndGrow(fd);
     ASSERT(processors_[fd] == nullptr);
     processors_[fd] = h;
-    // logger::info({{"ev","Loop::Add"}, {"fd", fd}, {"h", str::dptr(h)}});
+    logger::info({{"ev","Loop::Add"}, {"fd", fd}, {"h", str::dptr(h)}});
     return LoopImpl::Add(fd, flags);
   }
   inline int Mod(Fd fd, uint32_t flags) {
@@ -65,7 +68,7 @@ public:
     if (r >= 0) {
       auto h = processors_[fd];
       processors_[fd] = nullptr;
-      // logger::info({{"ev","Loop::Del"}, {"fd", fd}, {"h", str::dptr(h)}});
+      logger::info({{"ev","Loop::Del"}, {"fd", fd}, {"h", str::dptr(h)}});
     } else {
       ASSERT(false);
     }
@@ -94,14 +97,10 @@ public:
       auto h = processors_[fd];
       h->OnEvent(fd, ev);
     }
-  }
-  inline void PollAres() {
-    // need to initialize ares_ by using ares().Initialize(config)
-    ares_.Poll(this);
-    Poll();
+    timer_.Poll();
   }
 public: //IoProcessor
-  void OnEvent(Fd fd, const Event &e) override { Poll(); }
+  void OnEvent(Fd lfd, const Event &e) override { ASSERT(fd() == lfd); Poll(); }
 
   inline void CheckAndGrow(Fd fd) {
     if ((int)fd >= max_nfd_) {
