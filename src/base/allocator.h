@@ -5,7 +5,6 @@
 #include <memory>
 
 #include "base/memory.h"
-
 #include "base/defs.h"
 
 namespace base {

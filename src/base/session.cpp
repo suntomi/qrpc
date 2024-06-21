@@ -70,9 +70,13 @@ namespace base {
     loop_(rhs.loop_),
     resolver_(rhs.resolver_),
     alarm_processor_(rhs.alarm_processor_),
-    alarm_id_(rhs.alarm_id_),
+    alarm_id_(AlarmProcessor::INVALID_ID),
     session_timeout_(rhs.session_timeout_) {
-    rhs.alarm_id_ = AlarmProcessor::INVALID_ID;
+    if (rhs.alarm_id_ != AlarmProcessor::INVALID_ID) {
+      rhs.loop_.alarm_processor().Cancel(rhs.alarm_id_);
+      rhs.alarm_id_ = AlarmProcessor::INVALID_ID;
+    }
+    Init();
   }
 
   bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref) {

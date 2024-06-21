@@ -274,7 +274,6 @@ namespace webrtc {
   public:
     virtual bool is_client() const = 0;
     virtual int Setup() = 0;
-    virtual void Cleanup() = 0;
   public:
     int Init();
     void Fin();
@@ -390,16 +389,16 @@ namespace webrtc {
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.resolver),
       tcp_clients_(), udp_clients_() {}
-    ~Client() override {}
+    ~Client() override { Fin(); }
   public:
     std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
   public:
     bool Connect(const std::string &host, int port, const std::string &path = "/qrpc");
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
+    void Fin();
     // implement ConnectionFactory
     virtual bool is_client() const override { return true; }
     virtual int Setup() override;
-    virtual void Cleanup() override;
   public:
     int Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag);
     bool Open(const std::vector<Candidate> &candidate, size_t idx, std::shared_ptr<Connection> &c);
@@ -481,13 +480,14 @@ namespace webrtc {
     Listener(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)),
       http_listener_(l, http_listener_config()), router_(), tcp_ports_(), udp_ports_() {}
-    ~Listener() override {}
+    ~Listener() override { Fin(); }
   public:
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
   public:
     int Accept(const std::string &client_sdp, std::string &server_sdp);
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
+    void Fin();
     bool Listen(
       int signaling_port, int port,
       const std::string &listen_ip = "", const std::string &path = "/qrpc"
@@ -496,7 +496,6 @@ namespace webrtc {
     // implement ConnectionFactory
     virtual bool is_client() const override { return false; }
     virtual int Setup() override;
-    virtual void Cleanup() override;
   protected:
     HttpListener http_listener_;
     HttpRouter router_;

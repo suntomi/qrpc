@@ -179,10 +179,9 @@ namespace base {
             loop_(l), resolver_(c.resolver), alarm_processor_(l.alarm_processor()),
             factory_method_(m), session_timeout_(c.session_timeout) { Init(); }
         SessionFactory(SessionFactory &&rhs);
+        virtual ~SessionFactory() { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(SessionFactory);
-        void Move(SessionFactory &&rhs);
-        virtual ~SessionFactory() {}
-        virtual Session *Open(const Address &a, FactoryMethod m) = 0;
+    public:
         inline Loop &loop() { return loop_; }
         inline AlarmProcessor &alarm_processor() { return alarm_processor_; }
         inline qrpc_time_t session_timeout() const { return session_timeout_; }
@@ -208,6 +207,12 @@ namespace base {
                 );
             }
         }
+        inline void Fin() {
+            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+                alarm_processor_.Cancel(alarm_id_);
+                alarm_id_ = AlarmProcessor::INVALID_ID;
+            }
+        }
         template <class SESSIONS>
         qrpc_time_t CheckSessionTimeout(SESSIONS &sessions) {
             qrpc_time_t now = qrpc_time_now();
@@ -230,11 +235,9 @@ namespace base {
                 auto cur = it++;
                 cur->second->Close(QRPC_CLOSE_REASON_SHUTDOWN, 0, "factory closed");
             }
-            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-                alarm_processor_.Cancel(alarm_id_);
-                alarm_id_ = AlarmProcessor::INVALID_ID;
-            }
         }
+    public:
+        virtual Session *Open(const Address &a, FactoryMethod m) = 0;
     protected:
         virtual Session *Create(int fd, const Address &a, FactoryMethod &m) = 0;
         virtual void Close(Session &s) = 0;
@@ -484,6 +487,7 @@ namespace base {
         class UdpSession : public Session, public IoProcessor {
         public:
             UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) { AllocIovec(); }
+            ~UdpSession() override { FreeIovec(); }
             DISALLOW_COPY_AND_ASSIGN(UdpSession);
             UdpSessionFactory &udp_session_factory() { return factory().to<UdpSessionFactory>(); }
             const UdpSessionFactory &udp_session_factory() const { return factory().to<UdpSessionFactory>(); }
@@ -535,6 +539,13 @@ namespace base {
                     return false;
                 }
                 write_vecs_.push_back({ .iov_base = b, .iov_len = 0 });
+            }
+            void FreeIovec() {
+                for (int i = 0; i < write_vecs_.size(); i++) {
+                    struct iovec &iov = write_vecs_.back();
+                    udp_session_factory().write_buffers_.Free(iov.iov_base);
+                    write_vecs_.pop_back();
+                }
             }
             void Reset() {
                 auto size = write_vecs_.size();
@@ -681,8 +692,8 @@ namespace base {
             overflow_supported_(false), sessions_(),
             read_packets_(batch_size_), read_buffers_(batch_size_) { SetupPacket(); }
         UdpListener(UdpListener &&rhs);
-        DISALLOW_COPY_AND_ASSIGN(UdpListener);
         ~UdpListener() override { Fin(); }
+        DISALLOW_COPY_AND_ASSIGN(UdpListener);
     public:
         Fd fd() const { return fd_; }
         int port() const { return port_; }

@@ -48,7 +48,6 @@ void ConnectionFactory::Fin() {
     alarm_processor().Cancel(alarm_id_);
     alarm_id_ = AlarmProcessor::INVALID_ID;
   }
-  Cleanup();
   GlobalFin();
 }
 void ConnectionFactory::CloseConnection(Connection &c) {
@@ -976,9 +975,7 @@ namespace client {
         QRPC_LOGJ(error, {{"ev","fail to generate offer"},{"rc",r}});
         return QRPC_ESYSCALL;
       }
-      QRPC_LOGJ(debug, {{"ev","uf1"},{"uf",ufrag_},{"ufs",ufrag}});
       SetUFrag(std::move(ufrag));
-      QRPC_LOGJ(debug, {{"ev","uf2"},{"uf",ufrag_},{"ufs",ufrag}});
       std::string sdplen = std::to_string(sdp.length());
       HttpHeader h[] = {
           {.key = "Content-Type", .val = "application/sdp"},
@@ -1145,16 +1142,18 @@ int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
   return QRPC_OK;
 }
 bool Client::Connect(const std::string &host, int port, const std::string &path) {
-  config_.ports = {
-    // 0 for local port number auto assignment
-    {.protocol = ConnectionFactory::Port::UDP, .port = 0},
-    {.protocol = ConnectionFactory::Port::TCP, .port = 0}
-  };
-  // assign listener port
-  int r;
-  if ((r = Init()) < 0) {
-    QRPC_LOGJ(error, {{"ev","fail to init conection factory"},{"rc",r}});
-    return r;
+  if (udp_clients_.size() <= 0 && tcp_clients_.size() <= 0) {
+    // init client
+    config_.ports = {
+      // 0 for local port number auto assignment
+      {.protocol = ConnectionFactory::Port::UDP, .port = 0},
+      {.protocol = ConnectionFactory::Port::TCP, .port = 0}
+    };
+    int r;
+    if ((r = Init()) < 0) {
+      QRPC_LOGJ(error, {{"ev","fail to init conection factory"},{"rc",r}});
+      return r;
+    }
   }
 
   QRPC_LOGJ(info, {{"ev","connect start"},
@@ -1181,7 +1180,7 @@ int Client::Setup() {
   }
   return QRPC_OK;
 }
-void Client::Cleanup() {
+void Client::Fin() {
   for (auto it = udp_clients_.begin(); it != udp_clients_.end();) {
     auto p = it++;
     (*p).Fin();
@@ -1287,7 +1286,7 @@ int Listener::Setup() {
   }
   return QRPC_OK;
 }
-void Listener::Cleanup() {
+void Listener::Fin() {
   for (auto it = udp_ports_.begin(); it != udp_ports_.end();) {
     auto p = it++;
     (*p).Fin();
