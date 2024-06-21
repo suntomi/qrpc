@@ -7,6 +7,7 @@
 #include "base/loop.h"
 #include "base/io_processor.h"
 #include "base/macros.h"
+#include "base/resolver.h"
 
 #include <functional>
 
@@ -14,12 +15,13 @@ namespace base {
     class SessionFactory {
     public:
         struct Config {
-            Config(qrpc_time_t st) : session_timeout(st) {}
+            Config(Resolver &r, qrpc_time_t st) : resolver(r), session_timeout(st) {}
             static inline Config Default() { 
                 // default no timeout
-                return Config(qrpc_time_sec(0));
+                return Config(NopResolver::Instance(), qrpc_time_sec(0));
             }
         public:
+            Resolver &resolver;
             qrpc_time_t session_timeout;
         };
         class Session {
@@ -56,6 +58,7 @@ namespace base {
                     factory_.alarm_processor().Cancel(close_reason_->alarm_id);
                 }
             }
+            DISALLOW_COPY_AND_ASSIGN(Session);
             inline Fd fd() const { return fd_; }
             inline SessionFactory &factory() { return factory_; }
             inline const SessionFactory &factory() const { return factory_; }
@@ -170,11 +173,14 @@ namespace base {
         typedef std::function<void (int)> DnsErrorHandler;
     public:
         SessionFactory(Loop &l, FactoryMethod &&m) :
-            loop_(l), alarm_processor_(l.alarm_processor()),
+            loop_(l), resolver_(NopResolver::Instance()), alarm_processor_(l.alarm_processor()),
             factory_method_(m), session_timeout_(0ULL) { Init(); }
         SessionFactory(Loop &l, FactoryMethod &&m, Config c) :
-            loop_(l), alarm_processor_(l.alarm_processor()),
+            loop_(l), resolver_(c.resolver), alarm_processor_(l.alarm_processor()),
             factory_method_(m), session_timeout_(c.session_timeout) { Init(); }
+        SessionFactory(SessionFactory &&rhs);
+        DISALLOW_COPY_AND_ASSIGN(SessionFactory);
+        void Move(SessionFactory &&rhs);
         virtual ~SessionFactory() {}
         virtual Session *Open(const Address &a, FactoryMethod m) = 0;
         inline Loop &loop() { return loop_; }
@@ -236,6 +242,7 @@ namespace base {
     protected:
         FactoryMethod factory_method_;
         Loop &loop_;
+        Resolver &resolver_;
         AlarmProcessor &alarm_processor_;
         AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
         qrpc_time_t session_timeout_;
@@ -246,6 +253,7 @@ namespace base {
         public:
             TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) : 
                 Session(f, fd, addr) {}
+            DISALLOW_COPY_AND_ASSIGN(TcpSession);
             inline void MigrateTo(TcpSession *newsession) {
                 factory().loop().ModProcessor(fd_, newsession);
                 fd_ = INVALID_FD; // invalidate fd_ so that SessionFactory::Close will not close fd_
@@ -291,7 +299,10 @@ namespace base {
     public:
         TcpSessionFactory(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
             SessionFactory(l, std::move(m), c), sessions_() {}
+        TcpSessionFactory(TcpSessionFactory &&rhs) :
+            SessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {}
         ~TcpSessionFactory() override { Fin(); }
+        DISALLOW_COPY_AND_ASSIGN(TcpSessionFactory);
         void Fin() { FinSessions(sessions_); }
         // implements SessionFactory
         Session *Open(const Address &a, FactoryMethod m) override {
@@ -329,19 +340,22 @@ namespace base {
     };
     class TcpClient : public TcpSessionFactory {
     public:
-        TcpClient(Loop &l, qrpc_time_t timeout = qrpc_time_sec(120)) : 
+        TcpClient(Loop &l, Resolver &r, qrpc_time_t timeout = qrpc_time_sec(120)) : 
             TcpSessionFactory(l, [this](Fd fd, const Address &a) -> Session* {
                 DIE("client should not call this, provide factory via SessionFactory::Connect");
                 return (Session *)nullptr;
-            }, Config(timeout)) {}
-        TcpClient(TcpClient &&rhs) = default;
+            }, Config(r, timeout)) {}
+        TcpClient(TcpClient &&rhs) : TcpSessionFactory(std::move(rhs)) {}
+        DISALLOW_COPY_AND_ASSIGN(TcpClient);
     };
     class TcpListener : public TcpSessionFactory, public IoProcessor {
     public:
         TcpListener(Loop &l, FactoryMethod &&m, Config c = Config::Default()) : 
             TcpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0) {}
-        TcpListener(TcpListener &&rhs) = default;
+        TcpListener(TcpListener &&rhs) : TcpSessionFactory(std::move(rhs)), 
+            fd_(rhs.fd_), port_(rhs.port_) { rhs.fd_ = INVALID_FD; }
         ~TcpListener() override { Fin(); }
+        DISALLOW_COPY_AND_ASSIGN(TcpListener);
         Fd fd() const { return fd_; }
         int port() const { return port_; }
         void Fin() {
@@ -421,6 +435,8 @@ namespace base {
             static_assert(std::is_base_of<TcpSession, S>(), "S must be a descendant of TcpSession");
             return new S(*this, fd, a);
         }) {}
+        TcpListenerOf(TcpListenerOf &&rhs) : TcpListener(std::move(rhs)) {}
+        DISALLOW_COPY_AND_ASSIGN(TcpListenerOf);
     };
     class UdpSessionFactory : public SessionFactory {
     public:
@@ -430,8 +446,8 @@ namespace base {
         #else
             static constexpr int BATCH_SIZE = 1;
         #endif
-            Config(qrpc_time_t st, int mbs) :
-                SessionFactory::Config(st), max_batch_size(
+            Config(Resolver &r, qrpc_time_t st, int mbs) :
+                SessionFactory::Config(r, st), max_batch_size(
                 #if defined(__QRPC_USE_RECVMMSG__)
                     mbs
                 #else
@@ -468,6 +484,7 @@ namespace base {
         class UdpSession : public Session, public IoProcessor {
         public:
             UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) { AllocIovec(); }
+            DISALLOW_COPY_AND_ASSIGN(UdpSession);
             UdpSessionFactory &udp_session_factory() { return factory().to<UdpSessionFactory>(); }
             const UdpSessionFactory &udp_session_factory() const { return factory().to<UdpSessionFactory>(); }
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
@@ -588,7 +605,9 @@ namespace base {
     public:
         UdpSessionFactory(Loop &l, FactoryMethod &&m, Config config = Config::Default()) :
             SessionFactory(l, std::move(m), config), batch_size_(config.max_batch_size), write_buffers_(batch_size_) {}
-        UdpSessionFactory(UdpSessionFactory &&rhs) = default;
+        UdpSessionFactory(UdpSessionFactory &&rhs) : SessionFactory(std::move(rhs)),
+            batch_size_(rhs.batch_size_), write_buffers_(std::move(rhs.write_buffers_)) {}
+        DISALLOW_COPY_AND_ASSIGN(UdpSessionFactory);
     public:
         Fd CreateSocket(int port, bool *overflow_supported) {
             Fd fd;
@@ -609,14 +628,15 @@ namespace base {
     class UdpClient : public UdpSessionFactory {
     public:
         UdpClient(
-            Loop &l, qrpc_time_t session_timeout = qrpc_time_sec(120),
+            Loop &l, Resolver &r, qrpc_time_t session_timeout = qrpc_time_sec(120),
             int batch_size = Config::BATCH_SIZE
         ) : UdpSessionFactory(l, [this](Fd fd, const Address &ap) {
             DIE("client should not call this, provide factory with SessionFactory::Connect");
             return (Session *)nullptr;
-        }, Config(session_timeout, batch_size)) {}
-        UdpClient(UdpClient &&rhs) = default;
+        }, Config(r, session_timeout, batch_size)) {}
+        UdpClient(UdpClient &&rhs) : UdpSessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {}
         ~UdpClient() override { Fin(); }
+        DISALLOW_COPY_AND_ASSIGN(UdpClient);
         void Fin() { FinSessions(sessions_); }
     public:
         // implements SessionFactory
@@ -660,7 +680,8 @@ namespace base {
             UdpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0),
             overflow_supported_(false), sessions_(),
             read_packets_(batch_size_), read_buffers_(batch_size_) { SetupPacket(); }
-        UdpListener(UdpListener &&rhs) = default;
+        UdpListener(UdpListener &&rhs);
+        DISALLOW_COPY_AND_ASSIGN(UdpListener);
         ~UdpListener() override { Fin(); }
     public:
         Fd fd() const { return fd_; }
@@ -768,6 +789,7 @@ namespace base {
         public:
             AdhocUdpSession(AdhocUdpListener &f, Fd fd, const Address &addr) : 
                 UdpSession(f, fd, addr) {}
+            DISALLOW_COPY_AND_ASSIGN(AdhocUdpSession);
             int OnRead(const char *p, size_t sz) override {
                 return factory().to<AdhocUdpListener>().handler()(*this, p, sz);
             }
@@ -778,6 +800,8 @@ namespace base {
             UdpListener(l, [this](Fd fd, const Address &a) {
                 return new AdhocUdpSession(*this, fd, a);
             }, config), handler_(h) {}
+        AdhocUdpListener(AdhocUdpListener &&rhs) : UdpListener(std::move(rhs)), handler_(std::move(handler_)) {}
+        DISALLOW_COPY_AND_ASSIGN(AdhocUdpListener);
         inline Handler &handler() { return handler_; }
     private:
        Handler handler_;
@@ -791,6 +815,8 @@ namespace base {
             static_assert(std::is_base_of<Session, S>(), "S must be a descendant of Session");
             return new S(*this, fd, a);
         }, c) {}
+        UdpListenerOf(UdpListenerOf &&rhs) : UdpListener(std::move(rhs)) {}
+        DISALLOW_COPY_AND_ASSIGN(UdpListenerOf);
     };
     // external typedef
     typedef SessionFactory::Session Session;

@@ -23,18 +23,7 @@ namespace webrtc {
   // ConnectionFactory
   class ConnectionFactory {
   public:
-    class IceUFrag : public std::string {
-    public:
-      IceUFrag() : std::string() {}
-      IceUFrag(const std::string &s) : std::string(s) {}
-      IceUFrag(const std::string &&s) : std::string(s) {}
-      IceUFrag(const IceUFrag &f) : std::string(f) {}
-      IceUFrag(const IceUFrag &&f) : std::string(f) {}
-      IceUFrag& operator=(IceUFrag&& other) noexcept {
-        if (this != &other) { dynamic_cast<std::string *>(this)->operator=(other); }
-        return *this;
-      }
-    };
+    typedef std::string IceUFrag;
   public: // connection
     class Connection;
     class TcpSession : public TcpSessionFactory::TcpSession {
@@ -247,6 +236,7 @@ namespace webrtc {
       qrpc_time_t connection_timeout;
       std::string fingerprint_algorithm;
       bool in6{false};
+      Resolver &resolver{NopResolver::Instance()};
 
       // derived from above config values
       std::string fingerprint;
@@ -267,15 +257,16 @@ namespace webrtc {
     const Config &config() const { return config_; }
     StreamFactory &stream_factory() { return stream_factory_; }
     AlarmProcessor &alarm_processor() { return loop_.alarm_processor(); }
+    Resolver &resolver() { return config_.resolver; }
     template <class F> inline F& to() { return reinterpret_cast<F &>(*this); }
     template <class F> inline const F& to() const { return reinterpret_cast<const F &>(*this); }
     const std::string &fingerprint() const { return config_.fingerprint; }
     const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
     const UdpSessionFactory::Config udp_listener_config() const {
-      return UdpSessionFactory::Config(config_.session_timeout, config_.udp_batch_size);
+      return UdpSessionFactory::Config(config_.resolver, config_.session_timeout, config_.udp_batch_size);
     }
     const SessionFactory::Config http_listener_config() const {
-      return SessionFactory::Config(config_.http_timeout);
+      return SessionFactory::Config(config_.resolver, config_.http_timeout);
     }
     const std::string primary_proto() const {
       return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";
@@ -297,13 +288,14 @@ namespace webrtc {
         return 0; // because this return value stops the alarm
       }, qrpc_time_now());
     }
-    void CloseConnection(Connection &c);
     void ScheduleClose(const IceUFrag &ufrag) {
       auto it = connections_.find(ufrag);
       if (it != connections_.end()) {
         ScheduleClose(*it->second);
       }
     }
+  protected:
+    void CloseConnection(Connection &c);
     void CloseConnection(const IceUFrag &ufrag) {
       auto it = connections_.find(ufrag);
       if (it != connections_.end()) {
@@ -364,7 +356,7 @@ namespace webrtc {
     class TcpClient : public base::TcpClient {
     public:
       TcpClient(ConnectionFactory &cf) :
-        base::TcpClient(cf.loop(), cf.config().session_timeout), cf_(cf) {}
+        base::TcpClient(cf.loop(), cf.resolver(), cf.config().session_timeout), cf_(cf) {}
       ConnectionFactory &connection_factory() { return cf_; }
     private:
       ConnectionFactory &cf_;
@@ -379,7 +371,7 @@ namespace webrtc {
     class UdpClient : public base::UdpClient {
     public:
       UdpClient(ConnectionFactory &cf) :
-        base::UdpClient(cf.loop(), cf.config().session_timeout), cf_(cf) {}
+        base::UdpClient(cf.loop(), cf.resolver(), cf.config().session_timeout), cf_(cf) {}
       ConnectionFactory &connection_factory() { return cf_; }
     private:
       ConnectionFactory &cf_;
@@ -393,10 +385,10 @@ namespace webrtc {
     };
   public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l),
+      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.resolver),
       tcp_clients_(), udp_clients_() {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l),
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.resolver),
       tcp_clients_(), udp_clients_() {}
     ~Client() override {}
   public:

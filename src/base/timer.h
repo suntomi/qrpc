@@ -3,8 +3,6 @@
 #include "base/io_processor.h"
 #include "base/id_factory.h"
 #include "base/logger.h"
-#include "base/session.h"
-#include "base/syscall.h"
 
 namespace base {
   class Loop;

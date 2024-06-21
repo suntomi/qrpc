@@ -65,12 +65,22 @@ namespace base {
     }
   };
 
+  SessionFactory::SessionFactory(SessionFactory &&rhs) :
+    factory_method_(std::move(rhs.factory_method_)),
+    loop_(rhs.loop_),
+    resolver_(rhs.resolver_),
+    alarm_processor_(rhs.alarm_processor_),
+    alarm_id_(rhs.alarm_id_),
+    session_timeout_(rhs.session_timeout_) {
+    rhs.alarm_id_ = AlarmProcessor::INVALID_ID;
+  }
+
   bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref) {
     auto q = new SessionDnsQuery(*this, m, eh);
     q->host_ = host;
     q->family_ = family_pref;
     q->port_ = port;
-    loop().ares().Resolve(q);
+    resolver_.Resolve(q);
     return true;
   }
   bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, int family_pref) {
@@ -78,8 +88,20 @@ namespace base {
     q->host_ = host;
     q->family_ = family_pref;
     q->port_ = port;
-    loop().ares().Resolve(q);
+    resolver_.Resolve(q);
     return true;
+  }
+
+  UdpListener::UdpListener(UdpListener &&rhs) :
+    UdpSessionFactory(std::move(rhs)),
+    fd_(rhs.fd_),
+    port_(rhs.port_),
+    overflow_supported_(rhs.overflow_supported_),
+    sessions_(std::move(rhs.sessions_)),
+    read_packets_(batch_size_),
+    read_buffers_(batch_size_) {
+    rhs.fd_ = INVALID_FD;
+    SetupPacket();
   }
 
   void UdpListener::SetupPacket() {

@@ -7,32 +7,15 @@
 #include <ares.h>
 
 #include "base/defs.h"
+#include "base/alarm.h"
 #include "base/io_processor.h"
+#include "base/loop.h"
 
 namespace base {
-class Loop;
-class AsyncResolver {
- public:
-  struct Config : ares_options {
-    int optmask;
-    qrpc_time_t granularity;
-    ares_addr_port_node *server_list;
-    Config();
-    ~Config();
-    const ares_options *options() const { 
-      return static_cast<const ares_options*>(this); }
-    //no fail methods
-    void SetTimeout(qrpc_time_t timeout);
-    void SetRotateDns();
-    void SetStayOpen();
-    void SetLookup(bool use_hosts, bool use_dns);
-    void SetGranularity(qrpc_time_t g) { granularity = g; }
-
-    //methods may fail sometimes
-    bool SetServerHostPort(const std::string &host, int port = 53);
-  };
+class Resolver {
+public:
   struct Query {
-    AsyncResolver *resolver_;
+    Resolver *resolver_;
     std::string host_;
     int family_;
 
@@ -79,6 +62,41 @@ class AsyncResolver {
       return 0;
     }
   };
+public:
+  virtual ~Resolver() {}
+  virtual void Resolve(Query *q) = 0;
+};
+class NopResolver : public Resolver {
+public:
+  void Resolve(Query *q) override {
+    ASSERT(false); // forget to configure resolver?
+    q->OnComplete(QRPC_ENOTSUPPORT, 0, nullptr);
+  }
+  static NopResolver &Instance() {
+    static NopResolver instance;
+    return instance;
+  }
+};
+class AsyncResolver : public Resolver {
+ public:
+  struct Config : ares_options {
+    int optmask;
+    qrpc_time_t granularity;
+    ares_addr_port_node *server_list;
+    Config();
+    ~Config();
+    const ares_options *options() const { 
+      return static_cast<const ares_options*>(this); }
+    //no fail methods
+    void SetTimeout(qrpc_time_t timeout);
+    void SetRotateDns();
+    void SetStayOpen();
+    void SetLookup(bool use_hosts, bool use_dns);
+    void SetGranularity(qrpc_time_t g) { granularity = g; }
+
+    //methods may fail sometimes
+    bool SetServerHostPort(const std::string &host, int port = 53);
+  };
   typedef ares_host_callback Callback;  
   typedef ares_channel Channel;
  protected:
@@ -108,13 +126,16 @@ class AsyncResolver {
   AlarmProcessor::Id alarm_id_;
   std::map<Fd, IoRequest*> io_requests_;
   std::vector<Query*> queries_;
- public:
+public:
   AsyncResolver(Loop &l) : channel_(nullptr), loop_(l),
     alarm_id_(AlarmProcessor::INVALID_ID), io_requests_(), queries_() {}
   ~AsyncResolver() { Finalize(); }
+public:
+  // implements Resolver
+  void Resolve(Query *q) override { q->resolver_ = this; queries_.push_back(q); }
+public:
   bool Initialize(const Config &config = Config());
   void Finalize();
-  void Resolve(Query *q) { q->resolver_ = this; queries_.push_back(q); }
   void Resolve(const char *host, int family, Callback cb, void *arg);
   void Poll();
   inline bool Initialized() const { return channel_ != nullptr; }

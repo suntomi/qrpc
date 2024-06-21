@@ -17,7 +17,7 @@ struct Test3StreamContext {
 struct TestStreamContext {
     std::vector<std::string> texts;
 };
-bool test_webrtc_client(Loop &l) {
+bool test_webrtc_client(Loop &l, Resolver &r) {
     std::string error_msg = "";
     TestStreamContext testctx = { .texts = {"aaaa", "bbbb", "cccc"} };
     Test3StreamContext test3ctx;
@@ -30,6 +30,7 @@ bool test_webrtc_client(Loop &l) {
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
+        .resolver = r,
     }, [](webrtc::ConnectionFactory::Connection &c) {
         logger::info({{"ev","webrtc connected"}});
         c.OpenStream({.label = "test"});
@@ -211,7 +212,7 @@ bool test_session(Loop &l, F &f, int port) {
         return new S(f, fd, a, h);
     });
     while (!h.finished()) {
-        l.PollAres();
+        l.Poll();
     }
     if (str::CmpNocase(h.error_msg(), "success", sizeof("success") - 1) != 0) {
         DIE(std::string("test normal conn error:[") + h.error_msg() + "]");
@@ -223,7 +224,7 @@ bool test_session(Loop &l, F &f, int port) {
         return new S(f, fd, a, h);
     });
     while (!h.finished()) {
-        l.PollAres();
+        l.Poll();
     }
     if (str::CmpNocase(h.error_msg(), "timeout", sizeof("timeout") - 1) == 0) {
         return true;
@@ -232,9 +233,9 @@ bool test_session(Loop &l, F &f, int port) {
         return false;
     }
 }
-bool reset_test_state(Loop &l) {
+bool reset_test_state(Loop &l, Resolver &r) {
     const char *error_msg = nullptr;
-    AdhocHttpClient hc(l);
+    AdhocHttpClient hc(l, r);
     hc.Connect("localhost", 8888, [](HttpSession &s) {
         return s.Request("GET", "/reset");
     }, [&error_msg](HttpSession &s) {
@@ -257,36 +258,36 @@ bool reset_test_state(Loop &l) {
     }
     return true;
 }
-bool test_tcp_session(Loop &l) {
-    if (!reset_test_state(l)) {
+bool test_tcp_session(Loop &l, Resolver &r) {
+    if (!reset_test_state(l, r)) {
         return false;
     }
-    TcpClient tf(l, qrpc_time_sec(1));
+    TcpClient tf(l, r, qrpc_time_sec(1));
     return test_session<TcpSessionFactory, TestTcpSession>(l, tf, 10001);
 }
-bool test_udp_session(Loop &l, bool listen) {
-    if (!reset_test_state(l)) {
+bool test_udp_session(Loop &l, Resolver &r, bool listen) {
+    if (!reset_test_state(l, r)) {
         return false;
     }
     if (listen) {
         auto uc = UdpListener(l, [](Fd fd, const Address &a) -> Session* {
             DIE("client should not call this, provide factory via SessionFactory::Connect");
             return (Session *)nullptr;
-        }, UdpListener::Config(qrpc_time_sec(1), 1));
+        }, UdpListener::Config(r, qrpc_time_sec(1), 1));
         if (!uc.Bind()) {
             DIE("fail to bind");
             return false;
         }
         return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
     } else {
-        auto uc = UdpClient(l, qrpc_time_sec(1));
+        auto uc = UdpClient(l, r, qrpc_time_sec(1));
         return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
     }
 }
 
-bool test_http_client(Loop &l) {
+bool test_http_client(Loop &l, Resolver &r) {
     const char *error_msg = nullptr;
-    AdhocHttpClient hc(l);
+    AdhocHttpClient hc(l, r);
     hc.Connect("localhost", 8888, [](HttpSession &s) {
         return s.Request("GET", "/test");
     }, [&error_msg](HttpSession &s) {
@@ -355,7 +356,7 @@ int main(int argc, char *argv[]) {
         DIE("fail to setup signal handler");
     }
     TRACE("======== test_webrtc_client ========");
-    if (!test_webrtc_client(l)) {
+    if (!test_webrtc_client(l, ares)) {
         return 1;
     }
     TRACE("======== test_address ========");
@@ -363,19 +364,19 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     TRACE("======== test_udp_session (client) ========");
-    if (!test_udp_session(l, false)) {
+    if (!test_udp_session(l, ares, false)) {
         return 1;
     }
     TRACE("======== test_udp_session (server) ========");
-    if (!test_udp_session(l, true)) {
+    if (!test_udp_session(l, ares, true)) {
         return 1;
     }
     TRACE("======== test_tcp_session ========");
-    if (!test_tcp_session(l)) {
+    if (!test_tcp_session(l, ares)) {
         return 1;
     }
     TRACE("======== test_http_client ========");
-    if (!test_http_client(l)) {
+    if (!test_http_client(l, ares)) {
         return 1;
     }
     return 0;

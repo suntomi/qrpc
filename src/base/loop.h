@@ -5,7 +5,6 @@
 #include "base/alarm.h"
 #include "base/loop_impl.h"
 #include "base/io_processor.h"
-#include "base/resolver.h"
 #include "base/string.h"
 #include "base/timer.h"
 
@@ -88,9 +87,6 @@ public:
   inline void Poll() {
     Event list[max_nfd_];
     int n_list = LoopImpl::Wait(list, max_nfd_, timeout_);
-    if (n_list <= 0) {
-      return;
-    }
     for (int i = 0; i < n_list; i++) {
       const auto &ev = list[i];
       Fd fd = LoopImpl::From(ev);

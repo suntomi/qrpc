@@ -1,4 +1,5 @@
 #include "base/timer.h"
+#include "base/loop.h"
 
 #if defined(__ENABLE_EPOLL__)
 #include <timerfd.h>

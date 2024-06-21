@@ -25,7 +25,7 @@ namespace webrtc {
 // ConnectionFactory
 int ConnectionFactory::Init() {
   int r;
-  if ((r = GlobalInit(config_.alarm_processor)) < 0) {
+  if ((r = GlobalInit(alarm_processor())) < 0) {
     return r;
   }
   if ((r = config_.Derive()) < 0) {
@@ -52,9 +52,9 @@ void ConnectionFactory::Fin() {
   GlobalFin();
 }
 void ConnectionFactory::CloseConnection(Connection &c) {
-  logger::info({{"ev","close webrtc connection"},{"ufrag",c.ice_server().GetUsernameFragment()}});
+  logger::info({{"ev","close webrtc connection"},{"ufrag",c.ufrag()}});
   c.Fin(); // cleanup resources if not yet
-  connections_.erase(c.ice_server().GetUsernameFragment());
+  connections_.erase(c.ufrag());
   // c might be freed here
 }
 static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket* packet) {
@@ -70,10 +70,10 @@ static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket* 
 
   // If no colon is found just return the whole USERNAME attribute anyway.
   if (colonPos == std::string::npos) {
-    return ConnectionFactory::IceUFrag{username};
+    return username;
   }
 
-  return ConnectionFactory::IceUFrag{username.substr(0, colonPos)};
+  return username.substr(0, colonPos);
 }
 std::shared_ptr<ConnectionFactory::Connection>
 ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
@@ -335,13 +335,14 @@ void ConnectionFactory::Connection::Fin() {
     }
   }
 }
-void Client::Connection::OnFinalize() {
+void ConnectionFactory::Connection::OnFinalize() {
   auto reconnect_wait = OnShutdown();
   if (factory().is_client()) {
     auto &c = factory().to<Client>();
+    auto &uf = ufrag();
     if (reconnect_wait > 0) {
-      QRPC_LOGJ(info, {{"ev","start reconnect wait"},{"backoff",reconnect_wait}})
-      c.alarm_processor().Set([&c, uf = ufrag()]() {
+      QRPC_LOGJ(info, {{"ev","start reconnect wait"},{"backoff",reconnect_wait},{"ufrag",uf}})
+      c.alarm_processor().Set([&c, uf = uf]() {
         auto epit = c.endpoints().find(uf);
         if (epit != c.endpoints().end()) {
           auto &ep = (*epit).second;
@@ -351,11 +352,13 @@ void Client::Connection::OnFinalize() {
           c.endpoints().erase(epit);
         } else {
           QRPC_LOGJ(warn, {{"ev","reconnection cancel"},{"r","endpoint not found"},{"uf",uf}});
+          ASSERT(false);
         }
         return 0;
       }, qrpc_time_now() + reconnect_wait);
     } else {
-      c.endpoints().erase(ufrag());
+      QRPC_LOGJ(info, {{"ev","stop reconnection"},{"ufrag",uf}})
+      c.endpoints().erase(uf);
     }
   }
 }
@@ -660,8 +663,7 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentAdded(
 void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
   logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"c",str::dptr(this)},{"ufrag",usernameFragment}});
-  auto ufrag = IceUFrag{usernameFragment};
-  sv_.ScheduleClose(ufrag);
+  sv_.ScheduleClose(usernameFragment);
 }
 void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
@@ -935,7 +937,7 @@ namespace client {
   public:
     const IceUFrag &ufrag() const { return ufrag_; }
     const Client::Endpoint &endpoint() const { return ep_; }
-    void SetUFrag(std::string &&ufrag) { ufrag_ = IceUFrag(ufrag); }
+    void SetUFrag(std::string &&ufrag) { ufrag_ = ufrag; }
   public:
     base::TcpSession *HandleResponse(HttpSession &s) override {
       // in here, session that related with webrtc connection is not actively callbacked, 
@@ -944,20 +946,26 @@ namespace client {
       if (s.fsm().rc() != HRC_OK) {
         logger::error({{"ev","signaling server returns error response"},
           {"status",s.fsm().rc()},{"ufrag",uf}});
-        client_.CloseConnection(uf);
+        client_.ScheduleClose(uf);
         return nullptr;
       }
-      auto c = client_.FindFromUfrag(uf);
       SDP sdp(s.fsm().body());
+      auto c = client_.FindFromUfrag(uf);
+      if (c == nullptr) {
+        // may timeout
+        logger::error({{"ev","connection not found"},{"ufrag",uf}});
+        client_.ScheduleClose(uf);
+        return nullptr;
+      }
       auto candidates = sdp.Candidates();
       if (candidates.size() <= 0) {
         logger::error({{"ev","signaling server returns no candidates"},
           {"sdp",sdp},{"ufrag",uf}});
-        client_.CloseConnection(uf);
+        client_.ScheduleClose(uf);
         return nullptr;
       }
       if (!client_.Open(candidates, 0, c)) {
-        client_.CloseConnection(uf);
+        client_.ScheduleClose(uf);
       }
       return nullptr;
     }
@@ -968,7 +976,9 @@ namespace client {
         QRPC_LOGJ(error, {{"ev","fail to generate offer"},{"rc",r}});
         return QRPC_ESYSCALL;
       }
+      QRPC_LOGJ(debug, {{"ev","uf1"},{"uf",ufrag_},{"ufs",ufrag}});
       SetUFrag(std::move(ufrag));
+      QRPC_LOGJ(debug, {{"ev","uf2"},{"uf",ufrag_},{"ufs",ufrag}});
       std::string sdplen = std::to_string(sdp.length());
       HttpHeader h[] = {
           {.key = "Content-Type", .val = "application/sdp"},
@@ -981,7 +991,7 @@ namespace client {
       // so we can call CloseConnection
       if (r.code != QRPC_CLOSE_REASON_LOCAL || r.detail_code != QRPC_EGOAWAY) {
         QRPC_LOGJ(info, {{"ev","close webrtc connection by whip failure"},{"rc",r.code},{"dc",r.detail_code}});
-        client_.CloseConnection(ufrag_);
+        client_.ScheduleClose(ufrag_);
       }
     }
   private:
@@ -1131,7 +1141,7 @@ int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
     return QRPC_EINVAL;
   }
   endpoints_.emplace(ufrag, ep);
-  connections_.emplace(std::move(ufrag), c);
+  connections_.emplace(ufrag, c);
   return QRPC_OK;
 }
 bool Client::Connect(const std::string &host, int port, const std::string &path) {
