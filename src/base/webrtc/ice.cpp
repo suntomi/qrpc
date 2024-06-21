@@ -113,7 +113,10 @@ namespace webrtc {
 			case RTC::StunPacket::Class::REQUEST:
 			{
 				if (this->listener->OnIceServerCheckClosed(this)) {
-					QRPC_LOG(debug, "parent connection already closed: STUN Binding Request => 401");				
+					QRPC_LOGJ(debug, {
+						{"ev","parent connection already closed: STUN Binding Request => 401"},
+						{"username",packet->GetUsername()}
+					});
 					RTC::StunPacket* response = packet->CreateErrorResponse(401);
 
 					response->Serialize(StunSerializeBuffer);
@@ -284,7 +287,7 @@ namespace webrtc {
 
 			case RTC::StunPacket::Class::ERROR_RESPONSE:
 			{
-				QRPC_LOG(debug, "STUN Binding Error Response processed");
+				QRPC_LOGJ(debug, {{"ev","STUN Binding Error Response processed"},{"username",packet->GetUsername()}});
 				this->listener->OnIceServerErrorResponded(this, packet, session);
 				break;
 			}
@@ -717,8 +720,8 @@ namespace webrtc {
 			RTC::StunPacket::Class::REQUEST, RTC::StunPacket::Method::BINDING, tx_id, nullptr, 0);
 		uint8_t stun_buffer[1024];
 		random::bytes(tx_id, sizeof(TxId));
-		ASSERT(!uflag_.empty() && !pwd_.empty());
-		stun_packet->SetUsername((uflag_ + ":").c_str(), uflag_.length() + 1);
+		ASSERT(!ufrag_.empty() && !pwd_.empty());
+		stun_packet->SetUsername((ufrag_ + ":").c_str(), ufrag_.length() + 1);
 		stun_packet->Authenticate(pwd_);
 		// https://speakerdeck.com/iwashi86/webrtc-ice-internals?slide=60
 		stun_packet->SetPriority(0x7e0000);
@@ -756,6 +759,7 @@ namespace webrtc {
       }
       return now + qrpc_time_msec(50);
     case FAILED:
+		case STOPPED:
       state_ = NEW;
 			last_success_ = 0;
       return 0ULL; // alarm stops

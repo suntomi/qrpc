@@ -6,6 +6,7 @@
 #include "MediaSoupErrors.hpp"
 
 namespace base {
+namespace webrtc {
   /* Instance methods. */
 
   Timer::Timer(Listener* listener, AlarmProcessor &ap) : listener(listener), alarm_processor(ap)
@@ -67,4 +68,5 @@ namespace base {
       this->alarm_id = 0;
     }
   }
+}  // namespace webrtc
 }  // namespace base

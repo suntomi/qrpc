@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 namespace base {
+namespace webrtc {
   class Timer
   {
   public:
@@ -36,4 +37,4 @@ namespace base {
     bool closed{ false };
   };
 }
-
+}

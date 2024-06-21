@@ -265,13 +265,16 @@ namespace base {
 
 
     /******* HttpSessionFactory *******/
-    class HttpClient : public TcpSessionFactory {
+    class HttpClient : public TcpClient {
     public:
+        typedef HttpSession::CloseReason CloseReason;
         class Processor {
         public:
+            typedef HttpSession::CloseReason CloseReason;
             virtual ~Processor() {}
             virtual TcpSession *HandleResponse(HttpSession &s) = 0;
             virtual int SendRequest(HttpSession &s) = 0;
+            virtual void HandleClose(HttpSession &s, const CloseReason &r) = 0;
         };
         class HttpClientSession : public HttpSession {
         public:
@@ -282,13 +285,17 @@ namespace base {
             ) {}
             Callback &callback() override { return cb_; }
             int OnConnect() override { return processor_->SendRequest(*this); }
+            qrpc_time_t OnShutdown() override {
+                processor_->HandleClose(*this, close_reason());
+                return 0;
+            }
         private:
             std::unique_ptr<Processor> processor_;
             Callback cb_;
         };
     public:
         // https://superuser.com/a/1271864 says chrome timeout is 300s
-        HttpClient(Loop &l, AlarmProcessor &ap) : TcpSessionFactory(l, ap, qrpc_time_sec(300)) {}
+        HttpClient(Loop &l, Resolver &r) : TcpClient(l, r, qrpc_time_sec(300)) {}
         bool Connect(const std::string &host, int port, Processor *p) {
             return TcpSessionFactory::Connect(host, port, [this, p](Fd fd, const Address &addr) {
                 return new HttpClientSession(*this, fd, addr, p);
@@ -299,17 +306,27 @@ namespace base {
     public:
         typedef std::function<int (HttpSession &)> Sender;
         typedef std::function<TcpSession *(HttpSession &)> Receiver;
+        typedef std::function<void (HttpSession &, const CloseReason &)> Closer;
         class Processor : public HttpClient::Processor {
         public:
-            Processor(Sender &&scb, Receiver &&rcb) : scb_(std::move(scb)), rcb_(std::move(rcb)) {}
+            Processor(Sender &&scb, Receiver &&rcb, Closer &&ccb) :
+                scb_(std::move(scb)), rcb_(std::move(rcb)), ccb_(std::move(ccb)) {}
+            Processor(Sender &&scb, Receiver &&rcb) : 
+                Processor(std::move(scb), std::move(rcb), Closer(Nop())) {}
             TcpSession *HandleResponse(HttpSession &s) override { return rcb_(s); }
             int SendRequest(HttpSession &s) override { return scb_(s); }
+            void HandleClose(HttpSession &s, const CloseReason &r) override { ccb_(s, r); }
+        public:
+            struct Nop {
+                void operator()(HttpSession &, const CloseReason &) {}
+            };
         private:
             Sender scb_;
             Receiver rcb_;
+            Closer ccb_;
         };
     public:
-        AdhocHttpClient(Loop &l, AlarmProcessor &ap) : HttpClient(l, ap) {}
+        AdhocHttpClient(Loop &l, Resolver &r) : HttpClient(l, r) {}
         bool Connect(const std::string &host, int port, Sender &&scb, Receiver &&rcb) {
             return HttpClient::Connect(host, port, new Processor(std::move(scb), std::move(rcb)));
         }
@@ -327,9 +344,9 @@ namespace base {
             Callback &callback() override { return listener().cb(); }
         };
     public:
-        HttpListener(Loop &l) : TcpListener(l, [this](Fd fd, const Address &a) {
+        HttpListener(Loop &l, Config c = Config::Default()) : TcpListener(l, [this](Fd fd, const Address &a) {
             return new HttpServerSession(*this, fd, a);
-        }) {}
+        }, c) {}
         ~HttpListener() {}
         Callback &cb() { return callback_; }
         bool Listen(int port, const Callback &cb) {

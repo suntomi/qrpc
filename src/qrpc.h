@@ -41,7 +41,7 @@ extern "C" {
 //
 // --------------------------
 //alpn list
-#define QRPC_ALPN ("\x2nq")
+#define QRPC_ALPN ("\x2qrpc")
 #define QRPC_QRPC_ALPN ("\x4qrpc")
 #define QRPC_H3_ALPN ("\x2h3\x5h3-29\x5h3-30\x5h3-31\x5h3-32")
 #define QRPC_H09_ALPN ("\x0ahq-interop\x05hq-29\x05hq-28\x05hq-27\x08http/0.9")
@@ -99,7 +99,38 @@ typedef struct qrpc_alarm_tag {
   void *p;      //NqAlarm
 } qrpc_alarm_t;
 
-typedef struct qrpc_transport_config_tag {
+typedef enum {
+  QRPC_WIRE_PROTO_WEBRTC,
+  QRPC_WIRE_PROTO_WEBTRANSPORT, // for future
+} qrpc_wire_proto_t;
+
+struct qrpc_webrtc_config_tag {
+  // max outgoing stream of SCTP
+  // default 32
+  qrpc_size_t max_outgoing_stream_size;
+  // initial incoming stream of SCTP
+  // default 32
+  qrpc_size_t initial_incoming_stream_size;
+  // send buffer size of underlying session (TCP/UDP)
+  // default 256kb
+  qrpc_size_t send_buffer_size;
+  // timeout of underlying session
+  // default 15 sec
+  qrpc_time_t session_timeout;
+  // webrtc's SCTP session timeout
+  // default 60 sec
+  qrpc_time_t connection_timeout;
+  // fingerprint algorithm of DTLS
+  // any of "sha-1", "sha-224", "sha-256", "sha-384", "sha-512"
+  // default "sha-256"
+  const char *fingerprint_algorithm;
+  // WHIP signaling server path
+  // default "/qrpc"
+  const char *whip_path;
+};
+
+// for future. webtransport will be based QUIC, so below fields are basically required to configure QUIC
+struct qrpc_webtransport_config_tag {
   //applicaiton protocol (ALPN) data, if you want to use the library
   //for implementing http3 server/client, you should set here the value `QRPC_H3_ALPN`
   const char *alpn;
@@ -135,6 +166,13 @@ typedef struct qrpc_transport_config_tag {
 
   //length of source connection id in bytes
   qrpc_size_t source_connection_id_length;
+};
+typedef struct {
+  qrpc_wire_proto_t proto;
+  union {
+    qrpc_webrtc_config_tag webrtc;
+    qrpc_webtransport_config_tag webtransport;
+  };
 } qrpc_transport_config_t;
 
 typedef enum {
@@ -162,6 +200,7 @@ typedef enum {
   QRPC_CLOSE_REASON_MIGRATED = 5, //session migrated to other session (eg. http => websocket)
   QRPC_CLOSE_REASON_TIMEOUT = 6,  //session does not established before configured timeout
   QRPC_CLOSE_REASON_SHUTDOWN = 7, //parent client or server shutdown
+  QRPC_CLOSE_REASON_PROTOCOL = 8  //protocol error like broken wire format
 } qrpc_close_reason_code_t;
 
 typedef struct {
@@ -184,11 +223,7 @@ typedef enum {
   QRPC_REACHABLE_WWAN = 1,
 } qrpc_reachability_t;
 
-typedef enum {
-  QRPC_WIRE_PROTO_QUIC_NEGOTIATE, // only client side
-  QRPC_WIRE_PROTO_QUIC_V1,
-  QRPC_WIRE_PROTO_TCP // not supported now
-} qrpc_wire_proto_t;
+
 
 // --------------------------
 //
@@ -213,7 +248,7 @@ typedef enum {
 //optionally you can set arbiter pointer via last argument, which can be retrieved via qrpc_conn_ctx afterward.
 //TODO(iyatomi): give more imformation for deciding shutdown connection from qrpc_conn_t
 //TODO(iyatomi): re-evaluate we should call this twice (now mainly because to make open/close callback surely called as pair)
-QRPC_DECL_CLOSURE(void, qrpc_on_client_conn_open_t, void *, qrpc_conn_t, void **);
+QRPC_DECL_CLOSURE(int, qrpc_on_client_conn_open_t, void *, qrpc_conn_t, void **);
 //client connection closed. after this called, qrpc_stream_t/qrpc_rpc_t created by given qrpc_conn_t, will be invalid.
 //last boolean indicates connection is closed from local(false) or remote(true).
 //if this function returns positive value,
@@ -333,14 +368,8 @@ typedef struct {
   qrpc_on_client_conn_open_t on_open;
   qrpc_on_client_conn_close_t on_close;
 
-  //protocol type/version
-  qrpc_wire_proto_t protocol;
-
   //transport config
   qrpc_transport_config_t transport;
-
-  //set true to ignore proof verification
-  bool insecure; 
 
   //track reachability to the provide hostname and recreate socket if changed.
   //useful for mobile connection. currently iOS only. use qrpc_conn_reachability_change for android.
@@ -356,7 +385,7 @@ QAPI_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl);
 // close connections and destroy client object. after call this, do not call qrpc_client_* API.
 QAPI_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl);
 // create conn from client. can get qrpc_conn_t via argument of qrpc_clconf_t::on_open
-// return false conn on error. TODO(iyatomi): make it QAPI_THREADSAFE
+// return false on error. TODO(iyatomi): make it QAPI_THREADSAFE
 QAPI_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_addr_t *addr, const qrpc_clconf_t *conf);
 // get handler map of the client. 
 QAPI_BOOTSTRAP qrpc_hdmap_t qrpc_client_hdmap(qrpc_client_t cl);
@@ -386,18 +415,14 @@ typedef struct {
   //transport config
   qrpc_transport_config_t transport;
 
-  //cert cache size. default 16 and how meny sessions accepted per loop. default 1024
-  int quic_cert_cache_size, accept_per_loop;
+  //how meny sessions accepted per loop. default 1024
+  int accept_per_loop;
 
   //allocation hint about max sessoin and max stream
   int max_session_hint, max_stream_hint;
 
   //if set to true, max_session_hint will be hard limit
-  bool use_max_session_hint_as_limit;
-
-  //total server shutdown wait/retry token timeout. default 5sec/30sec
-  //secret to generate retry token will be rotated every retry_token_timeout*2 seconds.
-  qrpc_time_t shutdown_timeout, retry_token_timeout;
+  bool hint_as_limit;
 } qrpc_svconf_t;
 
 // get default qrpc_svconf_t
@@ -431,8 +456,8 @@ typedef struct {
   qrpc_on_rpc_notify_t on_rpc_notify;
   qrpc_on_rpc_open_t on_rpc_open;
   qrpc_on_rpc_close_t on_rpc_close;
-  qrpc_time_t timeout; //call timeout
-  bool use_large_msgid; //use 4byte for msgid
+  qrpc_time_t timeout; // call timeout
+  bool use_large_msgid; // use 4byte for msgid
 } qrpc_rpc_handler_t;
 
 //setup original stream protocol (client), with 3 pattern
@@ -460,9 +485,9 @@ QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t
 QAPI_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modify_hdmap_t modifier);
 //close connection with reason_code and reason_detail through close frame.
 //close and destroy conn/associated stream eventually, so never touch conn/stream/rpc after calling this API
-QAPI_THREADSAFE void qrpc_conn_close_ex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len);
+QAPI_THREADSAFE void qrpc_conn_closex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len);
 //same as qrpc_conn_close_ex but do not send reason code and detail
-QAPI_INLINE void qrpc_conn_close(qrpc_conn_t conn) { qrpc_conn_close_ex(conn, QRPC_CLOSE_REASON_LOCAL, (const uint8_t *)"", 0); }
+QAPI_INLINE void qrpc_conn_close(qrpc_conn_t conn) { qrpc_conn_closex(conn, QRPC_CLOSE_REASON_LOCAL, (const uint8_t *)"", 0); }
 //this just restart connection, if connection not start, start it, otherwise close connection once, then start again.
 //it never destroy connection itself, but associated stream/rpc all destroyed. (client only)
 QAPI_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn); 
@@ -478,7 +503,7 @@ QAPI_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_
 //get reconnect wait duration in us. 0 means does not wait reconnection
 QAPI_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn);
 //get context, which is set at on_conn_open
-QAPI_CLOSURECALL void *nq_conn_ctx(qrpc_conn_t conn);
+QAPI_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn);
 //check equality of qrpc_conn_t.
 QAPI_INLINE bool qrpc_conn_equal(qrpc_conn_t c1, qrpc_conn_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
 //manually set reachability change for current connection
@@ -493,11 +518,6 @@ QAPI_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn);
 // stream API 
 //
 // --------------------------
-typedef struct {
-  qrpc_on_stream_ack_t on_ack;
-  qrpc_on_stream_retransmit_t on_retransmit;
-} qrpc_stream_opt_t;
-
 //create single stream from conn, which has type specified by "name". need to use valid conn
 //open callback of this stream handler will receive invalid stream and null **ppctx on error, 
 //valid stream handler and **ppctx where *ppctx == ctx on success.
@@ -517,8 +537,6 @@ QAPI_THREADSAFE bool qrpc_stream_outgoing(qrpc_stream_t s, bool *p_valid);
 QAPI_THREADSAFE void qrpc_stream_close(qrpc_stream_t s);
 //send arbiter byte array/arbiter object to stream peer. if you want ack for each send, use qrpc_stream_send_ex
 QAPI_THREADSAFE void qrpc_stream_send(qrpc_stream_t s, const void *data, qrpc_size_t datalen);
-//send arbiter byte array/arbiter object to stream peer, and can receive ack of it.
-QAPI_THREADSAFE void qrpc_stream_send_ex(qrpc_stream_t s, const void *data, qrpc_size_t datalen, qrpc_stream_opt_t *opt);
 //schedule execution of closure which is given to cb, will called with given s.
 QAPI_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb);
 //check equality of qrpc_stream_t.
@@ -527,7 +545,7 @@ QAPI_INLINE bool qrpc_stream_equal(qrpc_stream_t c1, qrpc_stream_t c2) { return 
 //useful if you need to give special meaning to specified stream_id, like http2 over quic
 QAPI_THREADSAFE qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s);
 //get context, which is set at qrpc_conn_stream. only safe with qrpc_stream_t which passed to closure callbacks
-QAPI_CLOSURECALL void *nq_stream_ctx(qrpc_stream_t s);
+QAPI_CLOSURECALL void *qrpc_stream_ctx(qrpc_stream_t s);
 
 
 

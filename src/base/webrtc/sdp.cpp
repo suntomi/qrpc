@@ -176,7 +176,8 @@ a=max-message-size:%u
 
   std::string SDP::AnswerAs(const std::string &proto, const ConnectionFactory::Connection &c) const {
     auto now = qrpc_time_now();
-    auto port = proto == "UDP" ? c.factory().udp_port() : c.factory().tcp_port();
+    auto &l = c.factory().to<Listener>();
+    auto port = proto == "UDP" ? l.udp_port() : l.tcp_port();
     auto candidates = std::string("");
     size_t idx = 0;
     for (auto &a : c.factory().config().ifaddrs) {

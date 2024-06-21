@@ -5,7 +5,6 @@
 #include <memory>
 
 #include "base/memory.h"
-
 #include "base/defs.h"
 
 namespace base {
@@ -56,7 +55,10 @@ class Allocator {
     GrowChunk();
   }
   Allocator(Allocator &&a) noexcept : 
-    chunks_(std::move(a.chunks_)), total_block_(a.total_block_), chunk_size_(a.chunk_size_), pool_(std::move(a.pool_)) {}
+    chunks_(std::move(a.chunks_)), total_block_(a.total_block_), chunk_size_(a.chunk_size_), pool_(std::move(a.pool_)) {
+      ASSERT(total_block_ > 0 && chunk_size_ > 0);
+      ASSERT(chunks_.size() > 0 && pool_.size() > 0);
+    }
   ~Allocator() {
     for (auto &c : chunks_) {
       auto pb = c.get();

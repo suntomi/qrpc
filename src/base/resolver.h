@@ -2,33 +2,20 @@
 
 #include <map>
 
+#include <netdb.h>
+
 #include <ares.h>
 
 #include "base/defs.h"
+#include "base/alarm.h"
 #include "base/io_processor.h"
+#include "base/loop.h"
 
 namespace base {
-class Loop;
-class AsyncResolver {
- public:
-  struct Config : ares_options {
-    int optmask;
-    ares_addr_port_node *server_list;
-    Config();
-    ~Config();
-    const ares_options *options() const { 
-      return static_cast<const ares_options*>(this); }
-    //no fail methods
-    void SetTimeout(qrpc_time_t timeout);
-    void SetRotateDns();
-    void SetStayOpen();
-    void SetLookup(bool use_hosts, bool use_dns);
-
-    //methods may fail sometimes
-    bool SetServerHostPort(const std::string &host, int port = 53);
-  };
+class Resolver {
+public:
   struct Query {
-    AsyncResolver *resolver_;
+    Resolver *resolver_;
     std::string host_;
     int family_;
 
@@ -46,6 +33,69 @@ class AsyncResolver {
       q->OnComplete(status, timeouts, hostent);
       delete q;
     }
+    int ConvertToSocketAddress(struct hostent *entries, int port, Address &addr) {
+      if (entries == nullptr) {
+          return QRPC_ERESOLVE;
+      }
+      struct sockaddr_storage address;
+      memset(&address, 0, sizeof(address));
+      switch (entries->h_addrtype) {
+        case AF_INET: {
+          auto *sa = reinterpret_cast<struct sockaddr_in *>(&address);
+          sa->sin_family = entries->h_addrtype;
+          sa->sin_port = Endian::HostToNet(static_cast<in_port_t>(port));
+          sa->sin_len = sizeof(sockaddr_in);
+          memcpy(&sa->sin_addr, entries->h_addr_list[0], sizeof(in_addr_t));
+          addr.Reset(*sa);
+        } break;
+        case AF_INET6: {
+          auto *sa = reinterpret_cast<sockaddr_in6 *>(&address);
+          sa->sin6_family = entries->h_addrtype;
+          sa->sin6_port = Endian::HostToNet(static_cast<in_port_t>(port));          
+          sa->sin6_len = sizeof(sockaddr_in6);
+          memcpy(&sa->sin6_addr, entries->h_addr_list[0], sizeof(in6_addr_t));
+          addr.Reset(*sa);
+        } break;
+        default:
+          return QRPC_ERESOLVE;
+      }
+      return 0;
+    }
+  };
+public:
+  virtual ~Resolver() {}
+  virtual void Resolve(Query *q) = 0;
+};
+class NopResolver : public Resolver {
+public:
+  void Resolve(Query *q) override {
+    ASSERT(false); // forget to configure resolver?
+    q->OnComplete(QRPC_ENOTSUPPORT, 0, nullptr);
+  }
+  static NopResolver &Instance() {
+    static NopResolver instance;
+    return instance;
+  }
+};
+class AsyncResolver : public Resolver {
+ public:
+  struct Config : ares_options {
+    int optmask;
+    qrpc_time_t granularity;
+    ares_addr_port_node *server_list;
+    Config();
+    ~Config();
+    const ares_options *options() const { 
+      return static_cast<const ares_options*>(this); }
+    //no fail methods
+    void SetTimeout(qrpc_time_t timeout);
+    void SetRotateDns();
+    void SetStayOpen();
+    void SetLookup(bool use_hosts, bool use_dns);
+    void SetGranularity(qrpc_time_t g) { granularity = g; }
+
+    //methods may fail sometimes
+    bool SetServerHostPort(const std::string &host, int port = 53);
   };
   typedef ares_host_callback Callback;  
   typedef ares_channel Channel;
@@ -61,7 +111,7 @@ class AsyncResolver {
    public:
     IoRequest(Channel channel, Fd fd, uint32_t flags) : 
       current_flags_(flags), alive_(true), channel_(channel), fd_(fd) {}
-    ~IoRequest() override {}
+    virtual ~IoRequest() {}
     // implements IoProcessor
     void OnEvent(Fd fd, const Event &e) override;
 
@@ -72,14 +122,22 @@ class AsyncResolver {
     Fd fd() const { return fd_; }
   };
   Channel channel_;
+  Loop &loop_;
+  AlarmProcessor::Id alarm_id_;
   std::map<Fd, IoRequest*> io_requests_;
   std::vector<Query*> queries_;
- public:
-  AsyncResolver() : channel_(nullptr), io_requests_() {}
+public:
+  AsyncResolver(Loop &l) : channel_(nullptr), loop_(l),
+    alarm_id_(AlarmProcessor::INVALID_ID), io_requests_(), queries_() {}
+  ~AsyncResolver() { Finalize(); }
+public:
+  // implements Resolver
+  void Resolve(Query *q) override { q->resolver_ = this; queries_.push_back(q); }
+public:
   bool Initialize(const Config &config = Config());
-  void Resolve(Query *q) { q->resolver_ = this; queries_.push_back(q); }
+  void Finalize();
   void Resolve(const char *host, int family, Callback cb, void *arg);
-  void Poll(Loop *l);
+  void Poll();
   inline bool Initialized() const { return channel_ != nullptr; }
   static inline int PtoN(const std::string &host, int *af, void *buff, qrpc_size_t buflen) {
     *af = (host.find(':') == std::string::npos ? AF_INET : AF_INET6);

@@ -2,7 +2,6 @@
 #include "base/session.h"
 #include "base/address.h"
 #include "base/resolver.h"
-#include <netdb.h>
 
 namespace base {
   typedef SessionFactory::FactoryMethod FactoryMethod;
@@ -10,34 +9,6 @@ namespace base {
 
   struct DnsQuery : public AsyncResolver::Query {
     int port_;
-    int ConvertToSocketAddress(struct hostent *entries, int port, Address &addr) {
-      if (entries == nullptr) {
-          return QRPC_ERESOLVE;
-      }
-      struct sockaddr_storage address;
-      memset(&address, 0, sizeof(address));
-      switch (entries->h_addrtype) {
-        case AF_INET: {
-          auto *sa = reinterpret_cast<struct sockaddr_in *>(&address);
-          sa->sin_family = entries->h_addrtype;
-          sa->sin_port = Endian::HostToNet(static_cast<in_port_t>(port));
-          sa->sin_len = sizeof(sockaddr_in);
-          memcpy(&sa->sin_addr, entries->h_addr_list[0], sizeof(in_addr_t));
-          addr.Reset(*sa);
-        } break;
-        case AF_INET6: {
-          auto *sa = reinterpret_cast<sockaddr_in6 *>(&address);
-          sa->sin6_family = entries->h_addrtype;
-          sa->sin6_port = Endian::HostToNet(static_cast<in_port_t>(port));          
-          sa->sin6_len = sizeof(sockaddr_in6);
-          memcpy(&sa->sin6_addr, entries->h_addr_list[0], sizeof(in6_addr_t));
-          addr.Reset(*sa);
-        } break;
-        default:
-          return QRPC_ERESOLVE;
-      }
-      return 0;
-    }
     static CloseReason CreateAresCloseReason(int status) {
       auto ares_error = ares_strerror(status);
       return {
@@ -94,12 +65,26 @@ namespace base {
     }
   };
 
+  SessionFactory::SessionFactory(SessionFactory &&rhs) :
+    factory_method_(std::move(rhs.factory_method_)),
+    loop_(rhs.loop_),
+    resolver_(rhs.resolver_),
+    alarm_processor_(rhs.alarm_processor_),
+    alarm_id_(AlarmProcessor::INVALID_ID),
+    session_timeout_(rhs.session_timeout_) {
+    if (rhs.alarm_id_ != AlarmProcessor::INVALID_ID) {
+      rhs.loop_.alarm_processor().Cancel(rhs.alarm_id_);
+      rhs.alarm_id_ = AlarmProcessor::INVALID_ID;
+    }
+    Init();
+  }
+
   bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref) {
     auto q = new SessionDnsQuery(*this, m, eh);
     q->host_ = host;
     q->family_ = family_pref;
     q->port_ = port;
-    loop().ares().Resolve(q);
+    resolver_.Resolve(q);
     return true;
   }
   bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, int family_pref) {
@@ -107,11 +92,23 @@ namespace base {
     q->host_ = host;
     q->family_ = family_pref;
     q->port_ = port;
-    loop().ares().Resolve(q);
+    resolver_.Resolve(q);
     return true;
   }
 
-  void UdpSessionFactory::SetupPacket() {
+  UdpListener::UdpListener(UdpListener &&rhs) :
+    UdpSessionFactory(std::move(rhs)),
+    fd_(rhs.fd_),
+    port_(rhs.port_),
+    overflow_supported_(rhs.overflow_supported_),
+    sessions_(std::move(rhs.sessions_)),
+    read_packets_(batch_size_),
+    read_buffers_(batch_size_) {
+    rhs.fd_ = INVALID_FD;
+    SetupPacket();
+  }
+
+  void UdpListener::SetupPacket() {
     for (int i = 0; i < batch_size_; i++) {
       auto &h = read_packets_[i].msg_hdr;
       h.msg_name = &read_buffers_[i].sa;
@@ -126,7 +123,7 @@ namespace base {
     }
   }
 
-  void UdpSessionFactory::ProcessPackets(int size) {
+  void UdpListener::ProcessPackets(int size) {
     int r;
     auto now = qrpc_time_now();
     for (int i = 0; i < size; i++) {
@@ -186,7 +183,7 @@ namespace base {
   #endif
   }
 
-  int UdpSessionFactory::Read() {
+  int UdpListener::Read() {
     for (int i = 0; i < batch_size_; i++) {
       auto &h = read_packets_[i].msg_hdr;
       h.msg_namelen = sizeof(read_buffers_[i].sa);

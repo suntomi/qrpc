@@ -60,6 +60,7 @@ namespace webrtc {
 
 	public:
 		void ProcessStunPacket(RTC::StunPacket* packet, Session *session);
+		std::list<Session*> &GetSessions() { return this->sessions; }
 		const std::string& GetUsernameFragment() const
 		{
 			return this->usernameFragment;
@@ -149,6 +150,7 @@ namespace webrtc {
       CHECKING,
       DISCONNECTED,
       FAILED,
+			STOPPED,
     };
     typedef uint8_t TxId[12];
   public:
@@ -156,16 +158,17 @@ namespace webrtc {
 			IceProber(ufrag, pwd, priority, qrpc_time_sec(5), qrpc_time_sec(10)) {}
     IceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority,
 			qrpc_time_t disconnect_timeout, qrpc_time_t failed_timeout) :
-      uflag_(ufrag), pwd_(pwd), priority_(priority),
+      ufrag_(ufrag), pwd_(pwd), priority_(priority),
 			disconnect_timeout_(disconnect_timeout), failed_timeout_(failed_timeout) {}
     ~IceProber() {}
 		inline bool active() const { return state_ != NEW; }
   public:
     qrpc_time_t OnTimer(Session *s);
     void Success();
+		void Reset() { state_ = NEW; last_success_ = 0; }
 		void SendBindingRequest(Session *s);
   private:
-		std::string uflag_, pwd_;
+		std::string ufrag_, pwd_;
 		uint64_t priority_;
     State state_{NEW};
     qrpc_time_t last_success_{0ULL};

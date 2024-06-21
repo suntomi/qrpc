@@ -555,8 +555,6 @@ namespace webrtc {
 			MS_WARN_TAG(sctp, "usrsctp_setsockopt(SCTP_RESET_STREAMS) failed: %s", std::strerror(errno));
 		}
 
-		this->listener->OnSctpStreamReset(this, streamId);
-
 		std::free(srs);
 	}
 
@@ -933,7 +931,7 @@ namespace webrtc {
 				if (notification->sn_strreset_event.strreset_flags & SCTP_STREAM_RESET_OUTGOING_SSN)
 					outgoing = true;
 
-				if (MS_HAS_DEBUG_TAG(sctp))
+				if (true)
 				{
 					std::string streamIds;
 
@@ -965,8 +963,8 @@ namespace webrtc {
 					  streamIds.c_str());
 				}
 
-				// Special case for WebRTC DataChannels in which we must also reset our
-				// outgoing SCTP stream.
+				// // Special case for WebRTC DataChannels in which we must also reset our
+				// // outgoing SCTP stream.
 				if (incoming && !outgoing && this->isDataChannel)
 				{
 					for (uint16_t i{ 0 }; i < numStreams; ++i)
@@ -975,6 +973,11 @@ namespace webrtc {
 
 						ResetSctpStream(streamId, StreamDirection::OUTGOING);
 					}
+				}
+				for (uint16_t i{ 0 }; i < numStreams; ++i)
+				{
+					auto streamId = notification->sn_strreset_event.strreset_stream_list[i];
+					this->listener->OnSctpStreamReset(this, streamId);
 				}
 
 				break;

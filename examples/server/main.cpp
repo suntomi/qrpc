@@ -73,10 +73,6 @@ int main(int argc, char *argv[]) {
     if (l.Open(1024) < 0) {
         DIE("fail to init loop");
     }
-    TimerScheduler t(qrpc_time_msec(10)); { // 10ms resolution
-    if (t.Init(l) < 0) {
-        DIE("fail to start timer");
-    }
     SignalHandler sh;
     // in here, return type annotation is required for making compiler happy
     if (!sh.Init(l, [&alive](SignalHandler &s) -> SignalHandler & {
@@ -101,16 +97,16 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    webrtc::AdhocServer w(l, webrtc::ConnectionFactory::Config {
+    webrtc::AdhocListener w(l, webrtc::AdhocListener::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .send_buffer_size = 256 * 1024,
-        .udp_session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
+        .http_timeout = qrpc_time_sec(5),
+        .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
-        .alarm_processor = t,
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
-        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
+        logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
         auto req = json::parse(pl);
         if (s.label() == "test") {
             // echo + label name
@@ -149,11 +145,10 @@ int main(int argc, char *argv[]) {
         logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
     });
     // signaling: 8888(http), webrtc: 11111(udp/tcp)
-    base::Server &bsv = w;
     std::filesystem::path p(__FILE__);
     auto rootpath = p.parent_path().string();
     auto htmlpath = rootpath + "/resources/client.html";
-    bsv.RestRouter().
+    w.RestRouter().
     Route(std::regex("/"), [&htmlpath](HttpSession &s, std::cmatch &) {
         size_t htmlsz;
         auto html = Syscall::ReadFile(htmlpath, &htmlsz);
@@ -222,20 +217,20 @@ int main(int argc, char *argv[]) {
             return ws.Send(p, sz);
         });
     });
-    if (!bsv.Listen(8888, 11111)) {
+    if (!w.Listen(8888, 11111)) {
         DIE("fail to listen webrtc");
     }
     AdhocUdpListener us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
-    }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
+    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1));
     if (!us.Listen(9999)) {
         DIE("fail to listen on UDP");
     }
     UdpListener tu(l, [&tu](Fd fd, const Address &a) {
         return new TestUdpSession(tu, fd, a);
-    }, { .alarm_processor = t, .session_timeout = qrpc_time_sec(5)});
+    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1));
     if (!tu.Listen(10000)) {
         DIE("fail to listen on UDP for test");
     }
@@ -248,6 +243,6 @@ int main(int argc, char *argv[]) {
     while (alive) {
         l.Poll();
     }
-    }}
+    }
     return 0;
 }

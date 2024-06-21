@@ -17,7 +17,7 @@ struct Test3StreamContext {
 struct TestStreamContext {
     std::vector<std::string> texts;
 };
-bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
+bool test_webrtc_client(Loop &l, Resolver &r) {
     std::string error_msg = "";
     TestStreamContext testctx = { .texts = {"aaaa", "bbbb", "cccc"} };
     Test3StreamContext test3ctx;
@@ -26,10 +26,11 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
     webrtc::AdhocClient w(l, webrtc::ConnectionFactory::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .send_buffer_size = 256 * 1024,
-        .udp_session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
+        .http_timeout = qrpc_time_sec(5),
+        .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
-        .alarm_processor = ap,
+        .resolver = r,
     }, [](webrtc::ConnectionFactory::Connection &c) {
         logger::info({{"ev","webrtc connected"}});
         c.OpenStream({.label = "test"});
@@ -47,7 +48,7 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
     }, [&error_msg](Stream &s, const char *p, size_t sz) -> int {
         auto pl = std::string(p, sz);
         auto resp = json::parse(pl);
-        logger::info({{"ev","recv dc packet"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
+        logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
         if (s.label() == "test") {
             auto now = qrpc_time_now();
             auto hello = resp["hello"].get<std::string>();
@@ -69,7 +70,8 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
             error_msg = ("test2.onread should not be called");
         } else if (s.label() == "test3") {
             auto count = resp["count"].get<uint64_t>();
-            s.Send({{"count", count + 1}});
+            s.context<Test3StreamContext>().count = count + 1;
+            s.Send({{"count", s.context<Test3StreamContext>().count}});
         } else if (s.label() == "recv") {
             auto msg = resp["msg"].get<std::string>();
             if (msg != "byebye") {
@@ -101,20 +103,20 @@ bool test_webrtc_client(Loop &l, AlarmProcessor &ap) {
         } else if (s.label() == "test2") {
         } else if (s.label() == "test3") {
             if (s.context<Test3StreamContext>().count != 2) {
+                logger::error({{"ev","invalid count"},{"count", s.context<Test3StreamContext>().count}});
                 error_msg = ("test3.onclose count should be 2");
             }
         } else if (s.label() == "recv") {
         }
         return QRPC_OK;
     });
-    base::Client &bcl = w;
-    if (!bcl.Connect("localhost", 8888)) {
+    if (!w.Connect("localhost", 8888)) {
         DIE("fail to start webrtc client as connect");
     }
     while (error_msg.length() <= 0) {
-        l.PollAres();
+        l.Poll();
     }
-    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1)) {
+    if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
         return true;
     } else {
         DIE(error_msg);
@@ -210,7 +212,7 @@ bool test_session(Loop &l, F &f, int port) {
         return new S(f, fd, a, h);
     });
     while (!h.finished()) {
-        l.PollAres();
+        l.Poll();
     }
     if (str::CmpNocase(h.error_msg(), "success", sizeof("success") - 1) != 0) {
         DIE(std::string("test normal conn error:[") + h.error_msg() + "]");
@@ -222,7 +224,7 @@ bool test_session(Loop &l, F &f, int port) {
         return new S(f, fd, a, h);
     });
     while (!h.finished()) {
-        l.PollAres();
+        l.Poll();
     }
     if (str::CmpNocase(h.error_msg(), "timeout", sizeof("timeout") - 1) == 0) {
         return true;
@@ -231,9 +233,9 @@ bool test_session(Loop &l, F &f, int port) {
         return false;
     }
 }
-bool reset_test_state(Loop &l, AlarmProcessor &ap) {
+bool reset_test_state(Loop &l, Resolver &r) {
     const char *error_msg = nullptr;
-    AdhocHttpClient hc(l, ap);
+    AdhocHttpClient hc(l, r);
     hc.Connect("localhost", 8888, [](HttpSession &s) {
         return s.Request("GET", "/reset");
     }, [&error_msg](HttpSession &s) {
@@ -246,7 +248,7 @@ bool reset_test_state(Loop &l, AlarmProcessor &ap) {
         return nullptr;
     });
     while (error_msg == nullptr) {
-        l.PollAres();
+        l.Poll();
     }
     if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
         return true;
@@ -256,27 +258,36 @@ bool reset_test_state(Loop &l, AlarmProcessor &ap) {
     }
     return true;
 }
-bool test_tcp_session(Loop &l, AlarmProcessor &ap) {
-    if (!reset_test_state(l, ap)) {
+bool test_tcp_session(Loop &l, Resolver &r) {
+    if (!reset_test_state(l, r)) {
         return false;
     }
-    TcpSessionFactory tf(l, ap, qrpc_time_sec(1));
+    TcpClient tf(l, r, qrpc_time_sec(1));
     return test_session<TcpSessionFactory, TestTcpSession>(l, tf, 10001);
 }
-bool test_udp_session(Loop &l, AlarmProcessor &ap) {
-    if (!reset_test_state(l, ap)) {
+bool test_udp_session(Loop &l, Resolver &r, bool listen) {
+    if (!reset_test_state(l, r)) {
         return false;
     }
-    UdpSessionFactory uf(l, ap, qrpc_time_sec(1));
-    if (!uf.Bind()) {
-        DIE("fail to bind");
+    if (listen) {
+        auto uc = UdpListener(l, [](Fd fd, const Address &a) -> Session* {
+            DIE("client should not call this, provide factory via SessionFactory::Connect");
+            return (Session *)nullptr;
+        }, UdpListener::Config(r, qrpc_time_sec(1), 1));
+        if (!uc.Bind()) {
+            DIE("fail to bind");
+            return false;
+        }
+        return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
+    } else {
+        auto uc = UdpClient(l, r, qrpc_time_sec(1));
+        return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
     }
-    return test_session<UdpSessionFactory, TestUdpSession>(l, uf, 10000);
 }
 
-bool test_http_client(Loop &l, AlarmProcessor &ap) {
+bool test_http_client(Loop &l, Resolver &r) {
     const char *error_msg = nullptr;
-    AdhocHttpClient hc(l, ap);
+    AdhocHttpClient hc(l, r);
     hc.Connect("localhost", 8888, [](HttpSession &s) {
         return s.Request("GET", "/test");
     }, [&error_msg](HttpSession &s) {
@@ -291,7 +302,7 @@ bool test_http_client(Loop &l, AlarmProcessor &ap) {
         return nullptr;
     });
     while (error_msg == nullptr) {
-        l.PollAres();
+        l.Poll();
     }
     if (str::CmpNocase(error_msg, "success", sizeof("success") - 1) == 0) {
         return true;
@@ -302,18 +313,32 @@ bool test_http_client(Loop &l, AlarmProcessor &ap) {
     return true;
 }
 
+bool test_address() {
+    Address a;
+    if (a.Set("1.2.3.4", 5678) < 0) {
+        DIE("fail to set address");
+    }
+    if (a.port() != 5678) {
+        DIE("fail to get port");
+    }
+    if (a.hostip() != "1.2.3.4") {
+        DIE("fail to get hostip");
+    }
+    if (a.str() != "1.2.3.4:5678") {
+        DIE("fail to get str");
+    }
+    return true;
+}
+
 int main(int argc, char *argv[]) {
     bool alive = true;
     Loop l;
     if (l.Open(1024) < 0) {
         DIE("fail to init loop");
     }
-    if (!l.ares().Initialize()) {
-        DIE("fail to init resolver");
-    }
-    TimerScheduler t(qrpc_time_msec(30));
-    if (t.Init(l) < 0) {
-        DIE("fail to start timer");
+    AsyncResolver ares(l);
+    if (!ares.Initialize()) {
+        DIE("fail to init ares");
     }
     SignalHandler sh;
     // in here, return type annotation is required for making compiler happy
@@ -331,19 +356,27 @@ int main(int argc, char *argv[]) {
         DIE("fail to setup signal handler");
     }
     TRACE("======== test_webrtc_client ========");
-    if (!test_webrtc_client(l, t)) {
+    if (!test_webrtc_client(l, ares)) {
+        return 1;
+    }
+    TRACE("======== test_address ========");
+    if (!test_address()) {
+        return 1;
+    }
+    TRACE("======== test_udp_session (client) ========");
+    if (!test_udp_session(l, ares, false)) {
+        return 1;
+    }
+    TRACE("======== test_udp_session (server) ========");
+    if (!test_udp_session(l, ares, true)) {
         return 1;
     }
     TRACE("======== test_tcp_session ========");
-    if (!test_tcp_session(l, t)) {
+    if (!test_tcp_session(l, ares)) {
         return 1;
     }
     TRACE("======== test_http_client ========");
-    if (!test_http_client(l, t)) {
-        return 1;
-    }
-    TRACE("======== test_udp_session ========");
-    if (!test_udp_session(l, t)) {
+    if (!test_http_client(l, ares)) {
         return 1;
     }
     return 0;

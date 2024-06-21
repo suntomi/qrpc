@@ -3,7 +3,7 @@
 
 namespace base {
 // optmask, server_list, flags, timeout, lookups are member of the class
-AsyncResolver::Config::Config() : optmask(0), server_list(nullptr) {
+AsyncResolver::Config::Config() : optmask(0), granularity(qrpc_time_msec(10)), server_list(nullptr) {
   flags = 0;
 }
 AsyncResolver::Config::~Config() {
@@ -72,13 +72,26 @@ bool AsyncResolver::Initialize(const Config &config) {
     return false;
   }
   ares_set_servers_ports(channel_, config.server_list);
+  if (loop_.alarm_processor().Set([this, interval = config.granularity](){
+      Poll();
+      return qrpc_time_now() + interval;
+  }, qrpc_time_now()) < 0) {
+    logger::error({{"ev", "fail to set alarm"}});
+    return false;
+  }
   return true;
+}
+void AsyncResolver::Finalize() {
+  if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+    loop_.alarm_processor().Cancel(alarm_id_);
+    alarm_id_ = AlarmProcessor::INVALID_ID;
+  }
 }
 void AsyncResolver::Resolve(const char *host, int family, ares_host_callback cb, void *arg) {
   ASSERT(channel_ != nullptr);
   ares_gethostbyname(channel_, host, family, cb, arg);
 }
-void AsyncResolver::Poll(Loop *l) {
+void AsyncResolver::Poll() {
   ASSERT(channel_ != nullptr);
   Fd fds[ARES_GETSOCK_MAXNUM];
   auto bits = ares_getsock(channel_, fds, ARES_GETSOCK_MAXNUM);
@@ -102,7 +115,7 @@ void AsyncResolver::Poll(Loop *l) {
           ASSERT(fd == it->second->fd());
           if (it->second->current_flags() != flags) {
             TRACE("ares: fd mod: %d %x => %x", fd, it->second->current_flags(), flags);
-            if (l->Mod(fd, flags) < 0) {
+            if (loop_.Mod(fd, flags) < 0) {
               ASSERT(false);
               //will remove below
             } else {
@@ -117,7 +130,7 @@ void AsyncResolver::Poll(Loop *l) {
           TRACE("ares: fd add: %d %x", fd, flags);
           // TODO: use emplace
           auto req = new IoRequest(channel_, fd, flags);
-          if (l->Add(fd, req, flags) < 0) {
+          if (loop_.Add(fd, req, flags) < 0) {
             ASSERT(false);
             delete req;
           } else {
@@ -136,7 +149,7 @@ void AsyncResolver::Poll(Loop *l) {
       TRACE("ares: fd del: %d", req->fd());
       //fd already closed in ares internal and reused by another object (eg. Client)
       //also, fd seems closed in ares library when control path comes here.
-      l->ForceDelWithCheck(req->fd(), req);
+      loop_.ForceDelWithCheck(req->fd(), req);
       delete req;
     }
   }
