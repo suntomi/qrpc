@@ -574,15 +574,16 @@ int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uin
     if (packet == nullptr) {
       logger::warn({{"proto","srtp"},{"ev","DecryptSrtp() failed due to an invalid RTP packet"}});
     } else {
-      logger::warn({
+      logger::info({
         {"proto","srtp"},
-        {"ev","DecryptSrtp() failed"},
+        {"ev","DecryptSrtp"},
         {"ssrc",packet->GetSsrc()},
         {"payloadType",packet->GetPayloadType()},
         {"seq",packet->GetSequenceNumber()}
       });
       delete packet;
     }
+    ASSERT(false);
     return QRPC_OK;
   }
   RTC::RtpPacket* packet = RTC::RtpPacket::Parse(p, static_cast<size_t>(intLen));

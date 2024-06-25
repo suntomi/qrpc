@@ -213,6 +213,7 @@ namespace webrtc {
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
+      std::map<Track::Id, std::shared_ptr<Track>> tracks_;
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_;
       bool sctp_connected_, closed_;

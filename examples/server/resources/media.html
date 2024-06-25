@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+  <head>
+    <title>WebRTC with QRPC media</title>
+  </head>
+  <body>
+    <script src="http://localhost:8888/client.js"></script>
+    <script>
+      showError = (err) => {
+        showResult("error:" + err);
+        throw new Error(err);
+      }
+      showResult = (result) => {
+        let div = document.getElementById("result");
+        if (!div) {
+          div = document.createElement("div");
+          div.id = "result";
+          document.body.appendChild(div);
+        }
+        div.innerText = result;
+      };
+      showMedia = (m, t) => {
+        if (t.kind == "video") {
+          console.log("play video", m.label);
+          let videoElement = document.getElementById(`video-${m.stream.id}`);
+          if (!videoElement) {
+            videoElement = document.createElement('video');
+            videoElement.id = `video-${m.stream.id}`;
+            videoElement.autoplay = true;
+            document.body.appendChild(videoElement);
+          }
+          videoElement.srcObject = stream;
+        } else if (t.kind == "audio") {
+          console.log("play audio", m.label);
+          let audioElement = document.getElementById(`audio-${m.stream.id}`);
+          if (!audioElement) {
+            audioElement = document.createElement('audio');
+            audioElement.id = `audio-${m.stream.id}`;
+            audioElement.autoplay = true;
+            document.body.appendChild(audioElement);
+          }
+          audioElement.srcObject = m.stream;          
+        }
+      }
+      //Create whip client
+      const url = "http://localhost:8888/qrpc";
+      const c = new QRPClient(url);
+      const context = {};
+      const MAX_RECONNECT = 0;
+      let closed = 0;
+      c.onopen = async () => {
+        console.log("client onopen called");
+        await c.openMedia("webcam_out", await navigator.mediaDevices.getUserMedia({ video: true, audio: false }));
+        return context;
+      };
+      c.onclose = () => {
+        console.log("client onclose called", closed);
+        if (closed < MAX_RECONNECT) {
+          closed++;
+          return 2000 * 1000 * 1000;
+        } else {
+          // stop reconnection
+          showResult("success");
+          return;
+        }
+      };
+      c.handleMedia("webcam_in", {
+        onopen: (m, track)=>{
+          console.log("media open", m.stream.id, track.trackId);
+          showMedia(m, track);
+        },
+        onclose: (m)=>{
+          console.log("media close", m.stream.id);
+          document.getElementById(`video-${m.stream.id}`).remove();
+        },
+      });
+      c.connect();
+    </script>
+  </body>
+</html>
