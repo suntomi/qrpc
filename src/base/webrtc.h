@@ -4,6 +4,7 @@
 #include "base/http.h"
 #include "base/id_factory.h"
 #include "base/session.h"
+#include "base/media.h"
 #include "base/webrtc/ice.h"
 #include "base/webrtc/sctp.h"
 #include "base/webrtc/dtls.h"
@@ -55,9 +56,12 @@ namespace webrtc {
       static constexpr char *NAME = "$syscall";
       SyscallStream(BaseConnection &c, const Config &config, ConnectHandler &&h) :
         AdhocStream(c, config, std::move(Handler(Nop())), std::move(h), std::move(ShutdownHandler(Nop()))) {}
-      SyscallStream(BaseConnection &c, const Config &config, Handler &&h) :
-        AdhocStream(c, config, std::move(h), std::move(ConnectHandler(Nop())), std::move(ShutdownHandler(Nop()))) {}
+      SyscallStream(BaseConnection &c, const Config &config) :
+        AdhocStream(c, config, std::move(Handler(Nop())), std::move(ConnectHandler(Nop())), std::move(ShutdownHandler(Nop()))) {}
       ~SyscallStream() {}
+      int OnRead(const char *p, size_t sz) override;
+      int Call(const char *fn, const json &j);
+      int Call(const char *fn);
     };
   public: // connections
     class Connection : public base::Connection, 
@@ -70,7 +74,7 @@ namespace webrtc {
       Connection(ConnectionFactory &sv, DtlsTransport::Role dtls_role) :
         sv_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr),
-        srtp_send_(nullptr), srtp_recv_(nullptr), streams_(), stream_id_factory_(),
+        srtp_send_(nullptr), srtp_recv_(nullptr), streams_(), syscall_(), stream_id_factory_(),
         alarm_id_(AlarmProcessor::INVALID_ID), sctp_connected_(false), closed_(false) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
@@ -124,6 +128,7 @@ namespace webrtc {
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
+      void TryParseRtpPacket(const uint8_t *p, size_t sz);
       std::shared_ptr<Stream> NewStream(const Stream::Config &c, const StreamFactory &sf);
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const StreamFactory &sf);
       bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
@@ -213,7 +218,9 @@ namespace webrtc {
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
-      std::map<Track::Id, std::shared_ptr<Track>> tracks_;
+      std::shared_ptr<SyscallStream> syscall_;
+      std::map<Media::Id, std::shared_ptr<Media>> medias_;
+      std::map<Media::Id, std::string> media_label_map_;
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_;
       bool sctp_connected_, closed_;

@@ -193,11 +193,31 @@ a=max-message-size:%u
 o=- %llu %llu IN IP4 0.0.0.0
 s=-
 t=0 0
-a=group:BUNDLE 0
+a=group:BUNDLE audio video data
 a=msid-semantic: WMS
+m=audio 9 UDP/TLS/RTP/SAVPF 111
+c=IN IP4 0.0.0.0
+a=mid:audio
+a=sendrecv
+a=rtpmap:111 opus/48000/2
+a=rtcp-mux
+a=ice-ufrag:%s
+a=ice-pwd:%s
+a=fingerprint:%s %s
+a=setup:active
+m=video 9 UDP/TLS/RTP/SAVPF 96
+c=IN IP4 0.0.0.0
+a=mid:video
+a=sendrecv
+a=rtpmap:96 VP8/90000
+a=rtcp-mux
+a=ice-ufrag:%s
+a=ice-pwd:%s
+a=fingerprint:%s %s
+a=setup:active
 m=application 9 %s/DTLS/SCTP webrtc-datachannel
 c=IN IP4 0.0.0.0
-b=AS:30
+a=mid:data
 a=sendrecv
 %s
 a=end-of-candidates
@@ -206,11 +226,19 @@ a=ice-ufrag:%s
 a=ice-pwd:%s
 a=fingerprint:%s %s
 a=setup:active
-a=mid:0
 a=sctp-port:5000
 a=max-message-size:%u
 )sdp",
       now, now,
+      // Audio section
+      c.ice_server().GetUsernameFragment().c_str(),
+      c.ice_server().GetPassword().c_str(),
+      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
+      // Video section repeats ICE and DTLS info
+      c.ice_server().GetUsernameFragment().c_str(),
+      c.ice_server().GetPassword().c_str(),
+      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
+      // Data channel section
       proto.c_str(),
       candidates.c_str(),
       c.ice_server().GetUsernameFragment().c_str(),

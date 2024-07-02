@@ -219,6 +219,59 @@ qrpc_time_t ConnectionFactory::UdpSession::OnShutdown() {
   return 0;
 }
 
+/* ConnectionFactory::SyscallStream */
+int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
+  auto pl = std::string(p, sz);
+  try {
+    auto data = json::parse(pl);
+    const auto &fn = data["fn"].get<std::string>();
+    const auto &args = data["args"].get<std::map<std::string,json>>();
+    auto &c = dynamic_cast<Connection &>(connection());
+    QRPC_LOGJ(info, {{"ev", "recv from syscall stream"},{"fn",fn}});
+    if (fn == "close") {
+      QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
+      c.factory().ScheduleClose(c);
+    } else if (fn == "nego") {
+      const auto sit = args.find("sdp");
+      if (sit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"what","no value for key 'sdp'"}});
+        return QRPC_OK;
+      }
+      const auto git = args.find("gen");
+      if (git == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"what","no value for key 'gen'"}});
+        return QRPC_OK;
+      }
+      const auto lit = args.find("label");
+      if (lit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"what","no value for key 'label'"}});
+        return QRPC_OK;
+      }
+      const auto &sdp_text = sit->second.get<std::string>();
+      std::string answer;
+      SDP sdp(sdp_text);
+      if (!sdp.Answer(c, answer)) {
+        QRPC_LOGJ(error, {{"ev","invalid client sdp"},{"sdp",sdp_text},{"reason",answer}});
+        return QRPC_OK;
+      }
+      Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"sdp",answer},{"label",lit->second.get<std::string>()}});
+    } else {
+      QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
+      ASSERT(false);
+      return QRPC_OK;
+    }
+  }
+  catch (const std::exception& error) {
+    QRPC_LOGJ(error, {{"ev","json parse error"},{"err",error.what()}})
+  }
+  return QRPC_OK;
+}
+int ConnectionFactory::SyscallStream::Call(const char *fn) {
+  return Send({{"fn",fn}});
+}
+int ConnectionFactory::SyscallStream::Call(const char *fn, const json &j) {
+  return Send({{"fn",fn},{"args",j}});
+}
 
 /* ConnectionFactory::Connection */
 bool ConnectionFactory::Connection::connected() const {
@@ -269,14 +322,14 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::NewStream(
   const Stream::Config &c, const StreamFactory &sf
 ) {
   if (streams_.find(c.params.streamId) != streams_.end()) {
-    ASSERT(false);
     logger::error({{"ev","stream id already used"},{"sid",c.params.streamId}});
+    ASSERT(false);
     return nullptr;
   }
   auto s = sf(c, *this);
   if (s == nullptr) {
-    ASSERT(false);
     logger::error({{"ev","fail to create stream"},{"sid",c.params.streamId}});
+    ASSERT(false);
     return nullptr;
   }
   logger::info({{"ev","new stream created"},{"sid",s->id()},{"l",s->label()}});
@@ -365,15 +418,19 @@ void ConnectionFactory::Connection::Close() {
   if (closed()) {
     return;
   }
-  OpenStream({
-    .label = SyscallStream::NAME
-  }, [this](const Stream::Config &config, base::Connection &conn) {
-    return std::make_shared<SyscallStream>(conn, config, [this](Stream &s) {
-      this->closed_ = true;
-      QRPC_LOGJ(info, {{"ev","server syscall stream opened"},{"sid",s.id()}});
-      return s.Send({{"fn","close"}});
-    });
-  });
+  if (syscall_ == nullptr) {
+    syscall_ = std::dynamic_pointer_cast<SyscallStream>(OpenStream({
+      .label = SyscallStream::NAME
+    }, [this](const Stream::Config &config, base::Connection &conn) {
+      return std::make_shared<SyscallStream>(conn, config, [this](Stream &s) {
+        this->closed_ = true;
+        QRPC_LOGJ(info, {{"ev","server syscall stream opened"},{"sid",s.id()}});
+        return s.Send({{"fn","close"}});
+      });
+    }));
+  } else {
+    syscall_->Call("close");
+  }
 }
 IceProber *ConnectionFactory::Connection::InitIceProber(
   const std::string &ufrag, const std::string &pwd, uint64_t priority) {
@@ -550,6 +607,29 @@ int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const ui
   ASSERT(false);
   return QRPC_ENOTSUPPORT;
 }
+void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t sz) {
+  // Decrypt the SRTP packet.
+  auto intLen = static_cast<int>(sz);
+  auto decrypted = this->srtp_recv_->DecryptSrtp(const_cast<uint8_t*>(p), &intLen);
+  auto *packet = RTC::RtpPacket::Parse(p, static_cast<size_t>(intLen));
+  if (packet == nullptr) {
+    logger::warn({{"proto","rtcp"},
+      {"ev","received data is not a valid RTP packet"},
+      {"decrypted",decrypted},{"intLen",intLen},
+      {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
+    ASSERT(false);
+    return;
+  }
+  std::string rid = "none", mid = "none";;
+  packet->ReadRid(rid);
+  packet->ReadMid(mid);
+  logger::info({
+    {"ev","RTP packet received, but handler not implemented yet"},
+    {"proto","srtp"},{"ssrc",packet->GetSsrc()},{"rid",rid},{"mid",mid},
+    {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
+  });
+  delete packet;
+}
 int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure DTLS is connected.
@@ -567,38 +647,12 @@ int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uin
     logger::warn({{"proto","rtcp"},{"ev","ignoring RTCP packet coming from an invalid tuple"}});
     return QRPC_OK;
   }
-  // Decrypt the SRTP packet.
-  auto intLen = static_cast<int>(sz);
-  if (!this->srtp_recv_->DecryptSrtp(const_cast<uint8_t*>(p), &intLen)) {
-    RTC::RtpPacket* packet = RTC::RtpPacket::Parse(p, static_cast<size_t>(intLen));
-    if (packet == nullptr) {
-      logger::warn({{"proto","srtp"},{"ev","DecryptSrtp() failed due to an invalid RTP packet"}});
-    } else {
-      logger::info({
-        {"proto","srtp"},
-        {"ev","DecryptSrtp"},
-        {"ssrc",packet->GetSsrc()},
-        {"payloadType",packet->GetPayloadType()},
-        {"seq",packet->GetSequenceNumber()}
-      });
-      delete packet;
-    }
-    ASSERT(false);
-    return QRPC_OK;
-  }
-  RTC::RtpPacket* packet = RTC::RtpPacket::Parse(p, static_cast<size_t>(intLen));
-  if (packet == nullptr) {
-    logger::warn({{"proto","rtcp"},
-      {"ev","received data is not a valid RTP packet"},
-      {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
-    return QRPC_OK;
-  }
+  // parse
+  TryParseRtpPacket(p, sz);
   // Trick for clients performing aggressive ICE regardless we are ICE-Lite.
   this->ice_server_->MayForceSelectedSession(session);
   // we need to implement RTC::Transport::ReceiveRtpPacket(packet); equivalent
-  logger::error({{"ev","RTP packet received, but handler not implemented yet"}});
-  ASSERT(false);
-  return QRPC_ENOTSUPPORT;
+  return QRPC_OK;
 }
 
 // implements Stream::Processor
@@ -865,16 +919,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
     auto s = NewStream(
       c, c.label == SyscallStream::NAME ? 
         [this](const Stream::Config &config, base::Connection &conn) {
-          return std::make_shared<SyscallStream>(conn, config, [this](Stream &s, const char *p, size_t sz) {
-            auto pl = std::string(p, sz);
-            QRPC_LOGJ(info, {{"ev", "recv from syscall stream"},{"pl",pl}});
-            auto data = json::parse(pl);
-            if (data["fn"].get<std::string>() == "close") {
-              QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
-              this->factory().ScheduleClose(*this);
-            }
-            return QRPC_OK;
-          });
+          return this->syscall_ = std::make_shared<SyscallStream>(conn, config);
         } : factory().stream_factory()
     );
     if (s == nullptr) {

@@ -1,40 +1,56 @@
 class QRPCMedia {
-  constructor(label, stream, type) {
-    this.label
+  constructor(label, stream, encodings) {
+    this.label = label;
     this.stream = stream;
-    if (type === "sender") {
-      for (const t in this.stream.getTracks()) {
-        this.addTrack(t);
+    this.tracks = {};
+    if (this.encoding) {
+      this.encodings = encodings;
+      for (const e of encodings) {
+        e.rid = `${e.rid}@${label}`
       }
-    } else {
-      this.tracks = {}
+      const vtracks = stream.getVideoTracks();
+      if (vtracks.length > 0) {
+        this.addTrack("video", vtracks[0]);
+      }
+      const atracks = stream.getAudioTracks();
+      if (atracks.length > 0) { 
+        this.addTrack("audio", atracks[0]);
+      }
     }
+  }
+  // c: QRPClient
+  open(c, h) {
+    if (this.tracks.video) {
+      c.pc.addTrancsceiver(
+        this.tracks.video,
+        {direction: 'sendonly', sendEncodings: this.encodings, streams: [this.stream]}
+      );
+      const r = h.onopen(this, this.tracks.video);
+      if (r === false || r === null) {
+        console.log(`close video by application ${label}`);
+        return false;
+      }  
+    }
+    if (this.tracks.audio) {
+      c.pc.addTrancsceiver(
+        this.tracks.audio,
+        {direction: 'sendonly', streams: [this.stream]}
+      );
+      const r = h.onopen(this, this.tracks.audio);
+      if (r === false || r === null) {
+        console.log(`close audio by application ${label}`);
+        return false;
+      }
+    }
+    return true;
   }
   close() {
-    Object.keys(this.tracks).forEach(tid => this.tracks[tid].stop());
-  }
-  addTrack(t) {
-    this.tracks[t.trackId] = t;
-  }
-  // c: QRPCClient
-  assoc_tracks(c, label) {
-    c.syscall("tlmap", {ids:Object.keys(this.tracks),label});
-  }
-  assoc_tracks_acked(c, label) {
-    const id = c.labelToId(label, true);
-    const h = c.mdmap[id];
-    this.senders = this.tracks.forEach(t => c.pc.addTrack(t, this.stream));
-    if (!h.onopen) {
-      return;
+    for (const k in this.tracks) {
+      this.tracks[k].stop();
     }
-    for (const t in this.tracks) {
-      const r = h.onopen(this, t);
-      if (r === false || r === null) {
-        console.log("close media by application", label);
-        c.closeMedia(label);
-        return;
-      }
-    }
+  }
+  addTrack(name, t) {
+    this.tracks[name] = t;
   }
 }
 class QRPClient {
@@ -45,24 +61,34 @@ class QRPClient {
     this.medias = {};
     this.hdmap = {};
     this.mdmap = {};
-    this.trackLabelMap = {};
+    this.sdpOfferMap = {}; // sdpGen -> sdp offer
+    this.sdpGen = -1;
     this.labelToId = (label, isMedia) => label;
     this.handle(QRPClient.SYSCALL_STREAM, {
-      onmessage: (s, event) => {
+      onmessage: async (s, event) => {
         const data = JSON.parse(event.data);
         if (data.fn === "close") {
           console.log("shutdown by server");
           this.close();
-        } else if (data.fn === "tlmap") {
-          for (const k in data.args.ids) {
-            this.trackLabelMap[k] = data.args.label
+        } else if (data.fn === "nego") {
+          // our library basically exchange media stream via QRPC server
+          // at least, we will have to implement WHIP endpoint of QRPC server for first exchanging SDP between peers.
+          console.log("should not receive nego from server or other peer");
+          await this.pc.setRemoteDescription({type:"offer",sdp:data.args.sdp});
+          const answer = await this.pc.createAnswer();
+          await this.pc.setLocalDescription(answer);
+          this.syscall("nego_ack",{label:data.args.label,sdp:answer.sdp,gen:this.sdpGen});
+        } else if (data.fn === "nego_ack") {
+          const offer = this.sdpOfferMap[data.args.gen];
+          this.sdpOfferMap[data.args.gen] = null;
+          if (this.sdpGen > data.args.gen) {
+            console.log(`old sdp anwser for ${data.args.gen} ignored`);
+            return;
+          } else if (this.sdpGen < data.args.gen) {
+            console.log(`future sdp anwser for ${data.args.gen} ignored`);
+            return;
           }
-          this.syscall("tlmap_ack",data.args);
-        } else if (data.fn === "tlmap_ack") {
-          const m = this.medias[data.args.label];
-          if (!m) {
-            m.assoc_tracks_acked(this, data.args.label);
-          }
+          await this.#setupSdp(offer, data.args.sdp);
         }
       }
     });
@@ -91,40 +117,49 @@ class QRPClient {
     //Listen for data channels
     pc.ondatachannel = (event) => {            
       const s = event.channel;
-      console.log("accept stream", s.label);
+      console.log(`accept stream ${s.label}`);
       const h = this.hdmap[s.label];
       if (!h) {
-        console.log("No stream callbacks for label [" + s.label + "]");
+        console.log(`No stream callbacks for label [${s.label}]`);
         s.close();
         return;
       }
       this.#setupStream(s, h);
     };
 
-    //Listen for media medias
+    //Listen addition of media tracks
     pc.ontrack = (event) => {
-      const tid = event.track.trackId
-      const label = this.trackLabelMap[tid];
-      if (!label) {
-        console.log("No label is defined for trackId = " + tid);
+      const params = event.receiver.getParameters();
+      if (!parameters.encodings || parameters.encodings.length <= 0) {
+        console.log("no encodings in track");
         event.track.stop();
         return;
       }
-      const h = this.mdmap[label];
+      const rid = parameters.encodings[0].rid;
+      const parsed = rid.split("@");
+      if (parsed.length < 2) {
+        console.log("invalid rid format");
+        event.track.stop();
+        return;
+      }
+      const label = parsed[1];
+      const id = this.labelToId(label, true);
+      const h = this.mdmap[id];
       if (!h) {
-        console.log("No handler is defined for label = " + tid);
+        console.log(`No handler is defined for label = ${label} (${id})`);
         event.track.stop();
         return;
       }
+      const t = event.track;
       let m = this.media[label];
       if (!m) {
-        m = new QRPCMedia(label, event.track.stream, "receiver");
+        m = new QRPCMedia(label, t.stream);
         this.media[label] = m;
       }
-      m.addTrack(t);
+      m.addTrack(t.kind, t);
       const r = h.onopen(m, t);
       if (r === false || r === null) {
-        console.log("close media by application", label);
+        console.log(`close media by application ${label}`);
         this.closeMedia(label);
         return;
       }
@@ -193,22 +228,27 @@ class QRPClient {
     });
 
     if (!fetched.ok)
-      throw new Error("Request rejected with status " + fetched.status)
+      throw new Error(`Request rejected with status ${fetched.status}`)
 
     //Get the SDP answer
     const answer = await fetched.text();
 
     console.log("whip answer", answer)
 
+    await this.#setupSdp(offer, answer);
+
+    this.sdpGen++;
+  }
+  async #setupSdp(offer, answer_sdp) {
     //Set local description
-    await pc.setLocalDescription(offer);
+    await this.pc.setLocalDescription(offer);
 
     //store ice ufrag/pwd
     this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)\r\n/)[1];
     this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)\r\n/)[1];
     
     //And set remote description
-    await pc.setRemoteDescription({type:"answer",sdp: answer});
+    await this.pc.setRemoteDescription({type:"answer",sdp:answer_sdp});
   }
   close() {
     if (!this.pc) {
@@ -234,7 +274,7 @@ class QRPClient {
     this.pc = null;
     this.streams = {};
     if (reconnectionWaitMS > 0) {
-      console.log("attempt reconnect after " + reconnectionWaitMS + "ms");
+      console.log(`attempt reconnect after ${reconnectionWaitMS} ms`);
       setTimeout(() => {
         this.connect();
       }, reconnectionWaitMS);
@@ -242,9 +282,19 @@ class QRPClient {
       console.log("no reconnect. bye!");
     }
   }
+  async renegotiation(label) {
+    if (this.sdpGen < 0) {
+      console.log("QRPClient yet initialized: wait for connect() calling");
+      return;
+    }
+    this.sdpGen++;
+    const offer = await this.pc.createOffer();
+    this.sdpOfferMap[this.sdpGen] = offer;
+    this.syscall("nego", {label,sdp:offer.sdp,gen:this.sdpGen});
+  }
   handleMedia(handler_id, callbacks) {
     if (this.mdmap[handler_id]) {
-      console.log("worker already run for " + handler_id);
+      console.log(`worker already run for ${handler_id}`);
       return;
     }
     if (this.mdmap[handler_id]) {
@@ -253,19 +303,22 @@ class QRPClient {
     }
     this.mdmap[handler_id] = callbacks;
   }
-  openMedia(label, stream) {
+  async openMedia(label, stream, encoding) {
     if (this.medias[label]) {
       return this.medias[label];
     }
-    const id = this.labelToId(label, true);
+    const m = new QRPCMedia(label, stream, encoding);
+    this.medias[label] = m;
+    const id = this.labelToId(label);
     const h = this.mdmap[id];
     if (!h) {
-      console.log("No media callbacks for id " + id);
-      return null;
+      throw new Error(`no handler for label ${label} (${id})`);
     }
-    const m = new QRPCMedia(label, stream, "sender");
-    m.assoc_tracks(this, label);
-    this.medias[label] = m;
+    if (m.open(this, h)) {
+      await this.renegotiation(label);
+    } else {
+      this.closeMedia(label); 
+    }
     return m;
   }
   closeMedia(label) {
@@ -299,7 +352,7 @@ class QRPClient {
     const id = this.labelToId(label);
     const h = this.hdmap[id];
     if (!h) {
-      console.log("No stream callbacks for id " + id);
+      console.log(`No stream callbacks for id ${id}`);
       return null;
     }
     const s = this.pc.createDataChannel(label);
@@ -309,21 +362,21 @@ class QRPClient {
   closeStream(label) {
     const s = this.streams[label];
     if (!s) {
-      console.log("No stream for label " + label);
+      console.log(`No stream for label ${label}`);
       return;
     }
     s.close();
     this.streams[label] = null;
   }
   syscall(fn, args) {
-    this.syscallStream.send(JSON.stringify(fn, args));
+    this.syscallStream.send(JSON.stringify({fn, args}));
   }
 
   #setupStream(s, h) {
     s.onopen = (h.onopen && ((event) => {
       const ctx = h.onopen(s, event);
       if (ctx === false || ctx === null) {
-        console.log("close stream by application", s.label);
+        console.log(`close stream by application label=${s.label}`);
         this.closeStream(s.label);
         return;
       } else {
