@@ -47,6 +47,7 @@ namespace base {
                 }
     #else
                 s = state_error;
+                ASSERT(false);
                 break;
     #endif
             }

@@ -115,14 +115,17 @@ namespace webrtc {
     ~SDP() {}
   public:
     // connection is not const reference because it might be configured with SDP
-    bool Answer(ConnectionFactory::Connection &c, std::string &answer) const;
+    bool Answer(ConnectionFactory::Connection &c, const SDP &client_sdp, std::string &answer) const;
     static int Offer(const ConnectionFactory::Connection &c, 
       const std::string &ufrag, const std::string &pwd, std::string &offer);
   public:
     std::vector<Candidate> Candidates() const;
+    bool FindMediaSection(const std::string &type, json &j) const;
   protected:
     bool GetRemoteFingerPrint(const json::const_iterator &it, std::string &answer, DtlsTransport::Fingerprint &ret) const;
-    std::string AnswerAs(const std::string &proto, const ConnectionFactory::Connection &c) const;
+    std::string AnswerMediaSection(
+      const json *section, const std::string &proto, const ConnectionFactory::Connection &c) const;
+    std::string AnswerAs(const std::string &proto, const SDP &client_sdp, const ConnectionFactory::Connection &c) const;
     uint32_t AssignPriority(uint32_t component_id) const;
   };
 } // namespace webrtc

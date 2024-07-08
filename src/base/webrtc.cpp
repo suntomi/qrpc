@@ -250,7 +250,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       const auto &sdp_text = sit->second.get<std::string>();
       std::string answer;
       SDP sdp(sdp_text);
-      if (!sdp.Answer(c, answer)) {
+      if (!sdp.Answer(c, sdp, answer)) {
         QRPC_LOGJ(error, {{"ev","invalid client sdp"},{"sdp",sdp_text},{"reason",answer}});
         return QRPC_OK;
       }
@@ -1300,7 +1300,7 @@ int Listener::Accept(const std::string &client_sdp, std::string &server_sdp) {
     return QRPC_EINVAL;
   }
   SDP sdp(client_sdp);
-  if (!sdp.Answer(*c, server_sdp)) {
+  if (!sdp.Answer(*c, sdp, server_sdp)) {
     logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
     return QRPC_EINVAL;
   }

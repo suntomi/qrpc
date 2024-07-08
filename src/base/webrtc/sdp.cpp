@@ -131,7 +131,7 @@ a=max-message-size:%u
     }
     return v;
   }
-  bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
+  bool SDP::Answer(ConnectionFactory::Connection &c, const SDP &client_sdp, std::string &answer) const {
     auto mit = find("media");
     if (mit == end()) {
       answer = "no media found";
@@ -148,10 +148,10 @@ a=max-message-size:%u
       }
       if ((*proto) == "UDP/DTLS/SCTP") {
         // answer udp port
-        answer = AnswerAs("UDP", c);
+        answer = AnswerAs("UDP", client_sdp, c);
       } else if ((*proto) == "TCP/DTLS/SCTP") {
         // answer tcp port
-        answer = AnswerAs("TCP", c);
+        answer = AnswerAs("TCP", client_sdp, c);
       } else {
         logger::debug({{"ev","non SCTP media protocol"}, {"proto", *proto}});
         continue;
@@ -174,77 +174,166 @@ a=max-message-size:%u
     return 2113929216 + 16776960 + (256 - component_id);
   }
 
-  std::string SDP::AnswerAs(const std::string &proto, const ConnectionFactory::Connection &c) const {
-    auto now = qrpc_time_now();
-    auto &l = c.factory().to<Listener>();
-    auto port = proto == "UDP" ? l.udp_port() : l.tcp_port();
-    auto candidates = std::string("");
-    size_t idx = 0;
-    for (auto &a : c.factory().config().ifaddrs) {
-      candidates += str::Format(
-        "%sa=candidate:0 %u %s %u %s %u typ host",
-        idx == 0 ? "" : "\n",
-        idx + 1, proto.c_str(), AssignPriority(idx), a.c_str(), port
-      );
-      idx++;
+  bool SDP::FindMediaSection(const std::string &type, json &j) const {
+    auto mit = find("media");
+    if (mit == end()) {
+      ASSERT(false);
+      return false;
     }
-    // string value to the str::Format should be converted to c string like str.c_str()
-    return str::Format(R"sdp(v=0
-o=- %llu %llu IN IP4 0.0.0.0
-s=-
-t=0 0
-a=group:BUNDLE audio video data
-a=msid-semantic: WMS
-m=audio 9 UDP/TLS/RTP/SAVPF 111
+    for (auto it = mit->begin(); it != mit->end(); ++it) {
+      auto tit = it->find("type");
+      if (tit == it->end()) {
+        // has no type. ignore
+        continue;
+      }
+      if ((*tit) == type) {
+        j = json(*mit);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  std::string SDP::AnswerMediaSection(
+    const json *section_ptr, const std::string &proto,
+    const ConnectionFactory::Connection &c
+  ) const {
+    std::string media_proto, media_type, mid;
+    std::string rtpmap, port, payloads, candidates;
+    if (section_ptr == nullptr) {
+      media_type = "application";
+      media_proto = "SCTP";
+      port = "9";
+      mid = "0";
+      payloads = "webrtc-datachannel";
+      auto &l = c.factory().to<Listener>();
+      auto nwport = proto == "UDP" ? l.udp_port() : l.tcp_port();
+      size_t idx = 0;
+      for (auto &a : c.factory().config().ifaddrs) {
+        candidates += str::Format(
+          "a=candidate:0 %u %s %u %s %u typ host\n",
+          idx + 1, proto.c_str(), AssignPriority(idx), a.c_str(), nwport
+        );
+        idx++;
+      }
+      candidates += str::Format(R"cands(a=end-of-candidates
+a=sctp-port:5000
+a=max-message-size:%u)cands",
+        c.factory().config().send_buffer_size
+      );
+    } else {
+      const json &section = *section_ptr;
+      auto portit = section.find("port");
+      if (portit == section.end()) {
+        ASSERT(false);
+        return "";
+      }
+      port = portit->get<std::string>();
+      auto protoit = section.find("protocol");
+      if (protoit == section.end()) {
+        ASSERT(false);
+        return "";
+      }
+      media_proto = protoit->get<std::string>();
+      auto tit = section.find("type");
+      if (tit == section.end()) {
+        ASSERT(false);
+        return "";
+      }
+      mid = tit->get<std::string>();
+      media_type = mid;
+      auto rtpmit = section.find("rtp");
+      if (rtpmit == section.end()) {
+        ASSERT(false);
+        return "";
+      } else {
+        for (auto it = rtpmit->begin(); it != rtpmit->end(); it++) {
+          auto plit = it->find("payload");
+          if (plit == it->end()) {
+            ASSERT(false);
+            continue;
+          }
+          auto pl = plit->get<std::string>();
+          payloads += pl + " ";
+          auto cit = it->find("codec");
+          if (cit == it->end()) {
+            ASSERT(false);
+            continue;
+          }
+          auto rateit = it->find("rate");
+          if (rateit == it->end()) {
+            ASSERT(false);
+            continue;
+          }
+          auto encit = it->find("encoding");
+          if (encit != it->end()) {
+            rtpmap += str::Format(
+              "a=rtpmap:%s %s/%s/%s\n",
+              pl.c_str(),
+              cit->get<std::string>().c_str(),
+              rateit->get<std::string>().c_str(),
+              encit->get<std::string>().c_str()
+            );
+          } else {
+            rtpmap += str::Format(
+              "a=rtpmap:%s %s/%s\n",
+              pl.c_str(),
+              cit->get<std::string>().c_str(),
+              rateit->get<std::string>().c_str()
+            );
+          }
+        }
+        rtpmap += "a=rtcp-mux";
+      }
+    }
+    return str::Format(4096, R"sdp_section(m=%s %s %s/DTLS/%s %s
 c=IN IP4 0.0.0.0
-a=mid:audio
-a=sendrecv
-a=rtpmap:111 opus/48000/2
-a=rtcp-mux
-a=ice-ufrag:%s
-a=ice-pwd:%s
-a=fingerprint:%s %s
-a=setup:active
-m=video 9 UDP/TLS/RTP/SAVPF 96
-c=IN IP4 0.0.0.0
-a=mid:video
-a=sendrecv
-a=rtpmap:96 VP8/90000
-a=rtcp-mux
-a=ice-ufrag:%s
-a=ice-pwd:%s
-a=fingerprint:%s %s
-a=setup:active
-m=application 9 %s/DTLS/SCTP webrtc-datachannel
-c=IN IP4 0.0.0.0
-a=mid:data
+a=mid:%s
 a=sendrecv
 %s
-a=end-of-candidates
 a=ice-lite
 a=ice-ufrag:%s
 a=ice-pwd:%s
 a=fingerprint:%s %s
 a=setup:active
-a=sctp-port:5000
-a=max-message-size:%u
-)sdp",
-      now, now,
-      // Audio section
-      c.ice_server().GetUsernameFragment().c_str(),
-      c.ice_server().GetPassword().c_str(),
-      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      // Video section repeats ICE and DTLS info
-      c.ice_server().GetUsernameFragment().c_str(),
-      c.ice_server().GetPassword().c_str(),
-      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      // Data channel section
+)sdp_section",
+      media_type.c_str(),
+      port.c_str(),
       proto.c_str(),
-      candidates.c_str(),
+      media_proto.c_str(),
+      payloads.c_str(),
+      mid.c_str(),
+      section_ptr == nullptr ? candidates.c_str() : rtpmap.c_str(),
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
-      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      c.factory().config().send_buffer_size
+      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str()
+    );
+  }
+
+  std::string SDP::AnswerAs(const std::string &proto, const SDP &client_sdp, const ConnectionFactory::Connection &c) const {
+    auto now = qrpc_time_now();
+    auto media_sections = AnswerMediaSection(nullptr, proto, c);
+    auto bundle = std::string("a=group:BUNDLE 0");
+    json asec, vsec;
+    if (client_sdp.FindMediaSection("audio", asec)) {
+      media_sections += AnswerMediaSection(&asec, proto, c);
+      bundle += " audio";
+    }
+    if (client_sdp.FindMediaSection("video", vsec)) {
+      media_sections += AnswerMediaSection(&vsec, proto, c);
+      bundle += " video";
+    }
+    // string value to the str::Format should be converted to c string like str.c_str()
+    return str::Format(4096, R"sdp(v=0
+o=- %llu %llu IN IP4 0.0.0.0
+s=-
+t=0 0
+%s
+a=msid-semantic: WMS
+%s)sdp",
+      now, now,
+      bundle.c_str(),
+      media_sections.c_str()
     );
   }
 } // namespace webrtc

@@ -29,10 +29,14 @@ namespace str {
     return r;
   }
   template<class... Args>
-  static std::string Format(const char *fmt, const Args... args) {
-    static thread_local char buff[1024];
+  static inline std::string Format(size_t bufsz, const char *fmt, const Args... args) {
+    char buff[bufsz];
     Vprintf(buff, sizeof(buff), fmt, args...);
     return std::string(buff);
+  }
+  template<class... Args>
+  static inline std::string Format(const char *fmt, const Args... args) {
+    return Format(1024, fmt, args...);
   }
   inline int CmpNocase(const std::string &a, const std::string &b, size_t n) {
     return strncasecmp(a.c_str(), b.c_str(), n);

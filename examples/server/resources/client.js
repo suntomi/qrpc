@@ -92,7 +92,6 @@ class QRPClient {
         }
       }
     });
-    this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM);
   }
   init() {
     //Ice properties
@@ -203,6 +202,9 @@ class QRPClient {
         this.endOfcandidates = true;
       }
     }
+
+    // generate syscall stream
+    this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM);
 
     if (this.onopen) {
       this.context = await this.onopen();

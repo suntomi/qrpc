@@ -330,6 +330,44 @@ bool test_address() {
     return true;
 }
 
+bool test_sdp() {
+auto sdp = R"sdp(
+v=0
+o=- 25678 753849 IN IP4 192.168.1.1
+s=-
+t=0 0
+a=group:BUNDLE audio video
+
+m=audio 9 RTP/SAVPF 111
+c=IN IP4 0.0.0.0
+a=mid:audio
+a=sendrecv
+a=rtpmap:111 opus/48000/2
+a=rtcp-mux
+a=ice-ufrag:audioUfrag
+a=ice-pwd:audioPwd
+a=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:D7:EF:44:73:59:00:00:00:00:C4:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD
+a=setup:actpass
+
+m=video 9 RTP/SAVPF 96
+c=IN IP4 0.0.0.0
+a=mid:video
+a=sendrecv
+a=rtpmap:96 VP8/90000
+a=rtcp-fb:96 ccm fir
+a=rtcp-fb:96 nack
+a=rtcp-fb:96 goog-remb
+a=rtcp-mux
+a=ice-ufrag:videoUfrag
+a=ice-pwd:videoPwd
+a=fingerprint:sha-256 58:7F:1E:57:CC:89:3D:88:5E:D5:AC:EA:8B:75:6F:43:00:00:00:00:D4:34:56:78:9A:BC:DE:F0:12:34:56:78
+a=setup:actpass    
+})sdp";
+    auto s = webrtc::SDP(sdp);
+    TRACE("sdp: %s", s.dump().c_str());
+    ASSERT(false);
+}
+
 int main(int argc, char *argv[]) {
     bool alive = true;
     Loop l;
@@ -354,6 +392,10 @@ int main(int argc, char *argv[]) {
         });
     })) {
         DIE("fail to setup signal handler");
+    }
+    TRACE("======== test_sdp ========");
+    if (!test_sdp()) {
+        return 1;
     }
     TRACE("======== test_webrtc_client ========");
     if (!test_webrtc_client(l, ares)) {
