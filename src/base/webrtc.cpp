@@ -234,17 +234,17 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
     } else if (fn == "nego") {
       const auto sit = args.find("sdp");
       if (sit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"what","no value for key 'sdp'"}});
+        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"reason","no value for key 'sdp'"}});
         return QRPC_OK;
       }
       const auto git = args.find("gen");
       if (git == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"what","no value for key 'gen'"}});
+        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"reason","no value for key 'gen'"}});
         return QRPC_OK;
       }
       const auto lit = args.find("label");
       if (lit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"what","no value for key 'label'"}});
+        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"reason","no value for key 'label'"}});
         return QRPC_OK;
       }
       const auto &sdp_text = sit->second.get<std::string>();

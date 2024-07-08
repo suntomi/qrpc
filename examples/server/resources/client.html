@@ -23,7 +23,7 @@
       const url = "http://localhost:8888/qrpc";
       const c = new QRPClient(url);
       const context = { texts: ["aaaa", "bbbb", "cccc"] };
-      const MAX_RECONNECT = 0;
+      const MAX_RECONNECT = 2;
       let closed = 0;
       c.onopen = () => {
         console.log("client onopen called");

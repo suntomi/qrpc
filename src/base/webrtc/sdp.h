@@ -123,9 +123,12 @@ namespace webrtc {
     bool FindMediaSection(const std::string &type, json &j) const;
   protected:
     bool GetRemoteFingerPrint(const json::const_iterator &it, std::string &answer, DtlsTransport::Fingerprint &ret) const;
-    std::string AnswerMediaSection(
-      const json *section, const std::string &proto, const ConnectionFactory::Connection &c) const;
-    std::string AnswerAs(const std::string &proto, const SDP &client_sdp, const ConnectionFactory::Connection &c) const;
+    bool AnswerMediaSection(
+      const json &section, const std::string &proto, const ConnectionFactory::Connection &c,
+      std::string &answer, std::string &mid) const;
+    bool AnswerAs(
+      const std::string &proto, const SDP &client_sdp, const ConnectionFactory::Connection &c,
+      std::string &answer) const;
     uint32_t AssignPriority(uint32_t component_id) const;
   };
 } // namespace webrtc

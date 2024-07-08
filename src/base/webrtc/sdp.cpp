@@ -8,6 +8,7 @@ namespace webrtc {
     const std::string &ufrag, const std::string &pwd, std::string &offer) {
     auto now = qrpc_time_now();
     // string value to the str::Format should be converted to c string like str.c_str()
+    // TODO: add sdp for audio and video
     offer = str::Format(R"sdp(v=0
 o=- %llu %llu IN IP4 0.0.0.0
 s=-
@@ -17,7 +18,6 @@ a=extmap-allow-mixed
 a=msid-semantic: WMS
 m=application 9 %s/DTLS/SCTP webrtc-datachannel
 c=IN IP4 0.0.0.0
-b=AS:30
 a=ice-ufrag:%s
 a=ice-pwd:%s
 a=ice-options:trickle
@@ -132,41 +132,51 @@ a=max-message-size:%u
     return v;
   }
   bool SDP::Answer(ConnectionFactory::Connection &c, const SDP &client_sdp, std::string &answer) const {
-    auto mit = find("media");
-    if (mit == end()) {
-      answer = "no media found";
+    try {
+      auto mit = find("media");
+      if (mit == end()) {
+        answer = "no media found";
+        ASSERT(false);
+        return false;
+      }
+      // firefox contains fingerprint in root section, not in media
+      for (auto it = mit->begin(); it != mit->end(); ++it) {
+        auto proto = it->find("protocol");
+        if (proto == it->end()) {
+          logger::warn({{"ev","media does not have protocol"}, {"media", *it}});
+          ASSERT(false);
+          continue;
+        }
+        if ((*proto) == "UDP/DTLS/SCTP") {
+          // answer udp port
+          if (!AnswerAs("UDP", client_sdp, c, answer)) {
+            return false;
+          }
+        } else if ((*proto) == "TCP/DTLS/SCTP") {
+          // answer tcp port
+          if (!AnswerAs("TCP", client_sdp, c, answer)) {
+            return false;
+          }
+        } else {
+          logger::debug({{"ev","non SCTP media protocol"}, {"proto", *proto}});
+          continue;
+        }
+        // protocol found. set remote fingerprint
+        DtlsTransport::Fingerprint fp;
+        if (!GetRemoteFingerPrint(it, answer, fp)) {
+          logger::warn({{"ev","failed to get remote fingerprint"},{"reason",answer}});
+          continue;
+        }
+        c.dtls_transport().SetRemoteFingerprint(fp);
+        return true;
+      }
+      answer = "no data channel media found";
+      return false;
+    } catch (std::exception &e) {
+      QRPC_LOGJ(error, {{"ev","sdp parse error"},{"what",e.what()}});
       ASSERT(false);
       return false;
     }
-    // firefox contains fingerprint in root section, not in media
-    for (auto it = mit->begin(); it != mit->end(); ++it) {
-      auto proto = it->find("protocol");
-      if (proto == it->end()) {
-        logger::warn({{"ev","media does not have protocol"}, {"media", *it}});
-        ASSERT(false);
-        continue;
-      }
-      if ((*proto) == "UDP/DTLS/SCTP") {
-        // answer udp port
-        answer = AnswerAs("UDP", client_sdp, c);
-      } else if ((*proto) == "TCP/DTLS/SCTP") {
-        // answer tcp port
-        answer = AnswerAs("TCP", client_sdp, c);
-      } else {
-        logger::debug({{"ev","non SCTP media protocol"}, {"proto", *proto}});
-        continue;
-      }
-      // protocol found. set remote fingerprint
-      DtlsTransport::Fingerprint fp;
-      if (!GetRemoteFingerPrint(it, answer, fp)) {
-        logger::warn({{"ev","failed to get remote fingerprint"},{"reason",answer}});
-        continue;
-      }
-      c.dtls_transport().SetRemoteFingerprint(fp);
-      return true;
-    }
-    answer = "no data channel media found";
-    return false;
   }
   uint32_t SDP::AssignPriority(uint32_t component_id) const {
     // borrow from
@@ -187,25 +197,27 @@ a=max-message-size:%u
         continue;
       }
       if ((*tit) == type) {
-        j = json(*mit);
+        j = json(*it);
         return true;
       }
     }
     return false;
   }
 
-  std::string SDP::AnswerMediaSection(
-    const json *section_ptr, const std::string &proto,
-    const ConnectionFactory::Connection &c
+  bool SDP::AnswerMediaSection(
+    const json &section, const std::string &proto,
+    const ConnectionFactory::Connection &c,
+    std::string &answer, std::string &mid
   ) const {
-    std::string media_proto, media_type, mid;
-    std::string rtpmap, port, payloads, candidates;
-    if (section_ptr == nullptr) {
-      media_type = "application";
-      media_proto = "SCTP";
-      port = "9";
-      mid = "0";
-      payloads = "webrtc-datachannel";
+    auto tit = section.find("type");
+    if (tit == section.end()) {
+      answer = "section: no value for key 'type'";
+      ASSERT(false);
+      return false;
+    }
+    auto media_type = tit->get<std::string>();
+    std::string rtpmap, payloads, candidates;
+    if (media_type == "application") {
       auto &l = c.factory().to<Listener>();
       auto nwport = proto == "UDP" ? l.udp_port() : l.tcp_port();
       size_t idx = 0;
@@ -221,50 +233,35 @@ a=sctp-port:5000
 a=max-message-size:%u)cands",
         c.factory().config().send_buffer_size
       );
+      payloads = "webrtc-datachannel";
     } else {
-      const json &section = *section_ptr;
-      auto portit = section.find("port");
-      if (portit == section.end()) {
-        ASSERT(false);
-        return "";
-      }
-      port = portit->get<std::string>();
-      auto protoit = section.find("protocol");
-      if (protoit == section.end()) {
-        ASSERT(false);
-        return "";
-      }
-      media_proto = protoit->get<std::string>();
-      auto tit = section.find("type");
-      if (tit == section.end()) {
-        ASSERT(false);
-        return "";
-      }
-      mid = tit->get<std::string>();
-      media_type = mid;
       auto rtpmit = section.find("rtp");
       if (rtpmit == section.end()) {
+        answer = "rtpmap: no value for key 'rtp'";
         ASSERT(false);
-        return "";
+        return false;
       } else {
         for (auto it = rtpmit->begin(); it != rtpmit->end(); it++) {
           auto plit = it->find("payload");
           if (plit == it->end()) {
+            answer = "rtpmap: no value for key 'payload'";
             ASSERT(false);
-            continue;
+            return false;
           }
           auto pl = plit->get<std::string>();
           payloads += pl + " ";
           auto cit = it->find("codec");
           if (cit == it->end()) {
+            answer = "rtpmap: no value for key 'codec'";
             ASSERT(false);
-            continue;
-          }
+            return false;
+           }
           auto rateit = it->find("rate");
           if (rateit == it->end()) {
+            answer = "rtpmap: no value for key 'rate'";
             ASSERT(false);
-            continue;
-          }
+            return false;
+           }
           auto encit = it->find("encoding");
           if (encit != it->end()) {
             rtpmap += str::Format(
@@ -286,7 +283,26 @@ a=max-message-size:%u)cands",
         rtpmap += "a=rtcp-mux";
       }
     }
-    return str::Format(4096, R"sdp_section(m=%s %s %s/DTLS/%s %s
+    auto midit = section.find("mid");
+    if (midit == section.end()) {
+      answer = "section: no value for key 'mid'";
+      ASSERT(false);
+      return false;
+    }
+    mid = midit->get<std::string>();
+    auto portit = section.find("port");
+    if (portit == section.end()) {
+      answer = "section: no value for key 'port'";
+      ASSERT(false);
+      return false;
+    }
+    auto protoit = section.find("protocol");
+    if (protoit == section.end()) {
+      answer = "section: no value for key 'protocol'";
+      ASSERT(false);
+      return false;
+    }
+    answer = str::Format(4096, R"sdp_section(m=%s %llu %s %s
 c=IN IP4 0.0.0.0
 a=mid:%s
 a=sendrecv
@@ -297,34 +313,58 @@ a=ice-pwd:%s
 a=fingerprint:%s %s
 a=setup:active
 )sdp_section",
-      media_type.c_str(),
-      port.c_str(),
-      proto.c_str(),
-      media_proto.c_str(),
-      payloads.c_str(),
+      media_type.c_str(), portit->get<uint64_t>(), protoit->get<std::string>().c_str(), payloads.c_str(),
       mid.c_str(),
-      section_ptr == nullptr ? candidates.c_str() : rtpmap.c_str(),
+      media_type == "application" ? candidates.c_str() : rtpmap.c_str(),
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str()
     );
+    return true;
   }
 
-  std::string SDP::AnswerAs(const std::string &proto, const SDP &client_sdp, const ConnectionFactory::Connection &c) const {
+  bool SDP::AnswerAs(
+    const std::string &proto, const SDP &client_sdp, const ConnectionFactory::Connection &c,
+    std::string &answer) const {
     auto now = qrpc_time_now();
-    auto media_sections = AnswerMediaSection(nullptr, proto, c);
-    auto bundle = std::string("a=group:BUNDLE 0");
-    json asec, vsec;
+    auto bundle = std::string("a=group:BUNDLE");
+    json dsec, asec, vsec;
+    std::string mid, media_sections, section_answer;
+    if (client_sdp.FindMediaSection("application", dsec)) {
+      if (AnswerMediaSection(dsec, proto, c, section_answer, mid)) {
+        media_sections += section_answer;
+        bundle += str::Format(" %s", mid.c_str());
+      } else {
+        QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
+        answer = section_answer;
+        ASSERT(false);
+        return false;
+      }
+    }
     if (client_sdp.FindMediaSection("audio", asec)) {
-      media_sections += AnswerMediaSection(&asec, proto, c);
-      bundle += " audio";
+      if (AnswerMediaSection(asec, proto, c, section_answer, mid)) {
+        media_sections += section_answer;
+        bundle += str::Format(" %s", mid.c_str());
+      } else {
+        QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec}});
+        answer = section_answer;
+        ASSERT(false);
+        return false;
+      }
     }
     if (client_sdp.FindMediaSection("video", vsec)) {
-      media_sections += AnswerMediaSection(&vsec, proto, c);
-      bundle += " video";
+      if (AnswerMediaSection(vsec, proto, c, section_answer, mid)) {
+        media_sections += section_answer;
+        bundle += str::Format(" %s", mid.c_str());
+      } else {
+        QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec}});
+        answer = section_answer;
+        ASSERT(false);
+        return false;
+      }
     }
     // string value to the str::Format should be converted to c string like str.c_str()
-    return str::Format(4096, R"sdp(v=0
+    answer = str::Format(4096, R"sdp(v=0
 o=- %llu %llu IN IP4 0.0.0.0
 s=-
 t=0 0
@@ -335,6 +375,7 @@ a=msid-semantic: WMS
       bundle.c_str(),
       media_sections.c_str()
     );
+    return true;
   }
 } // namespace webrtc
 } // namespace base

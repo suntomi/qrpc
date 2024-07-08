@@ -336,7 +336,20 @@ v=0
 o=- 25678 753849 IN IP4 192.168.1.1
 s=-
 t=0 0
-a=group:BUNDLE audio video
+a=group:BUNDLE 0 audio video
+
+a=extmap-allow-mixed
+a=msid-semantic: WMS
+m=application 9 UDP/DTLS/SCTP webrtc-datachannel
+c=IN IP4 0.0.0.0
+a=ice-ufrag:g1Z4
+a=ice-pwd:nhbCVFVUbesCQfhV+2No3o4c
+a=ice-options:trickle
+a=fingerprint:sha-256 15:62:A7:AE:99:45:6A:BC:A1:39:10:27:56:63:A1:54:86:2D:51:2B:D1:DB:78:B6:FD:4D:0D:41:00:31:FE:40
+a=setup:actpass
+a=mid:0
+a=sctp-port:5000
+a=max-message-size:262144
 
 m=audio 9 RTP/SAVPF 111
 c=IN IP4 0.0.0.0
@@ -365,7 +378,7 @@ a=setup:actpass
 })sdp";
     auto s = webrtc::SDP(sdp);
     TRACE("sdp: %s", s.dump().c_str());
-    ASSERT(false);
+    return true;
 }
 
 int main(int argc, char *argv[]) {
