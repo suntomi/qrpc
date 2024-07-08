@@ -80,6 +80,10 @@ class QRPClient {
           this.syscall("nego_ack",{label:data.args.label,sdp:answer.sdp,gen:this.sdpGen});
         } else if (data.fn === "nego_ack") {
           const offer = this.sdpOfferMap[data.args.gen];
+          if (!offer) {
+            console.log(`sdp offer for gen:${data.args.gen} does not exist`);
+            return;
+          }
           this.sdpOfferMap[data.args.gen] = null;
           if (this.sdpGen > data.args.gen) {
             console.log(`old sdp anwser for ${data.args.gen} ignored`);
@@ -88,7 +92,12 @@ class QRPClient {
             console.log(`future sdp anwser for ${data.args.gen} ignored`);
             return;
           }
-          await this.#setupSdp(offer, data.args.sdp);
+          if (data.args.error) {
+            console.log(`invalid sdp ${offer.sdp}: ${data.args.error}`);
+            return;
+          } else {
+            await this.#setupSdp(offer, data.args.sdp);
+          }
         }
       }
     });

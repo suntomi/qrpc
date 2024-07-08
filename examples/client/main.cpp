@@ -377,7 +377,7 @@ a=fingerprint:sha-256 58:7F:1E:57:CC:89:3D:88:5E:D5:AC:EA:8B:75:6F:43:00:00:00:0
 a=setup:actpass    
 })sdp";
     auto s = webrtc::SDP(sdp);
-    TRACE("sdp: %s", s.dump().c_str());
+    QRPC_LOGJ(info, s);
     return true;
 }
 

@@ -224,27 +224,37 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
   auto pl = std::string(p, sz);
   try {
     auto data = json::parse(pl);
-    const auto &fn = data["fn"].get<std::string>();
-    const auto &args = data["args"].get<std::map<std::string,json>>();
+    auto fnit = data.find("fn");
+    if (fnit == data.end()) {
+      QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no 'fn' key"},{"pl",pl}});
+      return QRPC_OK;
+    }
+    const auto &fn = fnit->get<std::string>();
     auto &c = dynamic_cast<Connection &>(connection());
     QRPC_LOGJ(info, {{"ev", "recv from syscall stream"},{"fn",fn}});
     if (fn == "close") {
       QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
       c.factory().ScheduleClose(c);
     } else if (fn == "nego") {
+      const auto ait = data.find("args");
+      if (ait == data.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'args'"}});
+        return QRPC_OK;
+      }
+      const auto &args = ait->get<std::map<std::string,json>>();
       const auto sit = args.find("sdp");
       if (sit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"reason","no value for key 'sdp'"}});
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'sdp'"}});
         return QRPC_OK;
       }
       const auto git = args.find("gen");
       if (git == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"reason","no value for key 'gen'"}});
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'gen'"}});
         return QRPC_OK;
       }
       const auto lit = args.find("label");
       if (lit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall parse error"},{"fn",fn},{"reason","no value for key 'label'"}});
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
         return QRPC_OK;
       }
       const auto &sdp_text = sit->second.get<std::string>();
@@ -252,6 +262,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       SDP sdp(sdp_text);
       if (!sdp.Answer(c, sdp, answer)) {
         QRPC_LOGJ(error, {{"ev","invalid client sdp"},{"sdp",sdp_text},{"reason",answer}});
+        Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"error",answer}});
         return QRPC_OK;
       }
       Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"sdp",answer},{"label",lit->second.get<std::string>()}});
