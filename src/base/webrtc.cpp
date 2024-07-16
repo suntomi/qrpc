@@ -257,10 +257,15 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
         return QRPC_OK;
       }
+      const auto rlmit = args.find("ridLabelMap");
+      if (rlmit != args.end()) {
+        c.rid_label_map_ = rlmit->second.get<std::map<std::string,std::string>>();
+        QRPC_LOGJ(info, {{"ev","new rid label map"},{"map",*rlmit}});
+      }
       const auto &sdp_text = sit->second.get<std::string>();
       std::string answer;
       SDP sdp(sdp_text);
-      if (!sdp.Answer(c, sdp, answer)) {
+      if (!sdp.Answer(c, answer)) {
         QRPC_LOGJ(error, {{"ev","invalid client sdp"},{"sdp",sdp_text},{"reason",answer}});
         Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"error",answer}});
         return QRPC_OK;
@@ -582,6 +587,30 @@ int ConnectionFactory::Connection::OnDtlsDataReceived(Session *session, const ui
   }  
   return QRPC_OK;
 }
+void ConnectionFactory::Connection::TryParseRtcpPacket(const uint8_t *p, size_t sz) {
+  // Decrypt the SRTCP packet.
+  auto intLen = static_cast<int>(sz);
+  auto decrypted = srtp_recv_->DecryptSrtcp(const_cast<uint8_t *>(p), &intLen);
+  if (!decrypted) {
+    QRPC_LOGJ(warn, {{"proto","srtcp"},
+      {"ev","received data is not a valid RTP packet"},
+      {"decrypted",decrypted},{"intLen",intLen},
+      {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
+    ASSERT(false);
+    return;
+  }
+  RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(p, static_cast<size_t>(intLen));
+  if (!packet) {
+    logger::warn({{"proto","srtcp"},
+      {"ev","received data is not a valid RTCP compound or single packet"},
+      {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
+    return;
+  }
+  // we need to implement RTC::Transport::ReceiveRtcpPacket(packet) equivalent
+  logger::info({{"ev","RTCP packet received"}});
+  packet->Dump();
+  delete packet;
+}
 int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure DTLS is connected.
@@ -600,23 +629,8 @@ int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const ui
     return QRPC_OK;
   }
   // Decrypt the SRTCP packet.
-  auto intLen = static_cast<int>(sz);
-  if (!srtp_recv_->DecryptSrtcp(const_cast<uint8_t *>(p), &intLen)) {
-    logger::debug({{"proto","rtcp"},{"ev","fail to decrypt SRTCP packet"},
-      {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
-    return QRPC_OK;
-  }
-  RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(p, static_cast<size_t>(intLen));
-  if (!packet) {
-    logger::warn({{"proto","rtcp"},
-      {"ev","received data is not a valid RTCP compound or single packet"},
-      {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
-    return QRPC_OK;
-  }
-  // we need to implement RTC::Transport::ReceiveRtcpPacket(packet) equivalent
-  logger::error({{"ev","RTCP packet received, but handler not implemented yet"}});
-  ASSERT(false);
-  return QRPC_ENOTSUPPORT;
+  TryParseRtcpPacket(p, sz);
+  return QRPC_OK;
 }
 void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t sz) {
   // Decrypt the SRTP packet.
@@ -624,7 +638,7 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
   auto decrypted = this->srtp_recv_->DecryptSrtp(const_cast<uint8_t*>(p), &intLen);
   auto *packet = RTC::RtpPacket::Parse(p, static_cast<size_t>(intLen));
   if (packet == nullptr) {
-    logger::warn({{"proto","rtcp"},
+    QRPC_LOGJ(warn, {{"proto","rtcp"},
       {"ev","received data is not a valid RTP packet"},
       {"decrypted",decrypted},{"intLen",intLen},
       {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
@@ -634,11 +648,19 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
   std::string rid = "none", mid = "none";;
   packet->ReadRid(rid);
   packet->ReadMid(mid);
-  logger::info({
-    {"ev","RTP packet received, but handler not implemented yet"},
-    {"proto","srtp"},{"ssrc",packet->GetSsrc()},{"rid",rid},{"mid",mid},
-    {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
-  });
+  if (!decrypted) {
+    QRPC_LOGJ(warn, {
+      {"ev","RTP packet received, but decryption fails"},
+      {"proto","srtp"},{"ssrc",packet->GetSsrc()},{"rid",rid},{"mid",mid},
+      {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
+    });
+  } else {
+    QRPC_LOGJ(debug, {
+      {"ev","RTP packet received"},
+      {"proto","srtp"},{"ssrc",packet->GetSsrc()},{"rid",rid},{"mid",mid},
+      {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
+    });
+  }
   delete packet;
 }
 int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz) {
@@ -1280,6 +1302,7 @@ bool Listener::Listen(
     if ((r = Accept(s.fsm().body(), sdp)) < 0) {
         logger::error("fail to create connection");
         s.ServerError("server error %d", r);
+        return nullptr;
     }
     std::string sdplen = std::to_string(sdp.length());
     HttpHeader h[] = {
@@ -1295,27 +1318,34 @@ bool Listener::Listen(
   }
   return true;
 }
-int Listener::Accept(const std::string &client_sdp, std::string &server_sdp) {
-  logger::info({{"ev","new server connection"},{"client_sdp", client_sdp}});
-  // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
-  // even if sdp anwser ask to do it.
-  auto c = std::shared_ptr<Connection>(factory_method_(*this, DtlsTransport::Role::CLIENT));
-  if (c == nullptr) {
-    logger::error({{"ev","fail to allocate connection"}});
-    return QRPC_EALLOC;
-  }
-  int r;
-  std::string ufrag, pwd;
-  if ((r = c->Init(ufrag, pwd)) < 0) {
-    logger::error({{"ev","fail to init connection"},{"rc",r}});
+int Listener::Accept(const std::string &client_req_body, std::string &server_sdp) {
+  try {
+    auto client_req = json::parse(client_req_body);
+    logger::info({{"ev","new server connection"},{"client_req", client_req}});
+    auto client_sdp = client_req["sdp"].get<std::string>();
+    // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
+    // even if sdp anwser ask to do it.
+    auto c = std::shared_ptr<Connection>(factory_method_(*this, DtlsTransport::Role::CLIENT));
+    if (c == nullptr) {
+      logger::error({{"ev","fail to allocate connection"}});
+      return QRPC_EALLOC;
+    }
+    int r;
+    std::string ufrag, pwd;
+    if ((r = c->Init(ufrag, pwd)) < 0) {
+      logger::error({{"ev","fail to init connection"},{"rc",r}});
+      return QRPC_EINVAL;
+    }
+    SDP sdp(client_sdp);
+    if (!sdp.Answer(*c, server_sdp)) {
+      logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
+      return QRPC_EINVAL;
+    }
+    connections_.emplace(std::move(ufrag), c);
+  } catch (const std::exception &e) {
+    QRPC_LOGJ(error, {{"ev","malform request"},{"reason",e.what()},{"req",client_req_body}});
     return QRPC_EINVAL;
   }
-  SDP sdp(client_sdp);
-  if (!sdp.Answer(*c, sdp, server_sdp)) {
-    logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
-    return QRPC_EINVAL;
-  }
-  connections_.emplace(std::move(ufrag), c);
   return QRPC_OK;
 }
 int Listener::Setup() {

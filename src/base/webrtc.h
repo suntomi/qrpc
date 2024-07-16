@@ -128,6 +128,7 @@ namespace webrtc {
       void OnDtlsEstablished();
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
+      void TryParseRtcpPacket(const uint8_t *p, size_t sz);
       void TryParseRtpPacket(const uint8_t *p, size_t sz);
       std::shared_ptr<Stream> NewStream(const Stream::Config &c, const StreamFactory &sf);
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const StreamFactory &sf);
@@ -220,7 +221,7 @@ namespace webrtc {
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       std::shared_ptr<SyscallStream> syscall_;
       std::map<Media::Id, std::shared_ptr<Media>> medias_;
-      std::map<Media::Id, std::string> media_label_map_;
+      std::map<Media::Id, std::string> rid_label_map_;
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_;
       bool sctp_connected_, closed_;

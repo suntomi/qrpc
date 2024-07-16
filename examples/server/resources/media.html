@@ -22,20 +22,20 @@
       showMedia = (m, t) => {
         if (t.kind == "video") {
           console.log("play video", m.label);
-          let videoElement = document.getElementById(`video-${m.stream.id}`);
+          let videoElement = document.getElementById(`video-${t.id}`);
           if (!videoElement) {
             videoElement = document.createElement('video');
-            videoElement.id = `video-${m.stream.id}`;
+            videoElement.id = `video-${t.id}`;
             videoElement.autoplay = true;
             document.body.appendChild(videoElement);
           }
-          videoElement.srcObject = stream;
+          videoElement.srcObject = m.stream;
         } else if (t.kind == "audio") {
           console.log("play audio", m.label);
-          let audioElement = document.getElementById(`audio-${m.stream.id}`);
+          let audioElement = document.getElementById(`audio-${t.id}`);
           if (!audioElement) {
             audioElement = document.createElement('audio');
-            audioElement.id = `audio-${m.stream.id}`;
+            audioElement.id = `audio-${t.id}`;
             audioElement.autoplay = true;
             document.body.appendChild(audioElement);
           }
@@ -50,7 +50,15 @@
       let closed = 0;
       c.onopen = async () => {
         console.log("client onopen called");
-        await c.openMedia("webcam_out", await navigator.mediaDevices.getUserMedia({ video: true, audio: false }));
+        await c.openMedia("webcam", await navigator.mediaDevices.getUserMedia({ video: true, audio: false }), [
+          // 1500kbps ?
+          {rid: 'h', maxBitrate: 1500000, active: true, priority: "high"},
+          // 500kbps ?
+          {rid: 'm', maxBitrate: 500000, active: true, scaleResolutionDownBy: 2.0},
+          // 100kbps ?
+          {rid: 'l', maxBitrate: 100000, active: true, scaleResolutionDownBy: 4.0}
+        ]);
+        console.log("open media");
         return context;
       };
       c.onclose = () => {
@@ -64,9 +72,9 @@
           return;
         }
       };
-      c.handleMedia("webcam_in", {
+      c.handleMedia("webcam", {
         onopen: (m, track)=>{
-          console.log("media open", m.stream.id, track.trackId);
+          console.log("media open", m.stream.id, track.id);
           showMedia(m, track);
         },
         onclose: (m)=>{

@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
         s.Respond(HRC_OK, h, 2, html.get(), htmlsz);
         return nullptr;
     }).
-    Route(std::regex("/(.*)\\.(.*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
+    Route(std::regex("/([^/]*)\\.([^/]*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
         size_t filesz;
         auto path = rootpath + "/resources/" + m[1].str() + "." + m[2].str();
         auto file = Syscall::ReadFile(path, &filesz);

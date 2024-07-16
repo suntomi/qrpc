@@ -5,7 +5,7 @@
 namespace base {
   class Media {
   public:
-    typedef std::string Id;
+    typedef std::string Id; // RTP stream id for WebRTC
   public:
     Media(const std::string &l) : label_(l) {}
     const std::string &label() const { return label_; }

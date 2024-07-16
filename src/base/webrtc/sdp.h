@@ -11,22 +11,153 @@ using json = nlohmann::json;
 
 // chrome
 // client -> server offer
-// "v=0
-// o=- 2079181553264408257 2 IN IP4 127.0.0.1
+// v=0
+// o=- 2755857735278132688 2 IN IP4 127.0.0.1
 // s=-
 // t=0 0
-// a=group:BUNDLE 0
+// a=group:BUNDLE 0 1
 // a=extmap-allow-mixed
-// a=msid-semantic: WMS
+// a=msid-semantic: WMS e1c6c32a-0d3d-4c1f-b8e3-38fc1382e07a
+// m=video 9 UDP/TLS/RTP/SAVPF 96 97 102 103 104 105 106 107 108 109 127 125 39 40 45 46 98 99 100 101 112 113 116 117 118
+// c=IN IP4 0.0.0.0
+// a=rtcp:9 IN IP4 0.0.0.0
+// a=ice-ufrag:4mR1
+// a=ice-pwd:d7Ou6mHlq1enMEWs0v0VAYov
+// a=ice-options:trickle
+// a=fingerprint:sha-256 F5:CE:1E:60:EC:B1:A4:29:DC:C4:2A:53:A4:DA:A0:9F:A3:3B:6D:11:FE:8C:7F:48:5F:03:AD:1A:7B:76:69:67
+// a=setup:actpass
+// a=mid:0
+// a=extmap:1 urn:ietf:params:rtp-hdrext:toffset
+// a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
+// a=extmap:3 urn:3gpp:video-orientation
+// a=extmap:4 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01
+// a=extmap:5 http://www.webrtc.org/experiments/rtp-hdrext/playout-delay
+// a=extmap:6 http://www.webrtc.org/experiments/rtp-hdrext/video-content-type
+// a=extmap:7 http://www.webrtc.org/experiments/rtp-hdrext/video-timing
+// a=extmap:8 http://www.webrtc.org/experiments/rtp-hdrext/color-space
+// a=extmap:9 urn:ietf:params:rtp-hdrext:sdes:mid
+// a=extmap:10 urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id
+// a=extmap:11 urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id
+// a=extmap:12 https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension
+// a=extmap:14 http://www.webrtc.org/experiments/rtp-hdrext/video-layers-allocation00
+// a=sendonly
+// a=msid:e1c6c32a-0d3d-4c1f-b8e3-38fc1382e07a e29c78af-7d82-48f1-b1ad-c08c427c7a74
+// a=rtcp-mux
+// a=rtcp-rsize
+// a=rtpmap:96 VP8/90000
+// a=rtcp-fb:96 goog-remb
+// a=rtcp-fb:96 transport-cc
+// a=rtcp-fb:96 ccm fir
+// a=rtcp-fb:96 nack
+// a=rtcp-fb:96 nack pli
+// a=rtpmap:97 rtx/90000
+// a=fmtp:97 apt=96
+// a=rtpmap:102 H264/90000
+// a=rtcp-fb:102 goog-remb
+// a=rtcp-fb:102 transport-cc
+// a=rtcp-fb:102 ccm fir
+// a=rtcp-fb:102 nack
+// a=rtcp-fb:102 nack pli
+// a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f
+// a=rtpmap:103 rtx/90000
+// a=fmtp:103 apt=102
+// a=rtpmap:104 H264/90000
+// a=rtcp-fb:104 goog-remb
+// a=rtcp-fb:104 transport-cc
+// a=rtcp-fb:104 ccm fir
+// a=rtcp-fb:104 nack
+// a=rtcp-fb:104 nack pli
+// a=fmtp:104 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f
+// a=rtpmap:105 rtx/90000
+// a=fmtp:105 apt=104
+// a=rtpmap:106 H264/90000
+// a=rtcp-fb:106 goog-remb
+// a=rtcp-fb:106 transport-cc
+// a=rtcp-fb:106 ccm fir
+// a=rtcp-fb:106 nack
+// a=rtcp-fb:106 nack pli
+// a=fmtp:106 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
+// a=rtpmap:107 rtx/90000
+// a=fmtp:107 apt=106
+// a=rtpmap:108 H264/90000
+// a=rtcp-fb:108 goog-remb
+// a=rtcp-fb:108 transport-cc
+// a=rtcp-fb:108 ccm fir
+// a=rtcp-fb:108 nack
+// a=rtcp-fb:108 nack pli
+// a=fmtp:108 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f
+// a=rtpmap:109 rtx/90000
+// a=fmtp:109 apt=108
+// a=rtpmap:127 H264/90000
+// a=rtcp-fb:127 goog-remb
+// a=rtcp-fb:127 transport-cc
+// a=rtcp-fb:127 ccm fir
+// a=rtcp-fb:127 nack
+// a=rtcp-fb:127 nack pli
+// a=fmtp:127 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f
+// a=rtpmap:125 rtx/90000
+// a=fmtp:125 apt=127
+// a=rtpmap:39 H264/90000
+// a=rtcp-fb:39 goog-remb
+// a=rtcp-fb:39 transport-cc
+// a=rtcp-fb:39 ccm fir
+// a=rtcp-fb:39 nack
+// a=rtcp-fb:39 nack pli
+// a=fmtp:39 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=4d001f
+// a=rtpmap:40 rtx/90000
+// a=fmtp:40 apt=39
+// a=rtpmap:45 AV1/90000
+// a=rtcp-fb:45 goog-remb
+// a=rtcp-fb:45 transport-cc
+// a=rtcp-fb:45 ccm fir
+// a=rtcp-fb:45 nack
+// a=rtcp-fb:45 nack pli
+// a=fmtp:45 level-idx=5;profile=0;tier=0
+// a=rtpmap:46 rtx/90000
+// a=fmtp:46 apt=45
+// a=rtpmap:98 VP9/90000
+// a=rtcp-fb:98 goog-remb
+// a=rtcp-fb:98 transport-cc
+// a=rtcp-fb:98 ccm fir
+// a=rtcp-fb:98 nack
+// a=rtcp-fb:98 nack pli
+// a=fmtp:98 profile-id=0
+// a=rtpmap:99 rtx/90000
+// a=fmtp:99 apt=98
+// a=rtpmap:100 VP9/90000
+// a=rtcp-fb:100 goog-remb
+// a=rtcp-fb:100 transport-cc
+// a=rtcp-fb:100 ccm fir
+// a=rtcp-fb:100 nack
+// a=rtcp-fb:100 nack pli
+// a=fmtp:100 profile-id=2
+// a=rtpmap:101 rtx/90000
+// a=fmtp:101 apt=100
+// a=rtpmap:112 H264/90000
+// a=rtcp-fb:112 goog-remb
+// a=rtcp-fb:112 transport-cc
+// a=rtcp-fb:112 ccm fir
+// a=rtcp-fb:112 nack
+// a=rtcp-fb:112 nack pli
+// a=fmtp:112 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=64001f
+// a=rtpmap:113 rtx/90000
+// a=fmtp:113 apt=112
+// a=rtpmap:116 red/90000
+// a=rtpmap:117 rtx/90000
+// a=fmtp:117 apt=116
+// a=rtpmap:118 ulpfec/90000
+// a=rid:h send
+// a=rid:m send
+// a=rid:l send
+// a=simulcast:send h;m;l
 // m=application 9 UDP/DTLS/SCTP webrtc-datachannel
 // c=IN IP4 0.0.0.0
-// b=AS:30
-// a=ice-ufrag:5xf5
-// a=ice-pwd:RaGh41Km50SazV5xD4cU0KNL
+// a=ice-ufrag:4mR1
+// a=ice-pwd:d7Ou6mHlq1enMEWs0v0VAYov
 // a=ice-options:trickle
-// a=fingerprint:sha-256 82:1E:F4:77:79:BF:31:AC:90:F6:0C:91:FB:FE:C5:0A:39:47:63:2E:18:A4:0F:36:7C:53:7A:D2:B8:91:42:A3
-// a=setup:active
-// a=mid:0
+// a=fingerprint:sha-256 F5:CE:1E:60:EC:B1:A4:29:DC:C4:2A:53:A4:DA:A0:9F:A3:3B:6D:11:FE:8C:7F:48:5F:03:AD:1A:7B:76:69:67
+// a=setup:actpass
+// a=mid:1
 // a=sctp-port:5000
 // a=max-message-size:262144
 // "
@@ -115,20 +246,17 @@ namespace webrtc {
     ~SDP() {}
   public:
     // connection is not const reference because it might be configured with SDP
-    bool Answer(ConnectionFactory::Connection &c, const SDP &client_sdp, std::string &answer) const;
+    bool Answer(ConnectionFactory::Connection &c, std::string &answer) const;
     static int Offer(const ConnectionFactory::Connection &c, 
       const std::string &ufrag, const std::string &pwd, std::string &offer);
   public:
     std::vector<Candidate> Candidates() const;
     bool FindMediaSection(const std::string &type, json &j) const;
   protected:
-    bool GetRemoteFingerPrint(const json::const_iterator &it, std::string &answer, DtlsTransport::Fingerprint &ret) const;
+    bool GetRemoteFingerPrint(const json &section, std::string &answer, DtlsTransport::Fingerprint &ret) const;
     bool AnswerMediaSection(
       const json &section, const std::string &proto, const ConnectionFactory::Connection &c,
       std::string &answer, std::string &mid) const;
-    bool AnswerAs(
-      const std::string &proto, const SDP &client_sdp, const ConnectionFactory::Connection &c,
-      std::string &answer) const;
     uint32_t AssignPriority(uint32_t component_id) const;
   };
 } // namespace webrtc

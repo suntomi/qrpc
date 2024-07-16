@@ -27,17 +27,15 @@ namespace base {
     HttpFSM::state
     HttpFSM::append(const char *b, int bl)
     {
-        //  TRACE("append %u byte <%s>\n", bl, b);
         state s = get_state();
         const char *w = b;
-        uint32_t limit = (m_max - 1);
         while (s != state_error && s != state_recv_finish) {
-            if (m_len >= limit) {
+            if (m_len >= m_max) {
     #if defined(EXPAND_BUFFER)
                 //try expand buffer
                 char *org = m_p;
-                m_p = (char *)realloc(m_p, limit * 2);
-                m_max = limit * 2;
+                m_p = (char *)realloc(m_p, m_max * 2);
+                m_max = m_max * 2;
                 m_buf = m_p + (m_buf - org);
                 for (int i = 0; i < m_ctx.n_hd; i++) {
                     m_ctx.hd[i] = m_p + (m_ctx.hd[i] - org);
@@ -51,6 +49,7 @@ namespace base {
                 break;
     #endif
             }
+            ASSERT(m_len < m_max);
             m_p[m_len++] = *w++;
             m_p[m_len] = '\0';
     #if defined(_DEBUG)

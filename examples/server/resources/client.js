@@ -3,42 +3,45 @@ class QRPCMedia {
     this.label = label;
     this.stream = stream;
     this.tracks = {};
-    if (this.encoding) {
+    if (encodings) {
       this.encodings = encodings;
-      for (const e of encodings) {
-        e.rid = `${e.rid}@${label}`
-      }
       const vtracks = stream.getVideoTracks();
       if (vtracks.length > 0) {
+        console.log("stream has", vtracks.length, "video tracks");
         this.addTrack("video", vtracks[0]);
+      } else {
+        console.log("no video track in stream");
       }
       const atracks = stream.getAudioTracks();
       if (atracks.length > 0) { 
+        console.log("stream has", atracks.length, "audio tracks");
         this.addTrack("audio", atracks[0]);
+      } else {
+        console.log("no audio track in stream");
       }
     }
   }
   // c: QRPClient
   open(c, h) {
     if (this.tracks.video) {
-      c.pc.addTrancsceiver(
+      c.pc.addTransceiver(
         this.tracks.video,
         {direction: 'sendonly', sendEncodings: this.encodings, streams: [this.stream]}
       );
       const r = h.onopen(this, this.tracks.video);
       if (r === false || r === null) {
-        console.log(`close video by application ${label}`);
+        console.log(`close video by application ${this.label}`);
         return false;
       }  
     }
     if (this.tracks.audio) {
-      c.pc.addTrancsceiver(
+      c.pc.addTransceiver(
         this.tracks.audio,
         {direction: 'sendonly', streams: [this.stream]}
       );
       const r = h.onopen(this, this.tracks.audio);
       if (r === false || r === null) {
-        console.log(`close audio by application ${label}`);
+        console.log(`close audio by application ${this.label}`);
         return false;
       }
     }
@@ -57,13 +60,18 @@ class QRPClient {
   static SYSCALL_STREAM = "$syscall";
   constructor(url) {
     this.url = url;
+    this.ridSeed = 0;
     this.streams = {};
     this.medias = {};
     this.hdmap = {};
     this.mdmap = {};
+    this.ridLabelMap = {}; // rid -> label
     this.sdpOfferMap = {}; // sdpGen -> sdp offer
     this.sdpGen = -1;
-    this.labelToId = (label, isMedia) => label;
+    this.handlerResolver = (c, label, isMedia) => {
+      const handler_id = label.indexOf("?") > 0 ? label.split("?")[0] : label;
+      return isMedia ? c.mdmap[handler_id] : c.hdmap[handler_id];
+    }
     this.handle(QRPClient.SYSCALL_STREAM, {
       onmessage: async (s, event) => {
         const data = JSON.parse(event.data);
@@ -73,6 +81,7 @@ class QRPClient {
         } else if (data.fn === "nego") {
           // our library basically exchange media stream via QRPC server
           // at least, we will have to implement WHIP endpoint of QRPC server for first exchanging SDP between peers.
+          this.ridLabelMap = data.args.ridLabelMap;
           console.log("should not receive nego from server or other peer");
           await this.pc.setRemoteDescription({type:"offer",sdp:data.args.sdp});
           const answer = await this.pc.createAnswer();
@@ -96,13 +105,14 @@ class QRPClient {
             console.log(`invalid sdp ${offer.sdp}: ${data.args.error}`);
             return;
           } else {
+            console.log("answer sdp", data.args.sdp)
             await this.#setupSdp(offer, data.args.sdp);
           }
         }
       }
     });
   }
-  init() {
+  initIce() {
     //Ice properties
     this.iceUsername = null;
     this.icePassword = null;
@@ -120,7 +130,7 @@ class QRPClient {
     const pc = new RTCPeerConnection(); 
     //Store pc object and token
     this.pc = pc;
-    this.init();
+    this.initIce();
 
     //Listen for data channels
     pc.ondatachannel = (event) => {            
@@ -144,17 +154,15 @@ class QRPClient {
         return;
       }
       const rid = parameters.encodings[0].rid;
-      const parsed = rid.split("@");
-      if (parsed.length < 2) {
-        console.log("invalid rid format");
+      const label = this.ridLabelMap[rid];
+      if (!label) {
+        console.log(`No handler is defined for label = ${label} (${rid})`);
         event.track.stop();
         return;
       }
-      const label = parsed[1];
-      const id = this.labelToId(label, true);
-      const h = this.mdmap[id];
+      const h = this.handlerResolver(this, label, true);
       if (!h) {
-        console.log(`No handler is defined for label = ${label} (${id})`);
+        console.log(`No handler is defined for label = ${label} (${rid})`);
         event.track.stop();
         return;
       }
@@ -229,12 +237,12 @@ class QRPClient {
       "Content-Type": "application/sdp"
     };
 
-    console.log("sdp", offer.sdp);
+    console.log("offer sdp", offer.sdp);
 
     //Do the post request to the WHIP endpoint with the SDP offer
     const fetched = await fetch(this.url, {
       method: "POST",
-      body: offer.sdp,
+      body: JSON.stringify({sdp:offer.sdp,ridLabelMap:this.ridLabelMap}),
       headers
     });
 
@@ -244,7 +252,7 @@ class QRPClient {
     //Get the SDP answer
     const answer = await fetched.text();
 
-    console.log("whip answer", answer)
+    console.log("answer sdp", answer)
 
     await this.#setupSdp(offer, answer);
 
@@ -301,27 +309,38 @@ class QRPClient {
     this.sdpGen++;
     const offer = await this.pc.createOffer();
     this.sdpOfferMap[this.sdpGen] = offer;
-    this.syscall("nego", {label,sdp:offer.sdp,gen:this.sdpGen});
+    console.log("offer sdp", offer.sdp);
+    this.syscall("nego", {label,sdp:offer.sdp,gen:this.sdpGen,ridLabelMap:this.ridLabelMap});
   }
-  handleMedia(handler_id, callbacks) {
-    if (this.mdmap[handler_id]) {
-      console.log(`worker already run for ${handler_id}`);
+  handleMedia(handler_name, callbacks) {
+    if (this.mdmap[handler_name]) {
+      console.log(`worker already run for ${handler_name}`);
       return;
     }
-    if (this.mdmap[handler_id]) {
-      Object.assign(this.mdmap[handler_id], callbacks);
+    if (this.mdmap[handler_name]) {
+      Object.assign(this.mdmap[handler_name], callbacks);
       return;
     }
-    this.mdmap[handler_id] = callbacks;
+    this.mdmap[handler_name] = callbacks;
   }
   async openMedia(label, stream, encoding) {
     if (this.medias[label]) {
       return this.medias[label];
     }
+    if (!encoding) {
+      throw new Error("encoding is mandatory");
+    }
+    this.ridSeed++;
+    for (const e of encoding) {
+      if (!e.rid) {
+        throw new Error("encoding.rid is mandatory");
+      }
+      e.rid = `${e.rid}${this.ridSeed}`;
+      this.ridLabelMap[e.rid] = label;
+    }
     const m = new QRPCMedia(label, stream, encoding);
     this.medias[label] = m;
-    const id = this.labelToId(label);
-    const h = this.mdmap[id];
+    const h = this.handlerResolver(this, label, true);
     if (!h) {
       throw new Error(`no handler for label ${label} (${id})`);
     }
@@ -338,32 +357,30 @@ class QRPClient {
       console.log("No media for label " + label);
       return;
     }
-    const id = this.labelToId(label);
-    const h = this.mdmap[id];
+    const h = this.handlerResolver(this, label, true);
     if (h && h.onclose) {
       h.onclose(m);
     }
     m.close();
     this.medias[label] = null;
   }
-  handle(handler_id, callbacks) {
+  handle(handler_name, callbacks) {
     if (typeof callbacks.onmessage !== "function") {
-      throw new Error("onmessage is mandatory and should be function");
+      throw new Error("callbacks.onmessage is mandatory and should be function");
     }
-    if (this.hdmap[handler_id]) {
-      Object.assign(this.hdmap[handler_id], callbacks);
+    if (this.hdmap[handler_name]) {
+      Object.assign(this.hdmap[handler_name], callbacks);
       return;
     }
-    this.hdmap[handler_id] = callbacks;
+    this.hdmap[handler_name] = callbacks;
   }
   openStream(label) {
     if (this.streams[label]) {
       return this.streams[label];
     }
-    const id = this.labelToId(label);
-    const h = this.hdmap[id];
+    const h = this.handlerResolver(this, label);
     if (!h) {
-      console.log(`No stream callbacks for id ${id}`);
+      console.log(`No stream callbacks for id ${label}`);
       return null;
     }
     const s = this.pc.createDataChannel(label);
