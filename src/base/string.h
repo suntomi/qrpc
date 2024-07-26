@@ -21,6 +21,18 @@ namespace str {
     snprintf(buff, sizeof(buff), "%p", p);
     return buff;
   }
+  static std::vector<std::string> Split(const std::string &s, const std::string &delim) {
+    std::vector<std::string> v;
+    size_t start = 0;
+    size_t end = s.find(delim);
+    while (end != std::string::npos) {
+      v.push_back(s.substr(start, end - start));
+      start = end + delim.length();
+      end = s.find(delim, start);
+    }
+    v.push_back(s.substr(start, end));
+    return v;
+  }
   static size_t Vprintf(char *buff, qrpc_size_t sz, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);

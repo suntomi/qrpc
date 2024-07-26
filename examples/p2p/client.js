@@ -98,6 +98,12 @@ function startServerConnection(localId, remoteId) {
 	}, 30000);
 }
 
+const simulcastEncodings = [
+  { rid: 'high', maxBitrate: 1500000 },
+  { rid: 'medium', maxBitrate: 800000, scaleResolutionDownBy: 2 },
+  { rid: 'low', maxBitrate: 200000, scaleResolutionDownBy: 4 }
+];
+
 function startPeerConnection(sdpType) {
 	stopPeerConnection();
 	queue = new Array();
@@ -110,14 +116,38 @@ function startPeerConnection(sdpType) {
 	};
 	if (window.stream) {
 		// Local側のストリームを設定
-		window.stream.getTracks().forEach(track => pc.addTrack(track, window.stream));
+    window.stream.getTracks().forEach(track => pc.addTrack(track, window.stream));
+    // window.stream.getTracks().forEach(track => {
+    //   if (track.kind === "audio") {
+    //     pc.addTransceiver(track, {
+    //       direction: 'sendonly'
+    //     });
+    //   } else if (track.kind === "video") {
+    //     pc.addTransceiver(track, {
+    //       direction: 'sendonly',
+    //       streams: [window.stream],
+    //       sendEncodings: simulcastEncodings
+    //     });
+    //   } else {
+    //     throw new Error(`invalid track kind: ${track.kind}`);
+    //   }
+    // });
+		// window.stream.getVideoTracks().forEach(track => pc.addTransceiver(track, {
+    //   direction: 'sendrecv',
+    //   streams: [window.stream],
+    //   sendEncodings: simulcastEncodings
+    // }));
+		// window.stream.getAudioTracks().forEach(track => pc.addTransceiver(track, {
+    //   direction: 'sendonly'
+    // }));
 	}
 	pc.ontrack = function(event) {
+    console.log("event", event);
 		// Remote側のストリームを設定
 		if (event.streams && event.streams[0]) {
 			remoteVideo.srcObject = event.streams[0];
 		} else {
-			remoteVideo.srcObject = new MediaStream(event.track);
+			// remoteVideo.srcObject = new MediaStream([event.track]);
 		}
 	};
 	if (sdpType === 'offer') {

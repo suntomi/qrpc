@@ -147,13 +147,24 @@ class QRPClient {
 
     //Listen addition of media tracks
     pc.ontrack = (event) => {
+      console.log(event.track);
+      pc.getStats(event.track).then(stats => {
+        console.log('stats', stats);
+        stats.forEach(report => {
+          if (report.kind === 'video') {
+            stats.forEach(report => console.log("track stats", report));
+          }
+        });
+      }).catch(error => {
+        console.error('Error getting stats:', error);
+      });      
       const params = event.receiver.getParameters();
-      if (!parameters.encodings || parameters.encodings.length <= 0) {
-        console.log("no encodings in track");
+      if (!params.encodings || params.encodings.length <= 0) {
+        console.log("no encodings in track", params);
         event.track.stop();
         return;
       }
-      const rid = parameters.encodings[0].rid;
+      const rid = params.encodings[0].rid;
       const label = this.ridLabelMap[rid];
       if (!label) {
         console.log(`No handler is defined for label = ${label} (${rid})`);

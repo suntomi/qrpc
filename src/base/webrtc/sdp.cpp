@@ -166,6 +166,55 @@ a=max-message-size:%u
       return false; \
     }
 
+  struct RtpMap {
+    std::string codec;
+    bool used;
+    std::string sdpline;
+  };
+
+  static std::vector<std::string> resilient_codecs = {
+    "rtx", // retransmission
+    "red", // Redundant encoding Data
+    "ulpfec", // Uneven Level Protection Forward Error Correction
+  };
+
+  static std::string SelectRtpmap(std::map<std::string, RtpMap> &rtpmaps) {
+    // earlier entry is high priority. TODO: decide best order
+    static std::vector<std::string> priority = {"VP9", "VP8", "H264"};
+    size_t candidate_index = -1;
+    std::string current_candidate;
+    for (auto &kv : rtpmaps) {
+      if (kv.second.used) {
+        // already used
+        continue;
+      }
+      auto it = std::find(priority.begin(), priority.end(), kv.second.codec);
+      if (it == priority.end()) {
+        auto sit = std::find(resilient_codecs.begin(), resilient_codecs.end(), kv.second.codec);
+        if (sit == resilient_codecs.end()) {
+          // unsupported codec
+          QRPC_LOGJ(warn, {{"ev","unsupported codec"},{"codec",kv.second.codec}});
+          ASSERT(false);
+        }
+        continue;
+      }
+      auto index = std::distance(priority.begin(), it);             
+      if (candidate_index < 0) {
+        candidate_index = index;
+        current_candidate = kv.first;
+      } else if (index < candidate_index) {
+        candidate_index = index;
+        current_candidate = kv.first;
+      }
+      if (candidate_index == 0) {
+        rtpmaps[current_candidate].used = true;
+        return current_candidate;
+      }
+    }
+    rtpmaps[current_candidate].used = true;
+    return current_candidate;
+  }
+
   bool SDP::AnswerMediaSection(
     const json &section, const std::string &proto,
     const ConnectionFactory::Connection &c,
@@ -226,6 +275,25 @@ a=max-message-size:%u)cands",
           uit->get<std::string>().c_str()
         );
       }
+      // parse fmtp
+      std::map<uint64_t, std::string> fmtpmap;
+      std::map<uint64_t, uint64_t> rtxmap; // rtx pt => target codec stream pt
+      auto fmtpit = section.find("fmtp");
+      if (fmtpit != section.end()) {
+        for (auto it = fmtpit->begin(); it != fmtpit->end(); it++) {
+          FIND_OR_RAISE(cit, it, "config");
+          FIND_OR_RAISE(plit, it, "payload");
+          auto config = cit->get<std::string>();
+          auto pt = plit->get<uint64_t>();
+          fmtpmap[pt] = config;
+          if (config.find("apt=") == 0) {
+            auto apt = std::stoul(config.substr(4));
+            rtxmap[pt] = apt;
+          }
+        }
+      }
+      // parse rtpmaps
+      std::map<std::string, RtpMap> rtpmaps;
       auto rtpmit = section.find("rtp");
       if (rtpmit == section.end()) {
         answer = "rtpmap: no value for key 'rtp'";
@@ -233,27 +301,33 @@ a=max-message-size:%u)cands",
         return false;
       } else {
         for (auto it = rtpmit->begin(); it != rtpmit->end(); it++) {
-          auto plit = it->find("payload");
-          if (plit == it->end()) {
+          auto ptit = it->find("payload");
+          if (ptit == it->end()) {
             answer = "rtpmap: no value for key 'payload'";
             ASSERT(false);
             return false;
           }
-          auto pl = plit->get<uint64_t>();
-          payloads += (" " + std::to_string(pl));
+          auto pt = ptit->get<uint64_t>();
+          auto ptstr = std::to_string(pt);
           auto cit = it->find("codec");
           if (cit == it->end()) {
             answer = "rtpmap: no value for key 'codec'";
             ASSERT(false);
             return false;
           }
+          auto codec = cit->get<std::string>();
           static std::vector<std::string> supported_codecs = {
-            "opus", "H264", "VP8", "VP9"
+            "opus", "H264", "VP8", "VP9",
           };
-          auto fit = std::find(supported_codecs.begin(), supported_codecs.end(), cit->get<std::string>());
+          auto fit = std::find(supported_codecs.begin(), supported_codecs.end(), codec);
           if (fit == supported_codecs.end()) {
-            continue;
+            auto fit2 = std::find(resilient_codecs.begin(), resilient_codecs.end(), codec);
+            if (fit2 == resilient_codecs.end()) {
+              // really unsupported
+              continue;
+            }
           }
+          payloads += (" " + ptstr);
           auto rateit = it->find("rate");
           if (rateit == it->end()) {
             answer = "rtpmap: no value for key 'rate'";
@@ -261,35 +335,50 @@ a=max-message-size:%u)cands",
             return false;
           }
           auto encit = it->find("encoding");
+          std::string sdpline;
           if (encit != it->end()) {
-            rtpmap += str::Format(
+            sdpline = str::Format(
               "\na=rtpmap:%llu %s/%llu/%s",
-              pl,
+              pt,
               cit->get<std::string>().c_str(),
               rateit->get<uint64_t>(),
               encit->get<std::string>().c_str()
             );
           } else {
-            rtpmap += str::Format(
-              "\na=rtpmap:%u %s/%llu",
-              pl,
+            sdpline = str::Format(
+              "\na=rtpmap:%llu %s/%llu",
+              pt,
               cit->get<std::string>().c_str(),
               rateit->get<uint64_t>()
             );
           }
+          rtpmaps[ptstr] = {codec, false, sdpline};
         }
       }
-      auto fmtpit = section.find("fmtp");
-      if (fmtpit != section.end()) {
-        for (auto it = fmtpit->begin(); it != fmtpit->end(); it++) {
-          FIND_OR_RAISE(cit, it, "config");
-          FIND_OR_RAISE(plit, it, "payload");
-          rtpmap += str::Format(
-            "\na=fmtp:%llu %s",
-            plit->get<uint64_t>(),
-            cit->get<std::string>().c_str()
-          );
+      for (auto &kv : rtpmaps) {
+        if (kv.second.codec == "rtx") {
+          auto rtxit = rtxmap.find(std::stoul(kv.first));
+          if (rtxit != rtxmap.end()) {
+            if (rtpmaps.find(std::to_string(rtxit->second)) == rtpmaps.end()) {
+              QRPC_LOGJ(info, {{"ev", "rtpmap: rtx target stream filtered"}, {"target", rtxit->second}, {"rtx", kv.first}});
+              continue;
+            }
+          }
         }
+        rtpmap += kv.second.sdpline;
+      }
+      for (auto &kv : fmtpmap) {
+        if (rtpmaps.find(std::to_string(kv.first)) == rtpmaps.end()) {
+          continue;
+        }
+        auto rtxit = rtxmap.find(kv.first);
+        if (rtxit != rtxmap.end()) {
+          if (rtpmaps.find(std::to_string(rtxit->second)) == rtpmaps.end()) {
+            QRPC_LOGJ(info, {{"ev", "fmtp: rtx target stream filtered"},{"target", rtxit->second},{"rtx", kv.first}});
+            continue;
+          }
+        }
+        rtpmap += str::Format("\na=fmtp:%llu %s", kv.first, kv.second.c_str());
       }
       auto rtcpfbit = section.find("rtcpFb");
       if (rtcpfbit != section.end()) {
@@ -303,6 +392,18 @@ a=max-message-size:%u)cands",
             ASSERT(false);
             return false;
           }
+          auto pl = plit->get<std::string>();
+          if (rtpmaps.find(pl) == rtpmaps.end()) {
+            continue;
+          } else {
+            auto rtxit = rtxmap.find(std::stoul(pl));
+            if (rtxit != rtxmap.end()) {
+              if (rtpmaps.find(std::to_string(rtxit->second)) == rtpmaps.end()) {
+                QRPC_LOGJ(info, {{"ev", "rtcp-fb: rtx target stream filtered"},{"target", rtxit->second},{"rtx", pl}});
+                continue;
+              }
+            }
+          }
           auto tit = it->find("type");
           if (tit == it->end()) {
             answer = "rtcp-fb: no value for key 'type'";
@@ -313,13 +414,13 @@ a=max-message-size:%u)cands",
           if (stit == it->end()) {
             rtpmap += str::Format(
               "\na=rtcp-fb:%s %s",
-              plit->get<std::string>().c_str(),
+              pl.c_str(),
               tit->get<std::string>().c_str()
             );
           } else {
             rtpmap += str::Format(
               "\na=rtcp-fb:%s %s %s",
-              plit->get<std::string>().c_str(),
+              pl.c_str(),
               tit->get<std::string>().c_str(),
               stit->get<std::string>().c_str()
             );
@@ -330,6 +431,28 @@ a=max-message-size:%u)cands",
       if (scit != section.end()) {
         FIND_OR_RAISE(dit, scit, "dir1");
         FIND_OR_RAISE(lit, scit, "list1");
+        auto dir1 = dit->get<std::string>();
+        for (auto s : str::Split(lit->get<std::string>(), ";")) {
+          if (dir1 == "send") {
+            auto pt = SelectRtpmap(rtpmaps);
+            rtpmap += str::Format("\na=rid:%s recv pt=%s", s.c_str(), pt.c_str());
+          } else {
+            rtpmap += str::Format("\na=rid:%s send", s.c_str());
+          }
+        }
+        auto d2it = scit->find("dir2");
+        if (d2it != scit->end()) {
+          FIND_OR_RAISE(l2it, scit, "list2");
+          auto dir2 = d2it->get<std::string>();
+          for (auto s : str::Split(l2it->get<std::string>(), ";")) {
+            if (dir2 == "send") {
+              auto pt = SelectRtpmap(rtpmaps);
+              rtpmap += str::Format("\na=rid:%s recv pt=%s", s.c_str(), pt.c_str());
+            } else {
+              rtpmap += str::Format("\na=rid:%s send", s.c_str());
+            }
+          }
+        }
         rtpmap += str::Format(
           "\na=simulcast:%s rid=%s",
           dit->get<std::string>() == "send" ? "recv" : "send",
@@ -382,6 +505,28 @@ a=setup:active
     auto bundle = std::string("a=group:BUNDLE");
     json dsec, asec, vsec;
     std::string mid, media_sections, section_answer, proto;
+    if (FindMediaSection("audio", asec)) {
+      if (AnswerMediaSection(asec, proto, c, section_answer, mid)) {
+        media_sections += section_answer;
+        bundle += str::Format(" %s", mid.c_str());
+      } else {
+        answer = section_answer;
+        QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
+        ASSERT(false);
+        return false;
+      }
+    }
+    if (FindMediaSection("video", vsec)) {
+      if (AnswerMediaSection(vsec, proto, c, section_answer, mid)) {
+        media_sections += section_answer;
+        bundle += str::Format(" %s", mid.c_str());
+      } else {
+        answer = section_answer;
+        QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
+        ASSERT(false);
+        return false;
+      }
+    }
     if (FindMediaSection("application", dsec)) {
       // find protocol from SCTP backed transport
       auto protoit = dsec.find("protocol");
@@ -414,28 +559,6 @@ a=setup:active
       } else {
         QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
         answer = section_answer;
-        ASSERT(false);
-        return false;
-      }
-    }
-    if (FindMediaSection("audio", asec)) {
-      if (AnswerMediaSection(asec, proto, c, section_answer, mid)) {
-        media_sections += section_answer;
-        bundle += str::Format(" %s", mid.c_str());
-      } else {
-        answer = section_answer;
-        QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
-        ASSERT(false);
-        return false;
-      }
-    }
-    if (FindMediaSection("video", vsec)) {
-      if (AnswerMediaSection(vsec, proto, c, section_answer, mid)) {
-        media_sections += section_answer;
-        bundle += str::Format(" %s", mid.c_str());
-      } else {
-        answer = section_answer;
-        QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
         ASSERT(false);
         return false;
       }

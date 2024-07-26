@@ -26,8 +26,13 @@ const socketProc = function(ws, req) {
 			connections.push({local: json.open.local, remote: json.open.remote, ws: ws});
 			connections.some(data => {
 				if (data.local === json.open.remote && data.ws.readyState === WebSocket.OPEN) {
+          console.log("start connection between", json.open.local, json.open.remote);
 					// 両方が接続済の場合にstartを通知
+          // localがこのメッセージを送ってきたクライアント、remoteが接続したいクライアント
+          // data.local == remoteより、data.wsは接続したいクライアント
+          // 接続したいクライアント(先に開いたほう)はanwserモードで動作
 					data.ws.send(JSON.stringify({start: 'answer'}));
+          // コマンドを送ってきたクライアント(後の方)はofferモードで動作
 					ws.send(JSON.stringify({start: 'offer'}));
 					return true;
 				}
