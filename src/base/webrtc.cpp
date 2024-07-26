@@ -257,9 +257,9 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
         return QRPC_OK;
       }
-      const auto rlmit = args.find("ridLabelMap");
+      const auto rlmit = args.find("trackIdLabelMap");
       if (rlmit != args.end()) {
-        c.rid_label_map_ = rlmit->second.get<std::map<std::string,std::string>>();
+        c.trackid_label_map_ = rlmit->second.get<std::map<std::string,std::string>>();
         QRPC_LOGJ(info, {{"ev","new rid label map"},{"map",*rlmit}});
       }
       const auto &sdp_text = sit->second.get<std::string>();

@@ -221,7 +221,7 @@ namespace webrtc {
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       std::shared_ptr<SyscallStream> syscall_;
       std::map<Media::Id, std::shared_ptr<Media>> medias_;
-      std::map<Media::Id, std::string> rid_label_map_;
+      std::map<Media::Id, std::string> trackid_label_map_;
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_;
       bool sctp_connected_, closed_;

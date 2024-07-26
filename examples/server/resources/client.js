@@ -22,30 +22,19 @@ class QRPCMedia {
     }
   }
   // c: QRPClient
-  open(c, h) {
+  open(c) {
     if (this.tracks.video) {
       c.pc.addTransceiver(
         this.tracks.video,
         {direction: 'sendonly', sendEncodings: this.encodings, streams: [this.stream]}
       );
-      const r = h.onopen(this, this.tracks.video);
-      if (r === false || r === null) {
-        console.log(`close video by application ${this.label}`);
-        return false;
-      }  
     }
     if (this.tracks.audio) {
       c.pc.addTransceiver(
         this.tracks.audio,
         {direction: 'sendonly', streams: [this.stream]}
       );
-      const r = h.onopen(this, this.tracks.audio);
-      if (r === false || r === null) {
-        console.log(`close audio by application ${this.label}`);
-        return false;
-      }
     }
-    return true;
   }
   close() {
     for (const k in this.tracks) {
@@ -53,19 +42,20 @@ class QRPCMedia {
     }
   }
   addTrack(name, t) {
-    this.tracks[name] = t;
+    if (!this.tracks[name]) {
+      this.tracks[name] = t;
+    }
   }
 }
 class QRPClient {
   static SYSCALL_STREAM = "$syscall";
   constructor(url) {
     this.url = url;
-    this.ridSeed = 0;
     this.streams = {};
     this.medias = {};
     this.hdmap = {};
     this.mdmap = {};
-    this.ridLabelMap = {}; // rid -> label
+    this.trackIdLabelMap = {}; // trackId -> labelf
     this.sdpOfferMap = {}; // sdpGen -> sdp offer
     this.sdpGen = -1;
     this.handlerResolver = (c, label, isMedia) => {
@@ -81,7 +71,7 @@ class QRPClient {
         } else if (data.fn === "nego") {
           // our library basically exchange media stream via QRPC server
           // at least, we will have to implement WHIP endpoint of QRPC server for first exchanging SDP between peers.
-          this.ridLabelMap = data.args.ridLabelMap;
+          this.trackIdLabelMap = data.args.trackIdLabelMap;
           console.log("should not receive nego from server or other peer");
           await this.pc.setRemoteDescription({type:"offer",sdp:data.args.sdp});
           const answer = await this.pc.createAnswer();
@@ -147,41 +137,31 @@ class QRPClient {
 
     //Listen addition of media tracks
     pc.ontrack = (event) => {
-      console.log(event.track);
-      pc.getStats(event.track).then(stats => {
-        console.log('stats', stats);
-        stats.forEach(report => {
-          if (report.kind === 'video') {
-            stats.forEach(report => console.log("track stats", report));
-          }
-        });
-      }).catch(error => {
-        console.error('Error getting stats:', error);
-      });      
-      const params = event.receiver.getParameters();
-      if (!params.encodings || params.encodings.length <= 0) {
-        console.log("no encodings in track", params);
-        event.track.stop();
-        return;
-      }
-      const rid = params.encodings[0].rid;
-      const label = this.ridLabelMap[rid];
+      console.log("ontrack", event);
+      const t = event.track;
+      const tid = t.id;
+      let label = this.trackIdLabelMap[tid];
       if (!label) {
-        console.log(`No handler is defined for label = ${label} (${rid})`);
-        event.track.stop();
-        return;
+        // if local track, event.sender.track may be registered
+        if (event.transceiver) {
+          label = this.trackIdLabelMap[event.transceiver.sender.track.id];
+        }
+        if (!label) {
+          console.log(`No label is defined for tid =${tid}`);
+          event.track.stop();
+          return;
+        }
       }
       const h = this.handlerResolver(this, label, true);
       if (!h) {
-        console.log(`No handler is defined for label = ${label} (${rid})`);
+        console.log(`No handler is defined for label = ${label} (${tid})`);
         event.track.stop();
         return;
       }
-      const t = event.track;
-      let m = this.media[label];
+      let m = this.medias[label];
       if (!m) {
         m = new QRPCMedia(label, t.stream);
-        this.media[label] = m;
+        this.medias[label] = m;
       }
       m.addTrack(t.kind, t);
       const r = h.onopen(m, t);
@@ -253,7 +233,7 @@ class QRPClient {
     //Do the post request to the WHIP endpoint with the SDP offer
     const fetched = await fetch(this.url, {
       method: "POST",
-      body: JSON.stringify({sdp:offer.sdp,ridLabelMap:this.ridLabelMap}),
+      body: JSON.stringify({sdp:offer.sdp,trackIdLabelMap:this.trackIdLabelMap}),
       headers
     });
 
@@ -289,7 +269,7 @@ class QRPClient {
     if (this.onclose) {
       reconnectionWaitMS = this.onclose();
       if (!reconnectionWaitMS) {
-        reconnectionWaitMS = 0;
+        reconnectionWaitMS = 0; 
       } else {
         // nsec to msec
         reconnectionWaitMS = reconnectionWaitMS / 1000 / 1000;
@@ -312,7 +292,7 @@ class QRPClient {
       console.log("no reconnect. bye!");
     }
   }
-  async renegotiation(label) {
+  async renegotiation() {
     if (this.sdpGen < 0) {
       console.log("QRPClient yet initialized: wait for connect() calling");
       return;
@@ -321,7 +301,7 @@ class QRPClient {
     const offer = await this.pc.createOffer();
     this.sdpOfferMap[this.sdpGen] = offer;
     console.log("offer sdp", offer.sdp);
-    this.syscall("nego", {label,sdp:offer.sdp,gen:this.sdpGen,ridLabelMap:this.ridLabelMap});
+    this.syscall("nego", {sdp:offer.sdp,gen:this.sdpGen,trackIdLabelMap:this.trackIdLabelMap});
   }
   handleMedia(handler_name, callbacks) {
     if (this.mdmap[handler_name]) {
@@ -341,25 +321,11 @@ class QRPClient {
     if (!encoding) {
       throw new Error("encoding is mandatory");
     }
-    this.ridSeed++;
-    for (const e of encoding) {
-      if (!e.rid) {
-        throw new Error("encoding.rid is mandatory");
-      }
-      e.rid = `${e.rid}${this.ridSeed}`;
-      this.ridLabelMap[e.rid] = label;
-    }
+    stream.getTracks().forEach(t => this.trackIdLabelMap[t.id] = label);
     const m = new QRPCMedia(label, stream, encoding);
     this.medias[label] = m;
-    const h = this.handlerResolver(this, label, true);
-    if (!h) {
-      throw new Error(`no handler for label ${label} (${id})`);
-    }
-    if (m.open(this, h)) {
-      await this.renegotiation(label);
-    } else {
-      this.closeMedia(label); 
-    }
+    m.open(this);
+    await this.renegotiation();
     return m;
   }
   closeMedia(label) {
