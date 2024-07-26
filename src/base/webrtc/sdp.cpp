@@ -227,23 +227,8 @@ a=max-message-size:%u
       return false;
     }
     auto media_type = tit->get<std::string>();
-    std::string rtpmap, payloads, candidates;
+    std::string payloads, sdplines;
     if (media_type == "application") {
-      auto &l = c.factory().to<Listener>();
-      auto nwport = proto == "UDP" ? l.udp_port() : l.tcp_port();
-      size_t idx = 0;
-      for (auto &a : c.factory().config().ifaddrs) {
-        candidates += str::Format(
-          "a=candidate:0 %u %s %u %s %u typ host\n",
-          idx + 1, proto.c_str(), AssignPriority(idx), a.c_str(), nwport
-        );
-        idx++;
-      }
-      candidates += str::Format(R"cands(a=end-of-candidates
-a=sctp-port:5000
-a=max-message-size:%u)cands",
-        c.factory().config().send_buffer_size
-      );
       payloads = " webrtc-datachannel";
     } else {
       auto rtcpit = section.find("rtcp");
@@ -252,7 +237,7 @@ a=max-message-size:%u)cands",
         FIND_OR_RAISE(ipvit, rtcpit, "ipVer");
         FIND_OR_RAISE(ntit, rtcpit, "netType");
         FIND_OR_RAISE(portit, rtcpit, "port");
-        rtpmap += str::Format(
+        sdplines += str::Format(
           "a=rtcp:%llu %s IP%llu %s\na=rtcp-mux",
           portit->get<uint64_t>(),
           ntit->get<std::string>().c_str(),
@@ -269,7 +254,7 @@ a=max-message-size:%u)cands",
       for (auto it = extmit->begin(); it != extmit->end(); it++) {
         FIND_OR_RAISE(uit, it, "uri");
         FIND_OR_RAISE(vit, it, "value");
-        rtpmap += str::Format(
+        sdplines += str::Format(
           "\na=extmap:%llu %s",
           vit->get<uint64_t>(),
           uit->get<std::string>().c_str()
@@ -365,7 +350,7 @@ a=max-message-size:%u)cands",
             }
           }
         }
-        rtpmap += kv.second.sdpline;
+        sdplines += kv.second.sdpline;
       }
       for (auto &kv : fmtpmap) {
         if (rtpmaps.find(std::to_string(kv.first)) == rtpmaps.end()) {
@@ -378,13 +363,13 @@ a=max-message-size:%u)cands",
             continue;
           }
         }
-        rtpmap += str::Format("\na=fmtp:%llu %s", kv.first, kv.second.c_str());
+        sdplines += str::Format("\na=fmtp:%llu %s", kv.first, kv.second.c_str());
       }
       auto rtcpfbit = section.find("rtcpFb");
       if (rtcpfbit != section.end()) {
         // put \n to top of line because string from rtp element of SDP does not have \n at last of string.
         // and entire rtpmap string should not include \n at last of string. (see below str::Format call)
-        rtpmap += "\na=rtcp-rsize";
+        sdplines += "\na=rtcp-rsize";
         for (auto it = rtcpfbit->begin(); it != rtcpfbit->end(); it++) {
           auto plit = it->find("payload");
           if (plit == it->end()) {
@@ -412,13 +397,13 @@ a=max-message-size:%u)cands",
           }
           auto stit = it->find("subtype");
           if (stit == it->end()) {
-            rtpmap += str::Format(
+            sdplines += str::Format(
               "\na=rtcp-fb:%s %s",
               pl.c_str(),
               tit->get<std::string>().c_str()
             );
           } else {
-            rtpmap += str::Format(
+            sdplines += str::Format(
               "\na=rtcp-fb:%s %s %s",
               pl.c_str(),
               tit->get<std::string>().c_str(),
@@ -435,9 +420,9 @@ a=max-message-size:%u)cands",
         for (auto s : str::Split(lit->get<std::string>(), ";")) {
           if (dir1 == "send") {
             auto pt = SelectRtpmap(rtpmaps);
-            rtpmap += str::Format("\na=rid:%s recv pt=%s", s.c_str(), pt.c_str());
+            sdplines += str::Format("\na=rid:%s recv pt=%s", s.c_str(), pt.c_str());
           } else {
-            rtpmap += str::Format("\na=rid:%s send", s.c_str());
+            sdplines += str::Format("\na=rid:%s send", s.c_str());
           }
         }
         auto d2it = scit->find("dir2");
@@ -447,19 +432,36 @@ a=max-message-size:%u)cands",
           for (auto s : str::Split(l2it->get<std::string>(), ";")) {
             if (dir2 == "send") {
               auto pt = SelectRtpmap(rtpmaps);
-              rtpmap += str::Format("\na=rid:%s recv pt=%s", s.c_str(), pt.c_str());
+              sdplines += str::Format("\na=rid:%s recv pt=%s", s.c_str(), pt.c_str());
             } else {
-              rtpmap += str::Format("\na=rid:%s send", s.c_str());
+              sdplines += str::Format("\na=rid:%s send", s.c_str());
             }
           }
         }
-        rtpmap += str::Format(
+        sdplines += str::Format(
           "\na=simulcast:%s rid=%s",
           dit->get<std::string>() == "send" ? "recv" : "send",
           lit->get<std::string>().c_str()
         );
       }
+      sdplines += "\n";
     }
+    auto &l = c.factory().to<Listener>();
+    ASSERT(proto == "UDP" || proto == "TCP");
+    auto nwport = proto == "UDP" ? l.udp_port() : l.tcp_port();
+    size_t idx = 0;
+    for (auto &a : c.factory().config().ifaddrs) {
+      sdplines += str::Format(
+        "a=candidate:0 %u %s %u %s %u typ host\n",
+        idx + 1, proto.c_str(), AssignPriority(idx), a.c_str(), nwport
+      );
+      idx++;
+    }
+    sdplines += str::Format(R"cands(a=end-of-candidates
+a=sctp-port:5000
+a=max-message-size:%u)cands",
+      c.factory().config().send_buffer_size
+    );
     auto midit = section.find("mid");
     if (midit == section.end()) {
       answer = "section: no value for key 'mid'";
@@ -495,7 +497,7 @@ a=setup:active
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      media_type == "application" ? candidates.c_str() : rtpmap.c_str()
+      sdplines.c_str()
     );
     return true;
   }
@@ -504,29 +506,8 @@ a=setup:active
     auto now = qrpc_time_now();
     auto bundle = std::string("a=group:BUNDLE");
     json dsec, asec, vsec;
+    std::map<std::string, std::string> section_answer_map;
     std::string mid, media_sections, section_answer, proto;
-    if (FindMediaSection("audio", asec)) {
-      if (AnswerMediaSection(asec, proto, c, section_answer, mid)) {
-        media_sections += section_answer;
-        bundle += str::Format(" %s", mid.c_str());
-      } else {
-        answer = section_answer;
-        QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
-        ASSERT(false);
-        return false;
-      }
-    }
-    if (FindMediaSection("video", vsec)) {
-      if (AnswerMediaSection(vsec, proto, c, section_answer, mid)) {
-        media_sections += section_answer;
-        bundle += str::Format(" %s", mid.c_str());
-      } else {
-        answer = section_answer;
-        QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
-        ASSERT(false);
-        return false;
-      }
-    }
     if (FindMediaSection("application", dsec)) {
       // find protocol from SCTP backed transport
       auto protoit = dsec.find("protocol");
@@ -554,14 +535,37 @@ a=setup:active
       }
       c.dtls_transport().SetRemoteFingerprint(fp);
       if (AnswerMediaSection(dsec, proto, c, section_answer, mid)) {
-        media_sections += section_answer;
-        bundle += str::Format(" %s", mid.c_str());
+        section_answer_map[mid] = section_answer;
       } else {
         QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
         answer = section_answer;
         ASSERT(false);
         return false;
       }
+    }
+    if (FindMediaSection("audio", asec)) {
+      if (AnswerMediaSection(asec, proto, c, section_answer, mid)) {
+        section_answer_map[mid] = section_answer;
+      } else {
+        answer = section_answer;
+        QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
+        ASSERT(false);
+        return false;
+      }
+    }
+    if (FindMediaSection("video", vsec)) {
+      if (AnswerMediaSection(vsec, proto, c, section_answer, mid)) {
+        section_answer_map[mid] = section_answer;
+      } else {
+        answer = section_answer;
+        QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
+        ASSERT(false);
+        return false;
+      }
+    }
+    for (auto &kv : section_answer_map) {
+      bundle += (" " + kv.first);
+      media_sections += kv.second;
     }
     // string value to the str::Format should be converted to c string like str.c_str()
     answer = str::Format(16384, R"sdp(v=0

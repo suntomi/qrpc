@@ -619,7 +619,7 @@ int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const ui
     return QRPC_OK;
   }
   // Ensure there is receiving SRTP session.
-  if (srtp_recv_ != nullptr) {
+  if (srtp_recv_ == nullptr) {
     logger::debug({{"proto","srtp"},{"ev","ignoring RTCP packet due to non receiving SRTP session"}});
     return QRPC_OK;
   }
@@ -671,7 +671,7 @@ int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uin
     return QRPC_OK;
   }
   // Ensure there is receiving SRTP session.
-  if (srtp_recv_ != nullptr) {
+  if (srtp_recv_ == nullptr) {
     logger::debug({{"proto","srtp"},{"ev","ignoring RTCP packet due to non receiving SRTP session"}});
     return QRPC_OK;
   }

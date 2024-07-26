@@ -66,7 +66,7 @@ namespace base {
     Id id = id_factory_.New();
     handlers_.insert(std::make_pair(at, Entry(id, h)));
     schedule_times_.insert(std::make_pair(id, at));
-    logger::debug({{"ev","timer: create"},{"tid",id},{"ptr",str::dptr(this)}});
+    // logger::debug({{"ev","timer: create"},{"tid",id},{"ptr",str::dptr(this)}});
     return id;
   }
   bool TimerScheduler::Stop(Id id) {
@@ -88,7 +88,7 @@ namespace base {
     for (auto &j = range.first; j != range.second; ++j) {
       Entry &e = j->second;
       if (e.id == id) {
-        logger::debug({{"ev","timer: stopped"},{"tid",id}});
+        // logger::debug({{"ev","timer: stopped"},{"tid",id}});
         handlers_.erase(j);
         schedule_times_.erase(id);
         return true;
