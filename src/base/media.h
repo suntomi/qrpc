@@ -5,11 +5,13 @@
 namespace base {
   class Media {
   public:
-    typedef std::string Id; // RTP stream id for WebRTC
+    typedef std::string Id; // label of the media
+    typedef std::string Rid; // Rid of RTP stream
+    typedef std::string TrackId; // track id of WebRTC js API
+    typedef uint64_t Ssrc; // Ssrc of RTP stream
   public:
     Media(const std::string &l) : label_(l) {}
     const std::string &label() const { return label_; }
-    virtual void OnData() = 0;
   protected:
     std::string label_;
   };

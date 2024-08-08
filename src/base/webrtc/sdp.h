@@ -255,7 +255,7 @@ namespace webrtc {
   protected:
     bool GetRemoteFingerPrint(const json &section, std::string &answer, DtlsTransport::Fingerprint &ret) const;
     bool AnswerMediaSection(
-      const json &section, const std::string &proto, const ConnectionFactory::Connection &c,
+      const json &section, const std::string &proto, ConnectionFactory::Connection &c,
       std::string &answer, std::string &mid) const;
     uint32_t AssignPriority(uint32_t component_id) const;
   };

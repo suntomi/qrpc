@@ -55,7 +55,8 @@ class QRPClient {
     this.medias = {};
     this.hdmap = {};
     this.mdmap = {};
-    this.trackIdLabelMap = {}; // trackId -> labelf
+    this.trackIdLabelMap = {}; // trackId -> label
+    this.ridLabelMap = {}; // RTP stream id -> label
     this.sdpOfferMap = {}; // sdpGen -> sdp offer
     this.sdpGen = -1;
     this.handlerResolver = (c, label, isMedia) => {
@@ -71,7 +72,7 @@ class QRPClient {
         } else if (data.fn === "nego") {
           // our library basically exchange media stream via QRPC server
           // at least, we will have to implement WHIP endpoint of QRPC server for first exchanging SDP between peers.
-          this.trackIdLabelMap = data.args.trackIdLabelMap;
+          this.ridLabelMap = data.args.ridLabelMap;
           console.log("should not receive nego from server or other peer");
           await this.pc.setRemoteDescription({type:"offer",sdp:data.args.sdp});
           const answer = await this.pc.createAnswer();
@@ -142,7 +143,7 @@ class QRPClient {
       const tid = t.id;
       let label = this.trackIdLabelMap[tid];
       if (!label) {
-        // if local track, event.sender.track may be registered
+        // if local track, event.transceiver.sender.track may be registered
         if (event.transceiver) {
           label = this.trackIdLabelMap[event.transceiver.sender.track.id];
         }
@@ -233,7 +234,11 @@ class QRPClient {
     //Do the post request to the WHIP endpoint with the SDP offer
     const fetched = await fetch(this.url, {
       method: "POST",
-      body: JSON.stringify({sdp:offer.sdp,trackIdLabelMap:this.trackIdLabelMap}),
+      body: JSON.stringify({
+        sdp:offer.sdp,
+        ridLabelMap:this.ridLabelMap,
+        trackIdLabelMap:this.trackIdLabelMap,
+      }),
       headers
     });
 
@@ -301,7 +306,11 @@ class QRPClient {
     const offer = await this.pc.createOffer();
     this.sdpOfferMap[this.sdpGen] = offer;
     console.log("offer sdp", offer.sdp);
-    this.syscall("nego", {sdp:offer.sdp,gen:this.sdpGen,trackIdLabelMap:this.trackIdLabelMap});
+    this.syscall("nego", {
+      sdp:offer.sdp,gen:this.sdpGen,
+      ridLabelMap:this.ridLabelMap,
+      trackIdLabelMap:this.trackIdLabelMap,
+    });
   }
   handleMedia(handler_name, callbacks) {
     if (this.mdmap[handler_name]) {
@@ -314,15 +323,16 @@ class QRPClient {
     }
     this.mdmap[handler_name] = callbacks;
   }
-  async openMedia(label, stream, encoding) {
+  async openMedia(label, stream, encodings) {
     if (this.medias[label]) {
       return this.medias[label];
     }
-    if (!encoding) {
+    if (!encodings) {
       throw new Error("encoding is mandatory");
     }
     stream.getTracks().forEach(t => this.trackIdLabelMap[t.id] = label);
-    const m = new QRPCMedia(label, stream, encoding);
+    encodings.forEach(e => { this.ridLabelMap[e.rid] = label; });
+    const m = new QRPCMedia(label, stream, encodings);
     this.medias[label] = m;
     m.open(this);
     await this.renegotiation();

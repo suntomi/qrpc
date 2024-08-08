@@ -9,6 +9,7 @@
 #include "base/webrtc/sctp.h"
 #include "base/webrtc/dtls.h"
 #include "base/webrtc/candidate.h"
+#include "base/webrtc/rtp.h"
 
 // TODO: if enabling srtp, this also need to be replaced with homebrew version
 #include "RTC/SrtpSession.hpp"
@@ -67,14 +68,16 @@ namespace webrtc {
     class Connection : public base::Connection, 
                        public IceServer::Listener,
                        public DtlsTransport::Listener,
-                       public SctpAssociation::Listener {
+                       public SctpAssociation::Listener,
+                       public RTPHandler::Listener {
     public:
       friend class ConnectionFactory;
     public:
       Connection(ConnectionFactory &sv, DtlsTransport::Role dtls_role) :
         sv_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
-        dtls_transport_(nullptr), sctp_association_(nullptr),
-        srtp_send_(nullptr), srtp_recv_(nullptr), streams_(), syscall_(), stream_id_factory_(),
+        dtls_transport_(nullptr), sctp_association_(nullptr), srtp_send_(nullptr), srtp_recv_(nullptr),
+        rtp_handler_(nullptr), streams_(), syscall_(),
+        medias_(), rid_label_map_(), trackid_label_map_(), stream_id_factory_(),
         alarm_id_(AlarmProcessor::INVALID_ID), sctp_connected_(false), closed_(false) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
@@ -116,11 +119,18 @@ namespace webrtc {
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
       inline const IceUFrag &ufrag() const { return ice_server().GetUsernameFragment(); }
       inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
+      inline RTPHandler &rtp_handler() { return *rtp_handler_.get(); }
+      inline const std::map<std::string, std::string> rid_label_map() const { return rid_label_map_; }
       // for now, qrpc server initiates dtls transport because safari does not initiate it
       // even if we specify "setup: passive" in SDP of whip response
       inline bool is_client() const { return dtls_role_ == DtlsTransport::Role::SERVER; }
     public:
+      inline void SetRidLabelMap(const std::map<Media::Rid, Media::Id> &m) { rid_label_map_ = m; }
+      inline void SetTrackIdLabelMap(const std::map<Media::TrackId, Media::Id> &m) { trackid_label_map_ = m; }
+      inline void SetSsrcTrackIdPair(Media::Ssrc ssrc, const Media::TrackId &track_id) { ssrc_trackid_map_[ssrc] = track_id; }
+    public:
       int Init(std::string &ufrag, std::string &pwd);
+      inline void InitRTP() { rtp_handler_ = std::make_unique<RTPHandler>(this); }
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
       int RunDtlsTransport();
@@ -208,7 +218,12 @@ namespace webrtc {
 			  const uint8_t* msg,
 			  size_t len) override;
 			void OnSctpAssociationBufferedAmount(
-			  SctpAssociation* sctpAssociation, uint32_t len) override;    
+			  SctpAssociation* sctpAssociation, uint32_t len) override;   
+
+      // implements RTPHandler::Listener
+      std::shared_ptr<Media> FindFrom(RTC::RtpPacket &p) override;
+      void RecvStreamClosed(uint32_t ssrc) override;
+      void SendStreamClosed(uint32_t ssrc) override; 
     protected:
       qrpc_time_t last_active_;
       ConnectionFactory &sv_;
@@ -218,10 +233,13 @@ namespace webrtc {
       std::unique_ptr<DtlsTransport> dtls_transport_; // DTLS
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
+      std::unique_ptr<RTPHandler> rtp_handler_;
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       std::shared_ptr<SyscallStream> syscall_;
       std::map<Media::Id, std::shared_ptr<Media>> medias_;
-      std::map<Media::Id, std::string> trackid_label_map_;
+      std::map<Media::Rid, Media::Id> rid_label_map_;
+      std::map<Media::TrackId, Media::Id> trackid_label_map_;
+      std::map<Media::Ssrc, Media::TrackId> ssrc_trackid_map_;
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_;
       bool sctp_connected_, closed_;

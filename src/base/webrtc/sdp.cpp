@@ -217,7 +217,7 @@ a=max-message-size:%u
 
   bool SDP::AnswerMediaSection(
     const json &section, const std::string &proto,
-    const ConnectionFactory::Connection &c,
+    ConnectionFactory::Connection &c,
     std::string &answer, std::string &mid
   ) const {
     auto tit = section.find("type");
@@ -251,14 +251,19 @@ a=max-message-size:%u
         ASSERT(false);
         return false;
       }
+      c.InitRTP();
       for (auto it = extmit->begin(); it != extmit->end(); it++) {
         FIND_OR_RAISE(uit, it, "uri");
         FIND_OR_RAISE(vit, it, "value");
-        sdplines += str::Format(
-          "\na=extmap:%llu %s",
-          vit->get<uint64_t>(),
-          uit->get<std::string>().c_str()
-        );
+        auto uri = uit->get<std::string>();
+        auto id = vit->get<uint8_t>();
+        if (!c.rtp_handler().SetExtensionId(id, uri)) {
+          answer = str::Format("failed to set extension id %u for uri %s", id, uri.c_str());
+          QRPC_LOGJ(warn, {{"ev","failed to set extension id"},{"id",id},{"uri",uri}});
+          ASSERT(false);
+          return false;
+        }
+        sdplines += str::Format("\na=extmap:%u %s", id, uri.c_str());
       }
       // parse fmtp
       std::map<uint64_t, std::string> fmtpmap;
@@ -272,8 +277,15 @@ a=max-message-size:%u
           auto pt = plit->get<uint64_t>();
           fmtpmap[pt] = config;
           if (config.find("apt=") == 0) {
-            auto apt = std::stoul(config.substr(4));
-            rtxmap[pt] = apt;
+            try {
+              auto apt = std::stoul(config.substr(4));
+              rtxmap[pt] = apt;
+            } catch (std::exception &e) {
+              answer = str::Format("failed to parse pt [%s]", config.c_str());
+              QRPC_LOGJ(warn, {{"ev","failed to parse pt"},{"config",config}});
+              ASSERT(false);
+              return false;
+            }
           }
         }
       }
@@ -342,12 +354,19 @@ a=max-message-size:%u
       }
       for (auto &kv : rtpmaps) {
         if (kv.second.codec == "rtx") {
-          auto rtxit = rtxmap.find(std::stoul(kv.first));
-          if (rtxit != rtxmap.end()) {
-            if (rtpmaps.find(std::to_string(rtxit->second)) == rtpmaps.end()) {
-              QRPC_LOGJ(info, {{"ev", "rtpmap: rtx target stream filtered"}, {"target", rtxit->second}, {"rtx", kv.first}});
-              continue;
+          try {
+            auto rtxit = rtxmap.find(std::stoul(kv.first));
+            if (rtxit != rtxmap.end()) {
+              if (rtpmaps.find(std::to_string(rtxit->second)) == rtpmaps.end()) {
+                QRPC_LOGJ(info, {{"ev", "rtpmap: rtx target stream filtered"}, {"target", rtxit->second}, {"rtx", kv.first}});
+                continue;
+              }
             }
+          } catch (std::exception &e) {
+              answer = str::Format("failed to parse pt [%s]", kv.first.c_str());
+              QRPC_LOGJ(warn, {{"ev","failed to parse pt"},{"pt",kv.first}});
+              ASSERT(false);
+              return false;
           }
         }
         sdplines += kv.second.sdpline;
@@ -381,12 +400,19 @@ a=max-message-size:%u
           if (rtpmaps.find(pl) == rtpmaps.end()) {
             continue;
           } else {
-            auto rtxit = rtxmap.find(std::stoul(pl));
-            if (rtxit != rtxmap.end()) {
-              if (rtpmaps.find(std::to_string(rtxit->second)) == rtpmaps.end()) {
-                QRPC_LOGJ(info, {{"ev", "rtcp-fb: rtx target stream filtered"},{"target", rtxit->second},{"rtx", pl}});
-                continue;
+            try {
+              auto rtxit = rtxmap.find(std::stoul(pl));
+              if (rtxit != rtxmap.end()) {
+                if (rtpmaps.find(std::to_string(rtxit->second)) == rtpmaps.end()) {
+                  QRPC_LOGJ(info, {{"ev", "rtcp-fb: rtx target stream filtered"},{"target", rtxit->second},{"rtx", pl}});
+                  continue;
+                }
               }
+            } catch (std::exception &e) {
+              answer = str::Format("failed to parse pt [%s]", pl.c_str());
+              QRPC_LOGJ(warn, {{"ev","failed to parse pt"},{"pt",pl}});
+              ASSERT(false);
+              return false;
             }
           }
           auto tit = it->find("type");
@@ -410,6 +436,33 @@ a=max-message-size:%u
               stit->get<std::string>().c_str()
             );
           }
+        }
+      }
+      auto ssrcit = section.find("ssrcs");
+      if (ssrcit != section.end()) {
+        bool found = false;
+        for (auto it = ssrcit->begin(); it != ssrcit->end(); it++) {
+          auto ait = it->find("attribute");
+          if (ait == it->end()) {
+            continue;
+          } else if (ait->get<std::string>() == "msid") {
+            // store ssrc => track id relation to webrtc connection
+            auto idit = it->find("id");
+            auto vit = it->find("value");
+            auto msids = str::Split(vit->get<std::string>(), " ");
+            if (msids.size() > 1) {
+              auto id = idit->get<uint64_t>();
+              found = true;
+              QRPC_LOGJ(info, {{"ev","ssrc/trackid relation"},{"ssrc",id},{"trackid",msids[1]}});
+              c.SetSsrcTrackIdPair(id, msids[1]);
+            }
+          }
+        }
+        if (!found) {
+          answer = str::Format("fail to find ssrc/trackid relation");
+          QRPC_LOGJ(warn, {{"ev","failed to parse pt"},{"ssrcs",*ssrcit}});
+          ASSERT(false);
+          return false;
         }
       }
       auto scit = section.find("simulcast");

@@ -257,10 +257,15 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
         return QRPC_OK;
       }
-      const auto rlmit = args.find("trackIdLabelMap");
+      const auto rlmit = args.find("ridLabelMap");
       if (rlmit != args.end()) {
-        c.trackid_label_map_ = rlmit->second.get<std::map<std::string,std::string>>();
+        c.rid_label_map_ = rlmit->second.get<std::map<std::string,std::string>>();
         QRPC_LOGJ(info, {{"ev","new rid label map"},{"map",*rlmit}});
+      }
+      const auto tlmit = args.find("trackIdLabelMap");
+      if (tlmit != args.end()) {
+        c.trackid_label_map_ = tlmit->second.get<std::map<std::string,std::string>>();
+        QRPC_LOGJ(info, {{"ev","new track id label map"},{"map",*tlmit}});
       }
       const auto &sdp_text = sit->second.get<std::string>();
       std::string answer;
@@ -600,7 +605,7 @@ void ConnectionFactory::Connection::TryParseRtcpPacket(const uint8_t *p, size_t 
     return;
   }
   RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(p, static_cast<size_t>(intLen));
-  if (!packet) {
+  if (packet == nullptr) {
     logger::warn({{"proto","srtcp"},
       {"ev","received data is not a valid RTCP compound or single packet"},
       {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
@@ -608,8 +613,7 @@ void ConnectionFactory::Connection::TryParseRtcpPacket(const uint8_t *p, size_t 
   }
   // we need to implement RTC::Transport::ReceiveRtcpPacket(packet) equivalent
   logger::info({{"ev","RTCP packet received"}});
-  packet->Dump();
-  delete packet;
+  rtp_handler_->ReceiveControl(packet); // deletes packet
 }
 int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
@@ -645,21 +649,14 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
     ASSERT(false);
     return;
   }
-  std::string rid = "none", mid = "none";;
-  packet->ReadRid(rid);
-  packet->ReadMid(mid);
   if (!decrypted) {
     QRPC_LOGJ(warn, {
       {"ev","RTP packet received, but decryption fails"},
-      {"proto","srtp"},{"ssrc",packet->GetSsrc()},{"rid",rid},{"mid",mid},
+      {"proto","srtp"},{"ssrc",packet->GetSsrc()},
       {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
     });
   } else {
-    QRPC_LOGJ(debug, {
-      {"ev","RTP packet received"},
-      {"proto","srtp"},{"ssrc",packet->GetSsrc()},{"rid",rid},{"mid",mid},
-      {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
-    });
+    rtp_handler_->Receive(ice_server_->GetUsernameFragment(), *packet);
   }
   delete packet;
 }
@@ -1004,6 +1001,64 @@ void ConnectionFactory::Connection::OnSctpAssociationBufferedAmount(
   TRACK();
 }
 
+// implements RTPHandler::Listener
+std::shared_ptr<Media> ConnectionFactory::Connection::FindFrom(RTC::RtpPacket &p) {
+  std::string rid, mid;
+  p.ReadMid(mid);
+  if (p.ReadRid(rid)) {
+    QRPC_LOGJ(debug, {
+      {"ev","RTP packet received"},
+      {"proto","srtp"},{"ssrc",p.GetSsrc()},{"rid",rid},{"mid",mid},
+      {"payloadType",p.GetPayloadType()},{"seq",p.GetSequenceNumber()}
+    });
+    auto lit = rid_label_map_.find(rid);
+    if (lit == rid_label_map_.end()) {
+      ASSERT(false);
+      return nullptr;
+    }
+    auto mit = medias_.find(lit->second);
+    if (mit == medias_.end()) {
+      ASSERT(false);
+      return nullptr;
+    }
+    return mit->second;
+  } else {
+    QRPC_LOGJ(debug, {
+      {"ev","RTP packet received"},
+      {"proto","srtp"},{"ssrc",p.GetSsrc()},{"mid",mid},
+      {"payloadType",p.GetPayloadType()},{"seq",p.GetSequenceNumber()}
+    });
+    auto tidit = ssrc_trackid_map_.find(p.GetSsrc());
+    if (tidit == ssrc_trackid_map_.end()) {
+      ASSERT(false);
+      return nullptr;
+    }
+    auto lit = trackid_label_map_.find(tidit->second);
+    if (lit == trackid_label_map_.end()) {
+      ASSERT(false);
+      return nullptr;
+    }
+    auto mit = medias_.find(lit->second);
+    if (mit == medias_.end()) {
+      ASSERT(false);
+      return nullptr;
+    }
+    return mit->second;
+  }
+}
+void ConnectionFactory::Connection::RecvStreamClosed(uint32_t ssrc) {
+  if (srtp_recv_ != nullptr) {
+    srtp_recv_->RemoveStream(ssrc);
+  }
+
+}
+void ConnectionFactory::Connection::SendStreamClosed(uint32_t ssrc) {
+  if (srtp_send_ != nullptr) {
+    srtp_send_->RemoveStream(ssrc);
+  }
+}
+
+
 // client::WhipHttpProcessor, client::TcpSession, client::UdpSession
 namespace client {
   typedef ConnectionFactory::IceUFrag IceUFrag;
@@ -1340,6 +1395,16 @@ int Listener::Accept(const std::string &client_req_body, std::string &server_sdp
     if (!sdp.Answer(*c, server_sdp)) {
       logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
       return QRPC_EINVAL;
+    }
+    const auto rlmit = client_req.find("ridLabelMap");
+    if (rlmit != client_req.end()) {
+      c->SetRidLabelMap(rlmit->get<std::map<std::string,std::string>>());
+      QRPC_LOGJ(info, {{"ev","new rid label map"},{"map",*rlmit}});
+    }
+    const auto tlmit = client_req.find("trackIdLabelMap");
+    if (tlmit != client_req.end()) {
+      c->SetTrackIdLabelMap(tlmit->get<std::map<std::string,std::string>>());
+      QRPC_LOGJ(info, {{"ev","new track id label map"},{"map",*tlmit}});
     }
     connections_.emplace(std::move(ufrag), c);
   } catch (const std::exception &e) {

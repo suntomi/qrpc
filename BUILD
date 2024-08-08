@@ -34,7 +34,11 @@ config_setting(
 
 cc_import(
   name = "mediasoup",
-  hdrs = glob(["src/ext/mediasoup/worker/include/**", "src/ext/mediasoup/worker/subprojects/**"]),
+  hdrs = glob([
+    "src/ext/mediasoup/worker/include/**",
+    "src/ext/mediasoup/worker/subprojects/**",
+    "src/ext/mediasoup/worker/deps/libwebrtc/**"
+  ]),
   static_library = selects.with_or({
     ":is_debug_build": "src/ext/mediasoup/worker/out/Debug/libmediasoup-worker.a",
     "//conditions:default": "src/ext/mediasoup/worker/out/Release/libmediasoup-worker.a",
@@ -57,7 +61,7 @@ cc_import(
     "src/ext/libsdptransform/include/*.hpp",
   ]),
   copts = [
-    "-std=c++17",
+    "-std=c++17"
   ] 
   + MS_CPPARGS 
   + selects.with_or({
@@ -80,6 +84,8 @@ cc_import(
   includes = [
     "src",
     "src/ext",
+    "src/ext/mediasoup/worker/deps/libwebrtc",
+    "src/ext/mediasoup/worker/deps/libwebrtc/libwebrtc",
     "src/ext/mediasoup/worker/include",
     "src/ext/mediasoup/worker/subprojects/abseil-cpp-20220623.0",
     "src/ext/mediasoup/worker/subprojects/nlohmann_json-3.10.5/include",
