@@ -321,8 +321,10 @@ QRPC_DECL_CLOSURE(bool, qrpc_on_media_open_t, void *, qrpc_media_t, void**);
 //media closed. after this called, qrpc_media_t which given to this function will be invalid.
 QRPC_DECL_CLOSURE(void, qrpc_on_media_close_t, void *, qrpc_media_t);
 //media stream packet received. return false to unsubscribe media stream.
-QRPC_DECL_CLOSURE(bool, qrpc_media_subscriber_t, void *, qrpc_media_t, const void *, qrpc_size_t);
-
+QRPC_DECL_CLOSURE(bool, qrpc_media_sub_t, void *, qrpc_media_t, const void *, qrpc_size_t);
+//media stream packet received. should return byte array pointer and its size via qrpc_size_t*.
+//return null to stop publish.
+QRPC_DECL_CLOSURE(bool, qrpc_media_pub_t, void *, qrpc_size_t*);
 
 /* alarm */
 QRPC_DECL_CLOSURE(void, qrpc_on_alarm_t, void *, qrpc_time_t *);
@@ -623,13 +625,47 @@ QAPI_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t s);
 // media API
 //
 // --------------------------
-QAPI_THREADSAFE void qrpc_conn_media(qrpc_conn_t conn, const char *name, void *ctx);
-
+typedef enum {
+  QRPC_RTP_PARAM_INTEGER,
+  QRPC_RTP_PARAM_STRING,
+  QRPC_RTP_PARAM_DECIMAL,
+  QRPC_RTP_PARAM_BOOLEAN,
+} qrpc_media_param_type_t;
+struct qrpc_media_rtp_param_t {
+  const char *name;
+  qrpc_media_param_type_t type;
+  union {
+    uint64_t i;
+    const char *s;
+    double d;
+    bool b;
+  };
+};
+struct qrpc_media_rtcp_fb_t {
+  const char *type;
+  const char *parameter;
+};
+struct qrpc_media_codec_t {
+  char *mime_type;
+  uint32_t clock_rate;
+  uint8_t payload_type;
+  uint8_t channels;
+  uint16_t padd;
+  qrpc_media_rtp_param_t *parameters;
+  qrpc_media_rtcp_fb_t *rtcp_fbs;
+};
+struct qrpc_media_params_t {
+  char *mid;
+  struct qrpc_media_codec_t codecs[];
+};
+// publish media stream, which name is label
+QAPI_THREADSAFE void qrpc_conn_media(qrpc_conn_t conn, const char *name, qrpc_media_pub_t pub);
+// get correspond connection from media
 QAPI_THREADSAFE qrpc_conn_t qrpc_media_conn(qrpc_media_t media);
-// rtp_data should point to seraialized RTP packet.
-QAPI_THREADSAFE void qrpc_media_publish(qrpc_media_t media, const void *rtp_data, qrpc_size_t rtp_datalen);
-
-QAPI_THREADSAFE void qrpc_media_subscribe(qrpc_media_t media, qrpc_media_subscriber_t subscriber);
+// subscribe media stream packet
+QAPI_THREADSAFE void qrpc_media_sub(qrpc_media_t media, qrpc_media_sub_t sub);
+// create media subscriber object from conn, which can be used for qrpc_media_sub
+QAPI_THREADSAFE qrpc_media_sub_t qrpc_conn_media_sub(qrpc_conn_t conn, qrpc_media_params_t params);
 
 // --------------------------
 //

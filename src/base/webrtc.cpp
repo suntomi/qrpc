@@ -1018,7 +1018,7 @@ std::shared_ptr<Media> ConnectionFactory::Connection::FindFrom(RTC::RtpPacket &p
     }
     auto mit = medias_.find(lit->second);
     if (mit == medias_.end()) {
-      ASSERT(false);
+      // ASSERT(false);
       return nullptr;
     }
     return mit->second;
@@ -1040,7 +1040,7 @@ std::shared_ptr<Media> ConnectionFactory::Connection::FindFrom(RTC::RtpPacket &p
     }
     auto mit = medias_.find(lit->second);
     if (mit == medias_.end()) {
-      ASSERT(false);
+      // ASSERT(false);
       return nullptr;
     }
     return mit->second;

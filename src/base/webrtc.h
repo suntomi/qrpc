@@ -5,11 +5,11 @@
 #include "base/id_factory.h"
 #include "base/session.h"
 #include "base/media.h"
+#include "base/rtp/handler.h"
 #include "base/webrtc/ice.h"
 #include "base/webrtc/sctp.h"
 #include "base/webrtc/dtls.h"
 #include "base/webrtc/candidate.h"
-#include "base/webrtc/rtp.h"
 
 // TODO: if enabling srtp, this also need to be replaced with homebrew version
 #include "RTC/SrtpSession.hpp"
@@ -69,7 +69,7 @@ namespace webrtc {
                        public IceServer::Listener,
                        public DtlsTransport::Listener,
                        public SctpAssociation::Listener,
-                       public RTPHandler::Listener {
+                       public rtp::Handler::Listener {
     public:
       friend class ConnectionFactory;
     public:
@@ -119,7 +119,7 @@ namespace webrtc {
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
       inline const IceUFrag &ufrag() const { return ice_server().GetUsernameFragment(); }
       inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
-      inline RTPHandler &rtp_handler() { return *rtp_handler_.get(); }
+      inline rtp::Handler &rtp_handler() { return *rtp_handler_.get(); }
       inline const std::map<std::string, std::string> rid_label_map() const { return rid_label_map_; }
       // for now, qrpc server initiates dtls transport because safari does not initiate it
       // even if we specify "setup: passive" in SDP of whip response
@@ -130,9 +130,10 @@ namespace webrtc {
       inline void SetSsrcTrackIdPair(Media::Ssrc ssrc, const Media::TrackId &track_id) { ssrc_trackid_map_[ssrc] = track_id; }
     public:
       int Init(std::string &ufrag, std::string &pwd);
-      inline void InitRTP() { rtp_handler_ = std::make_unique<RTPHandler>(this); }
+      inline void InitRTP() { rtp_handler_ = std::make_shared<rtp::Handler>(this); }
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
+      void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();
       IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority);
       void OnDtlsEstablished();
@@ -233,7 +234,7 @@ namespace webrtc {
       std::unique_ptr<DtlsTransport> dtls_transport_; // DTLS
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
-      std::unique_ptr<RTPHandler> rtp_handler_;
+      std::shared_ptr<rtp::Handler> rtp_handler_; // RTP, RTCP
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       std::shared_ptr<SyscallStream> syscall_;
       std::map<Media::Id, std::shared_ptr<Media>> medias_;
@@ -334,6 +335,7 @@ namespace webrtc {
         for (auto s = connections_.begin(); s != connections_.end();) {
             qrpc_time_t next_check;
             auto cur = s++;
+            cur->second->OnTimer(now);
             if (cur->second->Timeout(now, config_.connection_timeout, next_check)) {
                 // inside Close, the entry will be erased
                 CloseConnection(*cur->second);

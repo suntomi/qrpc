@@ -50,13 +50,16 @@
       let closed = 0;
       c.onopen = async () => {
         console.log("client onopen called");
-        await c.openMedia("webcam", await navigator.mediaDevices.getUserMedia({ video: true, audio: true }), [
+        await c.openMedia("webcam", await navigator.mediaDevices.getUserMedia({
+          video: {width: {ideal: 1280}, height: {ideal: 720}},
+          audio: true
+        }), [
           // 1500kbps ?
-          {rid: 'h1', maxBitrate: 1500000, active: true, priority: "high"},
+          {rid: 'h1', maxBitrate: 5000000, active: true, scaleResolutionDownBy: 1.0},
           // 500kbps ?
-          {rid: 'm1', maxBitrate: 500000, active: true, scaleResolutionDownBy: 2.0},
+          {rid: 'm1', maxBitrate: 1000000, active: true, scaleResolutionDownBy: 2.0},
           // 100kbps ?
-          {rid: 'l1', maxBitrate: 100000, active: true, scaleResolutionDownBy: 4.0}
+          {rid: 'l1', maxBitrate: 500000, active: true, scaleResolutionDownBy: 4.0}
         ]);
         console.log("open media");
         return context;

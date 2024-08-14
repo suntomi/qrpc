@@ -24,36 +24,45 @@ namespace RTC {
 }
 
 namespace base {
-namespace webrtc {
-  class RTPHandler {
+namespace rtp {
+  class Handler {
   public:
+    typedef const std::function<void(bool sent)> onSendCallback;  
     typedef RTC::RtpHeaderExtensionIds ExtensionIds;
     class Listener {
     public:
       virtual std::shared_ptr<Media> FindFrom(RTC::RtpPacket &packet) = 0;
       virtual void RecvStreamClosed(uint32_t ssrc) = 0;
       virtual void SendStreamClosed(uint32_t ssrc) = 0;
+      virtual bool IsConnected() const = 0;
+      virtual void SendRtpPacket(
+        RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb = nullptr) = 0;
+      virtual void SendRtcpPacket(RTC::RTCP::Packet* packet)                 = 0;
+      virtual void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) = 0;
     };
   public:
-    RTPHandler(Listener *l) : listener_(l) {}
+    Handler(Listener *l) : listener_(l) {}
     inline const ExtensionIds &ext_ids() const { return recvRtpHeaderExtensionIds; }
     inline ExtensionIds &ext_ids() { return recvRtpHeaderExtensionIds; }
+    void OnTimer(qrpc_time_t now) { SendRtcp(qrpc_time_to_msec(now)); }
     bool SetExtensionId(uint8_t id, const std::string &uri);
-    void Receive(const std::string &id, RTC::RtpPacket &packet);
-    void ReceiveControl(const RTC::RTCP::Packet *packet);
+  // borrow from src/ext/mediasoup/worker/include/RTC/Transport.hpp
+  public:
+    void ReceiveRtpPacket(const std::string &id, RTC::RtpPacket &packet);
+    void ReceiveRtcpPacket(RTC::RTCP::Packet *packet);
   protected:
-    void HandleRtcpPacket(const RTC::RTCP::Packet *packet);
+    void SendRtcp(uint64_t nowMs);
+    void HandleRtcpPacket(RTC::RTCP::Packet *packet);
+		inline void DataReceived(size_t len) { recvTransmission.Update(len, qrpc_time_msec(qrpc_time_now())); }
+		inline void DataSent(size_t len) { sendTransmission.Update(len, qrpc_time_msec(qrpc_time_now())); }
   protected:
     Listener *listener_{ nullptr };
     ExtensionIds recvRtpHeaderExtensionIds;
 		// Allocated by this.
 		absl::flat_hash_map<std::string, RTC::Producer*> mapProducers;
 		absl::flat_hash_map<std::string, RTC::Consumer*> mapConsumers;
-		absl::flat_hash_map<std::string, RTC::DataProducer*> mapDataProducers;
-		absl::flat_hash_map<std::string, RTC::DataConsumer*> mapDataConsumers;
 		absl::flat_hash_map<uint32_t, RTC::Consumer*> mapSsrcConsumer;
 		absl::flat_hash_map<uint32_t, RTC::Consumer*> mapRtxSsrcConsumer;
-		Timer* rtcpTimer{ nullptr };
 		std::shared_ptr<RTC::TransportCongestionControlClient> tccClient{ nullptr };
 		std::shared_ptr<RTC::TransportCongestionControlServer> tccServer{ nullptr };
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR

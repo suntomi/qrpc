@@ -222,6 +222,9 @@ using json = nlohmann::json;
 // a=max-message-size:262144
 
 namespace base {
+namespace rtp {
+  class Parameters;
+}
 namespace webrtc {
   // v=0
   // o=- $timestamp $timestamp IN IP4 0.0.0.0
@@ -253,10 +256,11 @@ namespace webrtc {
     std::vector<Candidate> Candidates() const;
     bool FindMediaSection(const std::string &type, json &j) const;
   protected:
+    std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c) const;
     bool GetRemoteFingerPrint(const json &section, std::string &answer, DtlsTransport::Fingerprint &ret) const;
     bool AnswerMediaSection(
       const json &section, const std::string &proto, ConnectionFactory::Connection &c,
-      std::string &answer, std::string &mid) const;
+      std::string &answer, rtp::Parameters &param) const;
     uint32_t AssignPriority(uint32_t component_id) const;
   };
 } // namespace webrtc
