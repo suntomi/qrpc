@@ -1,12 +1,14 @@
 #pragma once
 
 #include "base/defs.h"
+#include "base/crypto.h"
 #include "base/media.h"
 
+#include "base/rtp/parameters.h"
+#include "base/rtp/producer.h"
+#include "base/rtp/shared.h"
+
 #include "RTC/Consumer.hpp"
-#include "RTC/DataConsumer.hpp"
-#include "RTC/DataProducer.hpp"
-#include "RTC/Producer.hpp"
 #include "RTC/RtpHeaderExtensionIds.hpp"
 #include "RTC/RtpPacket.hpp"
 #include "RTC/RateCalculator.hpp"
@@ -25,13 +27,14 @@ namespace RTC {
 
 namespace base {
 namespace rtp {
-  class Handler {
+  class Handler : public RTC::Producer::Listener, public RTC::Consumer::Listener {
   public:
-    typedef const std::function<void(bool sent)> onSendCallback;  
     typedef RTC::RtpHeaderExtensionIds ExtensionIds;
     class Listener {
     public:
-      virtual std::shared_ptr<Media> FindFrom(RTC::RtpPacket &packet) = 0;
+      typedef const std::function<void(bool sent)> onSendCallback;  
+    public:
+      virtual const std::string &rtp_id() const = 0;
       virtual void RecvStreamClosed(uint32_t ssrc) = 0;
       virtual void SendStreamClosed(uint32_t ssrc) = 0;
       virtual bool IsConnected() const = 0;
@@ -41,22 +44,71 @@ namespace rtp {
       virtual void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) = 0;
     };
   public:
-    Handler(Listener *l) : listener_(l) {}
+    Handler(Listener &l) :
+      listener_(l), producer_factory_(*this), shared_(),
+      medias_(), rid_label_map_(), trackid_label_map_(), ssrc_trackid_map_(), rid_scalability_mode_map_() {}
     inline const ExtensionIds &ext_ids() const { return recvRtpHeaderExtensionIds; }
     inline ExtensionIds &ext_ids() { return recvRtpHeaderExtensionIds; }
-    void OnTimer(qrpc_time_t now) { SendRtcp(qrpc_time_to_msec(now)); }
+    inline Listener &listener() { return listener_; }
+    inline RTC::Shared &shared() { return shared_; }
+    inline std::string FindScalabilityMode(const std::string &rid) {
+      auto it = rid_scalability_mode_map_.find(rid);
+      return it == rid_scalability_mode_map_.end() ? it->second : "";
+    }
+    qrpc_time_t OnTimer(qrpc_time_t now) { SendRtcp(qrpc_time_to_msec(now)); }
     bool SetExtensionId(uint8_t id, const std::string &uri);
+    void SetNegotiationArgs(const std::map<std::string, json> &args);
+    std::shared_ptr<Media> FindFrom(const Parameters &p);
+    int CreateProducer(const std::string &id, const Parameters &p);
+    int CreateConsumer(const Parameters &p);
+    static inline qrpc_time_t RtcpRandomInterval() { return qrpc_time_msec(random::gen(1000, 1500)); }
+		/* Pure virtual methods inherited from RTC::Producer::Listener. */
+	public:
+		void OnProducerReceiveData(RTC::Producer* /*producer*/, size_t len) override {
+			this->DataReceived(len);
+		}
+		void OnProducerReceiveRtpPacket(RTC::Producer* /*producer*/, RTC::RtpPacket* packet) override {
+			this->ReceiveRtpPacket(listener_.rtp_id(), *packet);
+		}
+		void OnProducerPaused(RTC::Producer* producer) override;
+		void OnProducerResumed(RTC::Producer* producer) override;
+		void OnProducerNewRtpStream(
+		  RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) override;
+		void OnProducerRtpStreamScore(
+		  RTC::Producer* producer,
+		  RTC::RtpStreamRecv* rtpStream,
+		  uint8_t score,
+		  uint8_t previousScore) override;
+		void OnProducerRtcpSenderReport(
+		  RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, bool first) override;
+		void OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RtpPacket* packet) override;
+		void OnProducerSendRtcpPacket(RTC::Producer* producer, RTC::RTCP::Packet* packet) override;
+		void OnProducerNeedWorstRemoteFractionLost(
+		  RTC::Producer* producer, uint32_t mappedSsrc, uint8_t& worstRemoteFractionLost) override;
+
+		/* Pure virtual methods inherited from RTC::Consumer::Listener. */
+	public:
+		void OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet) override;
+		void OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet) override;
+		void OnConsumerKeyFrameRequested(RTC::Consumer* consumer, uint32_t mappedSsrc) override;
+		void OnConsumerNeedBitrateChange(RTC::Consumer* consumer) override;
+		void OnConsumerNeedZeroBitrate(RTC::Consumer* consumer) override;
+		void OnConsumerProducerClosed(RTC::Consumer* consumer) override;    
   // borrow from src/ext/mediasoup/worker/include/RTC/Transport.hpp
   public:
     void ReceiveRtpPacket(const std::string &id, RTC::RtpPacket &packet);
     void ReceiveRtcpPacket(RTC::RTCP::Packet *packet);
+		RTC::Consumer* GetConsumerByMediaSsrc(uint32_t ssrc) const;
+		RTC::Consumer* GetConsumerByRtxSsrc(uint32_t ssrc) const;
   protected:
     void SendRtcp(uint64_t nowMs);
     void HandleRtcpPacket(RTC::RTCP::Packet *packet);
 		inline void DataReceived(size_t len) { recvTransmission.Update(len, qrpc_time_msec(qrpc_time_now())); }
 		inline void DataSent(size_t len) { sendTransmission.Update(len, qrpc_time_msec(qrpc_time_now())); }
   protected:
-    Listener *listener_{ nullptr };
+    Listener &listener_;
+    ProducerFactory producer_factory_;
+    Shared shared_;
     ExtensionIds recvRtpHeaderExtensionIds;
 		// Allocated by this.
 		absl::flat_hash_map<std::string, RTC::Producer*> mapProducers;
@@ -81,6 +133,12 @@ namespace rtp {
 		uint32_t maxIncomingBitrate{ 0u };
 		uint32_t maxOutgoingBitrate{ 0u };
 		uint32_t minOutgoingBitrate{ 0u };
+  protected:
+    std::map<Media::Id, std::shared_ptr<Media>> medias_;
+    std::map<Media::Rid, Media::Id> rid_label_map_;
+    std::map<Media::TrackId, Media::Id> trackid_label_map_;
+    std::map<Media::Ssrc, Media::TrackId> ssrc_trackid_map_;
+    std::map<Media::Rid, Media::ScalabilityMode> rid_scalability_mode_map_;
   };
 }
 }

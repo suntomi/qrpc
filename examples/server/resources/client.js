@@ -49,16 +49,10 @@ class QRPCMedia {
 }
 class QRPClient {
   static SYSCALL_STREAM = "$syscall";
+  static DEFAULT_SCALABILITY_MODE = "L1T3";
   constructor(url) {
     this.url = url;
-    this.streams = {};
-    this.medias = {};
-    this.hdmap = {};
-    this.mdmap = {};
-    this.trackIdLabelMap = {}; // trackId -> label
-    this.ridLabelMap = {}; // RTP stream id -> label
-    this.sdpOfferMap = {}; // sdpGen -> sdp offer
-    this.sdpGen = -1;
+    this.#clear();
     this.handlerResolver = (c, label, isMedia) => {
       const handler_id = label.indexOf("?") > 0 ? label.split("?")[0] : label;
       return isMedia ? c.mdmap[handler_id] : c.hdmap[handler_id];
@@ -77,7 +71,7 @@ class QRPClient {
           await this.pc.setRemoteDescription({type:"offer",sdp:data.args.sdp});
           const answer = await this.pc.createAnswer();
           await this.pc.setLocalDescription(answer);
-          this.syscall("nego_ack",{label:data.args.label,sdp:answer.sdp,gen:this.sdpGen});
+          this.syscall("nego_ack",{sdp:answer.sdp,gen:this.sdpGen});
         } else if (data.fn === "nego_ack") {
           const offer = this.sdpOfferMap[data.args.gen];
           if (!offer) {
@@ -102,6 +96,17 @@ class QRPClient {
         }
       }
     });
+  }
+  #clear() {
+    this.streams = {};
+    this.medias = {};
+    this.hdmap = {};
+    this.mdmap = {};
+    this.trackIdLabelMap = {};
+    this.ridLabelMap = {};
+    this.ridScalabilityModeMap = {};
+    this.sdpOfferMap = {};
+    this.sdpGen = -1;    
   }
   initIce() {
     //Ice properties
@@ -235,9 +240,7 @@ class QRPClient {
     const fetched = await fetch(this.url, {
       method: "POST",
       body: JSON.stringify({
-        sdp:offer.sdp,
-        ridLabelMap:this.ridLabelMap,
-        trackIdLabelMap:this.trackIdLabelMap,
+        sdp:offer.sdp,rtp:this.#rtpPayload()
       }),
       headers
     });
@@ -287,7 +290,7 @@ class QRPClient {
       this.pc.close();
     }
     this.pc = null;
-    this.streams = {};
+    this.#clear();
     if (reconnectionWaitMS > 0) {
       console.log(`attempt reconnect after ${reconnectionWaitMS} ms`);
       setTimeout(() => {
@@ -296,6 +299,20 @@ class QRPClient {
     } else {
       console.log("no reconnect. bye!");
     }
+  }
+  #rtpPayload() {
+    if (
+      Object.keys(this.ridLabelMap).length !== 0 ||
+      Object.keys(this.ridScalabilityModeMap).length !== 0 ||
+      Object.keys(this.trackIdLabelMap).length !== 0
+    ) {
+      return {
+        ridLabelMap:this.ridLabelMap,
+        ridScalabilityModeMap:this.ridScalabilityModeMap,
+        trackIdLabelMap:this.trackIdLabelMap,
+      };
+    }
+    return undefined;
   }
   async renegotiation() {
     if (this.sdpGen < 0) {
@@ -308,8 +325,7 @@ class QRPClient {
     console.log("offer sdp", offer.sdp);
     this.syscall("nego", {
       sdp:offer.sdp,gen:this.sdpGen,
-      ridLabelMap:this.ridLabelMap,
-      trackIdLabelMap:this.trackIdLabelMap,
+      rtp:this.#rtpPayload()
     });
   }
   handleMedia(handler_name, callbacks) {
@@ -331,7 +347,14 @@ class QRPClient {
       throw new Error("encoding is mandatory");
     }
     stream.getTracks().forEach(t => this.trackIdLabelMap[t.id] = label);
-    encodings.forEach(e => { this.ridLabelMap[e.rid] = label; });
+    encodings.forEach(e => {
+      if (!e.rid) {
+        throw new Error("for each encodings, rid is mandatory");
+      }
+      e.scalabilityMode = e.scalabilityMode || QRPClient.DEFAULT_SCALABILITY_MODE;
+      this.ridLabelMap[e.rid] = label;
+      this.ridScalabilityModeMap[e.rid] = e.scalabilityMode;
+    });
     const m = new QRPCMedia(label, stream, encodings);
     this.medias[label] = m;
     m.open(this);

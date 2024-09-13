@@ -321,10 +321,10 @@ QRPC_DECL_CLOSURE(bool, qrpc_on_media_open_t, void *, qrpc_media_t, void**);
 //media closed. after this called, qrpc_media_t which given to this function will be invalid.
 QRPC_DECL_CLOSURE(void, qrpc_on_media_close_t, void *, qrpc_media_t);
 //media stream packet received. return false to unsubscribe media stream.
-QRPC_DECL_CLOSURE(bool, qrpc_media_sub_t, void *, qrpc_media_t, const void *, qrpc_size_t);
+QRPC_DECL_CLOSURE(bool, qrpc_media_consumer_t, void *, qrpc_media_t, const void *, qrpc_size_t);
 //media stream packet received. should return byte array pointer and its size via qrpc_size_t*.
 //return null to stop publish.
-QRPC_DECL_CLOSURE(bool, qrpc_media_pub_t, void *, qrpc_size_t*);
+QRPC_DECL_CLOSURE(bool, qrpc_media_producer_t, void *, qrpc_size_t*);
 
 /* alarm */
 QRPC_DECL_CLOSURE(void, qrpc_on_alarm_t, void *, qrpc_time_t *);
@@ -659,13 +659,13 @@ struct qrpc_media_params_t {
   struct qrpc_media_codec_t codecs[];
 };
 // publish media stream, which name is label
-QAPI_THREADSAFE void qrpc_conn_media(qrpc_conn_t conn, const char *name, qrpc_media_pub_t pub);
+QAPI_THREADSAFE void qrpc_conn_media(qrpc_conn_t conn, const char *name, qrpc_media_producer_t p);
 // get correspond connection from media
 QAPI_THREADSAFE qrpc_conn_t qrpc_media_conn(qrpc_media_t media);
-// subscribe media stream packet
-QAPI_THREADSAFE void qrpc_media_sub(qrpc_media_t media, qrpc_media_sub_t sub);
+// consume media stream packet
+QAPI_THREADSAFE void qrpc_media_consume(qrpc_media_t media, qrpc_media_consumer_t c);
 // create media subscriber object from conn, which can be used for qrpc_media_sub
-QAPI_THREADSAFE qrpc_media_sub_t qrpc_conn_media_sub(qrpc_conn_t conn, qrpc_media_params_t params);
+QAPI_THREADSAFE qrpc_media_consumer_t qrpc_conn_media_consumer(qrpc_conn_t conn, qrpc_media_params_t params);
 
 // --------------------------
 //

@@ -252,20 +252,10 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'gen'"}});
         return QRPC_OK;
       }
-      const auto lit = args.find("label");
-      if (lit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
-        return QRPC_OK;
-      }
-      const auto rlmit = args.find("ridLabelMap");
-      if (rlmit != args.end()) {
-        c.rid_label_map_ = rlmit->second.get<std::map<std::string,std::string>>();
-        QRPC_LOGJ(info, {{"ev","new rid label map"},{"map",*rlmit}});
-      }
-      const auto tlmit = args.find("trackIdLabelMap");
-      if (tlmit != args.end()) {
-        c.trackid_label_map_ = tlmit->second.get<std::map<std::string,std::string>>();
-        QRPC_LOGJ(info, {{"ev","new track id label map"},{"map",*tlmit}});
+      const auto rtpit = args.find("rtp");
+      if (rtpit != args.end()) {
+        c.InitRTP();
+        c.rtp_handler().SetNegotiationArgs(rtpit->second.get<std::map<std::string,json>>());
       }
       const auto &sdp_text = sit->second.get<std::string>();
       std::string answer;
@@ -275,7 +265,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"error",answer}});
         return QRPC_OK;
       }
-      Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"sdp",answer},{"label",lit->second.get<std::string>()}});
+      Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"sdp",answer}});
     } else {
       QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
       ASSERT(false);
@@ -303,6 +293,18 @@ bool ConnectionFactory::Connection::connected() const {
     ) && dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED
   );
 }
+void ConnectionFactory::Connection::InitRTP() {
+  if (rtp_handler_ == nullptr) {
+    rtp_handler_ = std::make_shared<rtp::Handler>(this);
+  }
+  if (rtcp_alarm_id_ == AlarmProcessor::INVALID_ID) {
+    rtcp_alarm_id_ = sv_.alarm_processor().Set(
+      [this]() { return this->rtp_handler_->OnTimer(qrpc_time_now()); },
+      qrpc_time_now() + rtp::Handler::RtcpRandomInterval()
+    );
+  }
+}
+
 int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   if (ice_server_ != nullptr) {
     logger::warn({{"ev","already init"}});
@@ -613,7 +615,7 @@ void ConnectionFactory::Connection::TryParseRtcpPacket(const uint8_t *p, size_t 
   }
   // we need to implement RTC::Transport::ReceiveRtcpPacket(packet) equivalent
   logger::info({{"ev","RTCP packet received"}});
-  rtp_handler_->ReceiveControl(packet); // deletes packet
+  rtp_handler_->ReceiveRtcpPacket(packet); // deletes packet
 }
 int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
@@ -656,7 +658,7 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
       {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
     });
   } else {
-    rtp_handler_->Receive(ice_server_->GetUsernameFragment(), *packet);
+    rtp_handler_->ReceiveRtpPacket(ice_server_->GetUsernameFragment(), *packet);
   }
   delete packet;
 }
@@ -1001,51 +1003,7 @@ void ConnectionFactory::Connection::OnSctpAssociationBufferedAmount(
   TRACK();
 }
 
-// implements RTPHandler::Listener
-std::shared_ptr<Media> ConnectionFactory::Connection::FindFrom(RTC::RtpPacket &p) {
-  std::string rid, mid;
-  p.ReadMid(mid);
-  if (p.ReadRid(rid)) {
-    QRPC_LOGJ(debug, {
-      {"ev","RTP packet received"},
-      {"proto","srtp"},{"ssrc",p.GetSsrc()},{"rid",rid},{"mid",mid},
-      {"payloadType",p.GetPayloadType()},{"seq",p.GetSequenceNumber()}
-    });
-    auto lit = rid_label_map_.find(rid);
-    if (lit == rid_label_map_.end()) {
-      ASSERT(false);
-      return nullptr;
-    }
-    auto mit = medias_.find(lit->second);
-    if (mit == medias_.end()) {
-      // ASSERT(false);
-      return nullptr;
-    }
-    return mit->second;
-  } else {
-    QRPC_LOGJ(debug, {
-      {"ev","RTP packet received"},
-      {"proto","srtp"},{"ssrc",p.GetSsrc()},{"mid",mid},
-      {"payloadType",p.GetPayloadType()},{"seq",p.GetSequenceNumber()}
-    });
-    auto tidit = ssrc_trackid_map_.find(p.GetSsrc());
-    if (tidit == ssrc_trackid_map_.end()) {
-      ASSERT(false);
-      return nullptr;
-    }
-    auto lit = trackid_label_map_.find(tidit->second);
-    if (lit == trackid_label_map_.end()) {
-      ASSERT(false);
-      return nullptr;
-    }
-    auto mit = medias_.find(lit->second);
-    if (mit == medias_.end()) {
-      // ASSERT(false);
-      return nullptr;
-    }
-    return mit->second;
-  }
-}
+// implements rtp::Handler::Listener
 void ConnectionFactory::Connection::RecvStreamClosed(uint32_t ssrc) {
   if (srtp_recv_ != nullptr) {
     srtp_recv_->RemoveStream(ssrc);
@@ -1056,6 +1014,19 @@ void ConnectionFactory::Connection::SendStreamClosed(uint32_t ssrc) {
   if (srtp_send_ != nullptr) {
     srtp_send_->RemoveStream(ssrc);
   }
+}
+bool ConnectionFactory::Connection::IsConnected() const {
+  return true;
+}
+void ConnectionFactory::Connection::SendRtpPacket(
+  RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb) {
+
+}
+void ConnectionFactory::Connection::SendRtcpPacket(RTC::RTCP::Packet* packet) {
+
+}
+void ConnectionFactory::Connection::SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) {
+
 }
 
 
@@ -1377,7 +1348,12 @@ int Listener::Accept(const std::string &client_req_body, std::string &server_sdp
   try {
     auto client_req = json::parse(client_req_body);
     logger::info({{"ev","new server connection"},{"client_req", client_req}});
-    auto client_sdp = client_req["sdp"].get<std::string>();
+    auto client_sdp_it = client_req.find("sdp");
+    if (client_sdp_it == client_req.end()) {
+      logger::error({{"ev","fail to find sdp to answer"},{"req",client_req}});
+      return QRPC_EINVAL;
+    }
+    auto client_sdp = client_sdp_it->get<std::string>();
     // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
     // even if sdp anwser ask to do it.
     auto c = std::shared_ptr<Connection>(factory_method_(*this, DtlsTransport::Role::CLIENT));
@@ -1391,20 +1367,16 @@ int Listener::Accept(const std::string &client_req_body, std::string &server_sdp
       logger::error({{"ev","fail to init connection"},{"rc",r}});
       return QRPC_EINVAL;
     }
+    const auto rtpit = client_req.find("rtp");
+    if (rtpit != client_req.end()) {
+      c->InitRTP();
+      c->rtp_handler().SetNegotiationArgs(rtpit->get<std::map<std::string,json>>());
+    }
+
     SDP sdp(client_sdp);
     if (!sdp.Answer(*c, server_sdp)) {
       logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
       return QRPC_EINVAL;
-    }
-    const auto rlmit = client_req.find("ridLabelMap");
-    if (rlmit != client_req.end()) {
-      c->SetRidLabelMap(rlmit->get<std::map<std::string,std::string>>());
-      QRPC_LOGJ(info, {{"ev","new rid label map"},{"map",*rlmit}});
-    }
-    const auto tlmit = client_req.find("trackIdLabelMap");
-    if (tlmit != client_req.end()) {
-      c->SetTrackIdLabelMap(tlmit->get<std::map<std::string,std::string>>());
-      QRPC_LOGJ(info, {{"ev","new track id label map"},{"map",*tlmit}});
     }
     connections_.emplace(std::move(ufrag), c);
   } catch (const std::exception &e) {

@@ -101,7 +101,7 @@ namespace rtp {
         v["rtcpFeedback"] = fbs;
       }
       json p;
-      const_cast<RTC::Parameters &>(c.parameters).Set(p);
+      c.parameters.FillJson(p);
       if (p.size() > 0) {
         v["parameters"] = p;
       }
@@ -127,10 +127,22 @@ namespace rtp {
   }
   json &&Parameters::EncodingsToJson() const {
     json j;
-    for (auto &rid : simulcast.send_rids) {
-      j.push_back({
-        {"rid", rid},{"active",true}
-      });
+    for (auto &e : encodings) {
+      json map;
+      if (e.hasRtx) {
+        map["rtx"] = {
+          {"ssrc", e.rtx.ssrc}
+        };
+      }
+      if (!e.rid.empty()) {
+        map["rid"] = e.rid;
+      } else if (e.ssrc != 0) {
+        map["ssrc"] = e.ssrc;
+      }
+      if (!e.scalabilityMode.empty()) {
+        map["scalabilityMode"] = e.scalabilityMode;
+      }
+      j.push_back(map);
     }
     return std::move(j);
   }
@@ -153,7 +165,77 @@ namespace rtp {
       }}
     };
   }
+  json &&Parameters::CodecMappingToJson() const {
+    auto j = json::array();
+    for (auto &c : codecs) {
+      j.push_back({
+        {"payloadType", c.payloadType},
+        {"mappedPayloadType", c.payloadType}
+      });
+    }
+    return std::move(j);
+  }
+  json &&Parameters::EncodingMappingToJson() const {
+    auto j = json::array();
+    auto seed = GenerateSsrc();
+    for (auto &e : encodings) {
+      json map = {
+        {"mappedSsrc", seed++}
+      };
+      if (e.ssrc != 0) {
+        map["ssrc"] = e.ssrc;
+      }
+      if (!e.rid.empty()) {
+        map["rid"] = e.rid;
+      }
+      j.push_back(map);
+    }
+    return std::move(j);
+  }
+  json &&Parameters::ToMapping() const {
+    // {
+    // 	codecs:
+    // 	{
+    // 		payloadType: number;
+    // 		mappedPayloadType: number;
+    // 	}[];
 
+    // 	encodings:
+    // 	{
+    // 		ssrc?: number;
+    // 		rid?: string;
+    // 		scalabilityMode?: string;
+    // 		mappedSsrc: number;
+    // 	}[];
+    // };
+    return {
+      {"codecs", CodecMappingToJson()},
+      {"encodings", EncodingMappingToJson()}
+    };
+  }
+
+
+  void Parameters::AddEncoding(
+    const std::string &rid, uint64_t pt, uint64_t rtxpt, bool dtx,
+    const std::string &scalability_mode) {
+    RTC::RtpEncodingParameters p;
+    p.rid = rid;
+    p.scalabilityMode = scalability_mode;
+    p.dtx = dtx;
+    p.codecPayloadType = pt;
+    p.hasCodecPayloadType = pt != 0;
+    p.hasRtx = rtxpt != 0;
+    encodings.push_back(p);
+  }
+  void Parameters::AddEncoding(uint32_t ssrc, uint64_t pt, uint64_t rtxpt, bool dtx) {
+    RTC::RtpEncodingParameters p;
+    p.ssrc = ssrc;
+    p.dtx = dtx;
+    p.codecPayloadType = pt;
+    p.hasCodecPayloadType = pt != 0;
+    p.hasRtx = rtxpt != 0;
+    encodings.push_back(p);
+  }
   int Parameters::Parse(Handler &h, const json &section, std::string &answer)  {
     auto midit = section.find("mid");
     if (midit == section.end()) {
@@ -202,6 +284,7 @@ namespace rtp {
     // parse fmtp
     std::map<uint64_t, std::string> fmtpmap;
     std::map<uint64_t, uint64_t> rtxmap; // target codec stream pt => rtx pt
+    std::map<uint64_t, bool> dtxmap; // target codec stream pt => dtx
     auto fmtpit = section.find("fmtp");
     if (fmtpit != section.end()) {
       for (auto it = fmtpit->begin(); it != fmtpit->end(); it++) {
@@ -220,6 +303,8 @@ namespace rtp {
             ASSERT(false);
             return false;
           }
+        } else if (config.find("usedtx=1") != std::string::npos) {
+          dtxmap[pt] = true;
         }
       }
     }
@@ -286,6 +371,7 @@ namespace rtp {
     codecs.push_back(rtp.params);
     uint64_t rtx_pt = 0;
     auto rtxit = rtxmap.find(selected_pt);
+    auto usedtx = dtxmap.find(selected_pt) != dtxmap.end();
     if (rtxit != rtxmap.end()) {
       rtx_pt = rtxit->second;
       auto rtxrtpit = rtpmaps.find(rtx_pt);
@@ -394,6 +480,7 @@ namespace rtp {
           auto idit = it->find("id");
           auto vit = it->find("value");
           auto id = idit->get<uint32_t>();
+          AddEncoding(id, selected_pt, rtx_pt, usedtx);
           auto ssrcit = ssrcs.find(id);
           if (ssrcit == ssrcs.end()) {
             ssrcs[id] = {
@@ -418,12 +505,20 @@ namespace rtp {
       auto dir1 = dit->get<std::string>();
       auto &rids = dir1 == "send" ? simulcast.send_rids : simulcast.recv_rids;
       rids = lit->get<std::string>();
+      for (auto &rid : str::Split(rids, " ")) {
+        auto scalability_mode = h.FindScalabilityMode(rid);
+        AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
+      }
       auto d2it = scit->find("dir2");
       if (d2it != scit->end()) {
         FIND_OR_RAISE(l2it, scit, "list2");
         auto dir2 = d2it->get<std::string>();
         auto &rids = dir2 == "send" ? simulcast.send_rids : simulcast.recv_rids;
         rids = l2it->get<std::string>();
+        for (auto &rid : str::Split(rids, " ")) {
+          auto scalability_mode = h.FindScalabilityMode(rid);
+          AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
+        }
       }
     }
     return QRPC_OK;

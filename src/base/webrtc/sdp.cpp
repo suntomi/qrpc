@@ -285,9 +285,7 @@ a=setup:active
     }
     if (FindMediaSection("audio", asec)) {
       if (AnswerMediaSection(asec, proto, c, section_answer, params)) {
-        for (auto kv : params.ssrcs) {
-          c.SetSsrcTrackIdPair(kv.first, kv.second.track_id);
-        }
+        c.rtp_handler().CreateProducer(c.rtp_id(), params);
         section_answer_map[params.mid] = section_answer;
       } else {
         answer = section_answer;
@@ -298,9 +296,7 @@ a=setup:active
     }
     if (FindMediaSection("video", vsec)) {
       if (AnswerMediaSection(vsec, proto, c, section_answer, params)) {
-        for (auto kv : params.ssrcs) {
-          c.SetSsrcTrackIdPair(kv.first, kv.second.track_id);
-        }
+        c.rtp_handler().CreateProducer(c.rtp_id(), params);
         section_answer_map[params.mid] = section_answer;
       } else {
         answer = section_answer;

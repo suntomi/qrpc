@@ -3,6 +3,8 @@
 #include "base/logger.h"
 #include "base/string.h"
 
+#include "base/webrtc/mpatch.h"
+
 #include "RTC/BweType.hpp"
 #include "RTC/PipeConsumer.hpp"
 #include "RTC/RTCP/FeedbackPs.hpp"
@@ -23,6 +25,10 @@
 
 namespace base {
 namespace rtp {
+	qrpc_time_t Handler::OnTimer(qrpc_time_t now) {
+		SendRtcp(qrpc_time_to_msec(now));
+		return now + RtcpRandomInterval();
+	}
 	void Handler::ReceiveRtcpPacket(RTC::RTCP::Packet *packet) {
 		MS_TRACE();
 
@@ -53,7 +59,7 @@ namespace rtp {
 			// Send the RTCP compound packet and request for RTCP again.
 			if (!rtcpAdded)
 			{
-				listener_->SendRtcpCompoundPacket(packet.get());
+				listener_.SendRtcpCompoundPacket(packet.get());
 
 				// Create a new compount packet.
 				packet.reset(new RTC::RTCP::CompoundPacket());
@@ -72,7 +78,7 @@ namespace rtp {
 			// Send the RTCP compound packet and request for RTCP again.
 			if (!rtcpAdded)
 			{
-				listener_->SendRtcpCompoundPacket(packet.get());
+				listener_.SendRtcpCompoundPacket(packet.get());
 
 				// Create a new compount packet.
 				packet.reset(new RTC::RTCP::CompoundPacket());
@@ -85,8 +91,28 @@ namespace rtp {
 		// Send the RTCP compound packet if there is any sender or receiver report.
 		if (packet->GetReceiverReportCount() > 0u || packet->GetSenderReportCount() > 0u)
 		{
-			listener_->SendRtcpCompoundPacket(packet.get());
+			listener_.SendRtcpCompoundPacket(packet.get());
 		}
+	}
+	// TODO: how to get ssrc of consumer, that usually not contained in SDP?
+	inline RTC::Consumer* Handler::GetConsumerByMediaSsrc(uint32_t ssrc) const {
+		MS_TRACE();
+		auto mapSsrcConsumerIt = this->mapSsrcConsumer.find(ssrc);
+		if (mapSsrcConsumerIt == this->mapSsrcConsumer.end()) {
+			return nullptr;
+		}
+		auto* consumer = mapSsrcConsumerIt->second;
+		return consumer;
+	}
+	// TODO: how to get rtx ssrc of consumer, that usually not contained in SDP?
+	inline RTC::Consumer* Handler::GetConsumerByRtxSsrc(uint32_t ssrc) const {
+		MS_TRACE();
+		auto mapRtxSsrcConsumerIt = this->mapRtxSsrcConsumer.find(ssrc);
+		if (mapRtxSsrcConsumerIt == this->mapRtxSsrcConsumer.end()) {
+			return nullptr;
+		}
+		auto* consumer = mapRtxSsrcConsumerIt->second;
+		return consumer;
 	}	
 	void Handler::HandleRtcpPacket(RTC::RTCP::Packet *packet) {
 		MS_TRACE();
@@ -376,7 +402,7 @@ namespace rtp {
 				for (auto it = sr->Begin(); it != sr->End(); ++it)
 				{
 					auto& report   = *it;
-					auto* producer = this->rtpListener.GetProducer(report->GetSsrc());
+					auto* producer = producer_factory_.Get(report->GetSsrc());
 
 					if (!producer)
 					{
@@ -437,7 +463,7 @@ namespace rtp {
 									ssrcInfo->SetSsrc(xr->GetSsrc());
 								}
 
-								auto* producer = this->rtpListener.GetProducer(ssrcInfo->GetSsrc());
+								auto* producer = producer_factory_.Get(ssrcInfo->GetSsrc());
 
 								if (!producer)
 								{
@@ -484,6 +510,74 @@ namespace rtp {
 				  static_cast<uint8_t>(packet->GetType()));
 			}
 		}
+	}
+	void Handler::SetNegotiationArgs(const std::map<std::string, json> &args) {
+		const auto rlmit = args.find("ridLabelMap");
+		if (rlmit != args.end()) {
+			rid_label_map_ = rlmit->second.get<std::map<std::string,std::string>>();
+			QRPC_LOGJ(info, {{"ev","new rid label map"},{"map",*rlmit}});
+		}
+		const auto tlmit = args.find("trackIdLabelMap");
+		if (tlmit != args.end()) {
+			trackid_label_map_ = tlmit->second.get<std::map<std::string,std::string>>();
+			QRPC_LOGJ(info, {{"ev","new track id label map"},{"map",*tlmit}});
+		}
+		const auto rsmit = args.find("ridScalabilityModeMap");
+		if (rsmit != args.end()) {
+			rid_scalability_mode_map_ = rsmit->second.get<std::map<std::string,Media::ScalabilityMode>>();
+			QRPC_LOGJ(info, {{"ev","new rid scalability mode map"},{"map",*rsmit}});
+		}
+	}
+	std::shared_ptr<Media> Handler::FindFrom(const Parameters &p) {
+		// 1. if encodings[*].rid has value, find label from rid by using rid_label_map_
+		for (auto &e : p.encodings) {
+			if (e.rid.empty()) {
+				continue;
+			}
+			auto lit = rid_label_map_.find(e.rid);
+			if (lit != rid_label_map_.end()) {
+				auto &label = lit->second;
+				auto mit = medias_.find(label);
+				if (mit != medias_.end()) {
+					return mit->second;
+				} else {
+					auto m = std::make_shared<Media>(label);
+					medias_[label] = m;
+					return m;
+				}
+			}
+		}
+		// 2. if p.ssrcs has value, find label from ssrc by using trackid_label_map_
+		for (auto kv : p.ssrcs) {
+			if (kv.second.track_id.empty()) {
+				continue;
+			}
+			auto lit = trackid_label_map_.find(kv.second.track_id);
+			if (lit != trackid_label_map_.end()) {
+				auto &label = lit->second;
+				auto mit = medias_.find(label);
+				if (mit != medias_.end()) {
+					return mit->second;
+				} else {
+					auto m = std::make_shared<Media>(label);
+					medias_[label] = m;
+					return m;
+				}
+			}
+		}
+		// if label is found from rid or ssrc, find media from medias_ by using label
+		// otherwise, return empty shared_ptr
+		return nullptr;
+	}
+	int Handler::CreateProducer(const std::string &id, const Parameters &p) {
+		for (auto kv : p.ssrcs) {
+			ssrc_trackid_map_[kv.first] = kv.second.track_id;
+		}
+		auto producer = producer_factory_.Create(id, p);
+		return producer != nullptr ? QRPC_OK : QRPC_EINVAL;
+	}
+	int Handler::CreateConsumer(const Parameters &p) {
+		return QRPC_OK;
 	}
 	bool Handler::SetExtensionId(uint8_t id, const std::string &uri) {
 		if (uri == "urn:ietf:params:rtp-hdrext:toffset") {
@@ -558,45 +652,44 @@ namespace rtp {
     //   {"payloadType",packet.GetPayloadType()},{"seq",packet.GetSequenceNumber()}
     // });
 
-		// // Get the associated Producer.
-		// RTC::Producer* producer = listener_->GetProducer(packet);
-		// auto m = listener_->FindFrom(packet);
+		// Get the associated Producer.
+		RTC::Producer* producer = producer_factory_.Get(packet);
 		
-		// if (!m) {
-		// 	packet.logger.Dropped(RTC::RtcLogger::RtpPacket::DropReason::PRODUCER_NOT_FOUND);
-		// 	MS_WARN_TAG(
-		// 	  rtp,
-		// 	  "no suitable Producer for received RTP packet [ssrc:%" PRIu32 ", payloadType:%" PRIu8 "]",
-		// 	  packet.GetSsrc(),
-		// 	  packet.GetPayloadType());
-		// 	// Tell the child class to remove this SSRC.
-		// 	listener_->RecvStreamClosed(packet.GetSsrc());
-		// 	return;
-		// }
+		if (!producer) {
+			packet.logger.Dropped(RTC::RtcLogger::RtpPacket::DropReason::PRODUCER_NOT_FOUND);
+			MS_WARN_TAG(
+			  rtp,
+			  "no suitable Producer for received RTP packet [ssrc:%" PRIu32 ", payloadType:%" PRIu8 "]",
+			  packet.GetSsrc(),
+			  packet.GetPayloadType());
+			// Tell the child class to remove this SSRC.
+			listener_.RecvStreamClosed(packet.GetSsrc());
+			return;
+		}
 
-		// MS_DEBUG_DEV(
-		//   "RTP packet received [ssrc:%" PRIu32 ", payloadType:%" PRIu8 ", producerId:%s]",
-		//   packet.GetSsrc(),
-		//   packet.GetPayloadType(),
-		//   m->label().c_str());
+		QRPC_LOG(error, 
+		  "RTP packet received [ssrc:%" PRIu32 ", payloadType:%" PRIu8 ", producerId:%s]",
+		  packet.GetSsrc(),
+		  packet.GetPayloadType(),
+		 id.c_str());
 
-		// // Pass the RTP packet to the corresponding Producer.
-		// auto result = m->ReceiveRtpPacket(packet);
+		// Pass the RTP packet to the corresponding Producer.
+		auto result = producer->ReceiveRtpPacket(&packet);
 
-		// switch (result)
-		// {
-		// 	case RTC::Producer::ReceiveRtpPacketResult::MEDIA:
-		// 		this->recvRtpTransmission.Update(&packet);
-		// 		break;
-		// 	case RTC::Producer::ReceiveRtpPacketResult::RETRANSMISSION:
-		// 		this->recvRtxTransmission.Update(&packet);
-		// 		break;
-		// 	case RTC::Producer::ReceiveRtpPacketResult::DISCARDED:
-		// 		// Tell the child class to remove this SSRC.
-		// 		listener_->RecvStreamClosed(packet.GetSsrc());
-		// 		break;
-		// 	default:;
-		// }
+		switch (result)
+		{
+			case RTC::Producer::ReceiveRtpPacketResult::MEDIA:
+				this->recvRtpTransmission.Update(&packet);
+				break;
+			case RTC::Producer::ReceiveRtpPacketResult::RETRANSMISSION:
+				this->recvRtxTransmission.Update(&packet);
+				break;
+			case RTC::Producer::ReceiveRtpPacketResult::DISCARDED:
+				// Tell the child class to remove this SSRC.
+				listener_.RecvStreamClosed(packet.GetSsrc());
+				break;
+			default:;
+		}
   }
 }
 }
