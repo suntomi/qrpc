@@ -52,6 +52,8 @@ class QRPClient {
   static DEFAULT_SCALABILITY_MODE = "L1T3";
   constructor(url) {
     this.url = url;
+    this.hdmap = {};
+    this.mdmap = {};
     this.#clear();
     this.handlerResolver = (c, label, isMedia) => {
       const handler_id = label.indexOf("?") > 0 ? label.split("?")[0] : label;
@@ -100,8 +102,6 @@ class QRPClient {
   #clear() {
     this.streams = {};
     this.medias = {};
-    this.hdmap = {};
-    this.mdmap = {};
     this.trackIdLabelMap = {};
     this.ridLabelMap = {};
     this.ridScalabilityModeMap = {};

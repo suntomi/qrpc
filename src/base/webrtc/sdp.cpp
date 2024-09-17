@@ -200,8 +200,16 @@ a=max-message-size:%u)cands",
         ASSERT(false);
         return false;
       }
+      auto portit = section.find("port");
+      if (portit == section.end()) {
+        answer = "rtpmap: no value for key 'port'";
+        ASSERT(false);
+        return false;
+      }
       params.mid = midit->get<std::string>();
       params.media_type = "application";
+      // network.port is mandatory
+      params.network.port = portit->get<uint16_t>();
       payloads = " webrtc-datachannel";
     } else {
       c.InitRTP();
