@@ -69,9 +69,7 @@ namespace rtp {
 			}
 		}
 
-		for (auto& kv : this->mapProducers)
-		{
-			auto* producer = kv.second;
+		for (auto& producer : this->producer_factory_.producers()) {
 			auto rtcpAdded = producer->GetRtcp(packet.get(), nowMs);
 
 			// RTCP data couldn't be added because the Compound packet is full.
@@ -691,5 +689,415 @@ namespace rtp {
 			default:;
 		}
   }
+
+	/* implements RTC::Producer::Listener */
+	void Handler::OnProducerPaused(RTC::Producer* producer) {
+		MS_TRACE();
+		auto& consumers = this->mapProducerConsumers.at(producer);
+		for (auto* consumer : consumers) {
+			consumer->ProducerPaused();
+		}
+	}
+	void Handler::OnProducerResumed(RTC::Producer* producer) {
+		MS_TRACE();
+		auto& consumers = this->mapProducerConsumers.at(producer);
+		for (auto* consumer : consumers) {
+			consumer->ProducerResumed();
+		}
+	}
+	void Handler::OnProducerNewRtpStream(
+		RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) {
+		MS_TRACE();
+		auto& consumers = this->mapProducerConsumers.at(producer);
+		for (auto* consumer : consumers) {
+			consumer->ProducerNewRtpStream(rtpStream, mappedSsrc);
+		}
+	}
+	void Handler::OnProducerRtpStreamScore(
+		RTC::Producer* producer,
+		RTC::RtpStreamRecv* rtpStream,
+		uint8_t score,
+		uint8_t previousScore) {
+		MS_TRACE();
+		auto& consumers = this->mapProducerConsumers.at(producer);
+		for (auto* consumer : consumers) {
+			consumer->ProducerRtpStreamScore(rtpStream, score, previousScore);
+		}
+	}
+	void Handler::OnProducerRtcpSenderReport(
+		RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, bool first) {
+		MS_TRACE();
+		auto& consumers = this->mapProducerConsumers.at(producer);
+		for (auto* consumer : consumers) {
+			consumer->ProducerRtcpSenderReport(rtpStream, first);
+		}
+	}
+	void Handler::OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RtpPacket* packet) {
+		MS_TRACE();
+		packet->logger.routerId = this->rtp_id();
+		auto& consumers = this->mapProducerConsumers.at(producer);
+		if (!consumers.empty())
+		{
+			// Cloned ref-counted packet that RtpStreamSend will store for as long as
+			// needed avoiding multiple allocations unless absolutely necessary.
+			// Clone only happens if needed.
+			std::shared_ptr<RTC::RtpPacket> sharedPacket;
+			for (auto* consumer : consumers) {
+				// Update MID RTP extension value.
+				const auto& mid = consumer->GetRtpParameters().mid;
+
+				if (!mid.empty())
+					packet->UpdateMid(mid);
+
+				consumer->SendRtpPacket(packet, sharedPacket);
+			}
+		}
+	}
+	void Handler::OnProducerSendRtcpPacket(RTC::Producer* /* producer */, RTC::RTCP::Packet* packet) {
+		listener_.SendRtcpPacket(packet);
+	}
+	void Handler::OnProducerNeedWorstRemoteFractionLost(
+		RTC::Producer* producer, uint32_t mappedSsrc, uint8_t& worstRemoteFractionLost) {
+		MS_TRACE();
+		auto& consumers = this->mapProducerConsumers.at(producer);
+		for (auto* consumer : consumers) {
+			consumer->NeedWorstRemoteFractionLost(mappedSsrc, worstRemoteFractionLost);
+		}
+	}
+	/* implements RTC::Consumer::Listener. */
+	void Handler::OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet) {
+		MS_TRACE();
+
+		packet->logger.sendTransportId = this->rtp_id();
+		packet->logger.Sent();
+
+		// Update abs-send-time if present.
+		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
+
+		// Update transport wide sequence number if present.
+		// clang-format off
+		if (
+			this->tccClient &&
+			this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
+			packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1)
+		)
+		// clang-format on
+		{
+			this->transportWideCcSeq++;
+
+			webrtc::RtpPacketSendInfo packetInfo;
+
+			packetInfo.ssrc                      = packet->GetSsrc();
+			packetInfo.transport_sequence_number = this->transportWideCcSeq;
+			packetInfo.has_rtp_sequence_number   = true;
+			packetInfo.rtp_sequence_number       = packet->GetSequenceNumber();
+			packetInfo.length                    = packet->GetSize();
+			packetInfo.pacing_info               = this->tccClient->GetPacingInfo();
+
+			// Indicate the pacer (and prober) that a packet is to be sent.
+			this->tccClient->InsertPacket(packetInfo);
+
+			// When using WebRtcServer, the lifecycle of a RTC::UdpSocket maybe longer
+			// than WebRtcTransport so there is a chance for the send callback to be
+			// invoked *after* the WebRtcTransport has been closed (freed). To avoid
+			// invalid memory access we need to use weak_ptr. Same applies in other
+			// send callbacks.
+			const std::weak_ptr<RTC::TransportCongestionControlClient> tccClientWeakPtr(this->tccClient);
+
+#ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
+			std::weak_ptr<RTC::SenderBandwidthEstimator> senderBweWeakPtr(this->senderBwe);
+			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
+
+			sentInfo.wideSeq     = this->transportWideCcSeq;
+			sentInfo.size        = packet->GetSize();
+			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
+
+			auto* cb = new onSendCallback(
+			  [tccClientWeakPtr, &packetInfo, senderBweWeakPtr, &sentInfo](bool sent)
+			  {
+				  if (sent)
+				  {
+					  auto tccClient = tccClientWeakPtr.lock();
+
+					  if (tccClient)
+					  {
+						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+					  }
+
+					  auto senderBwe = senderBweWeakPtr.lock();
+
+					  if (senderBwe)
+					  {
+						  sentInfo.sentAtMs = DepLibUV::GetTimeMs();
+						  senderBwe->RtpPacketSent(sentInfo);
+					  }
+				  }
+			  });
+
+			SendRtpPacket(consumer, packet, cb);
+#else
+			const auto* cb = new onSendCallback(
+			  [tccClientWeakPtr, &packetInfo](bool sent)
+			  {
+				  if (sent)
+				  {
+					  auto tccClient = tccClientWeakPtr.lock();
+
+					  if (tccClient)
+					  {
+						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+					  }
+				  }
+			  });
+
+			listener_.SendRtpPacket(consumer, packet, cb);
+#endif
+		}
+		else
+		{
+			listener_.SendRtpPacket(consumer, packet);
+		}
+
+		this->sendRtpTransmission.Update(packet);
+	}
+	void Handler::OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet) {
+		MS_TRACE();
+
+		// Update abs-send-time if present.
+		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
+
+		// Update transport wide sequence number if present.
+		// clang-format off
+		if (
+			this->tccClient &&
+			this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
+			packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1)
+		)
+		// clang-format on
+		{
+			this->transportWideCcSeq++;
+
+			webrtc::RtpPacketSendInfo packetInfo;
+
+			packetInfo.ssrc                      = packet->GetSsrc();
+			packetInfo.transport_sequence_number = this->transportWideCcSeq;
+			packetInfo.has_rtp_sequence_number   = true;
+			packetInfo.rtp_sequence_number       = packet->GetSequenceNumber();
+			packetInfo.length                    = packet->GetSize();
+			packetInfo.pacing_info               = this->tccClient->GetPacingInfo();
+
+			// Indicate the pacer (and prober) that a packet is to be sent.
+			this->tccClient->InsertPacket(packetInfo);
+
+			const std::weak_ptr<RTC::TransportCongestionControlClient> tccClientWeakPtr(this->tccClient);
+
+#ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
+			std::weak_ptr<RTC::SenderBandwidthEstimator> senderBweWeakPtr = this->senderBwe;
+			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
+
+			sentInfo.wideSeq     = this->transportWideCcSeq;
+			sentInfo.size        = packet->GetSize();
+			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
+
+			auto* cb = new onSendCallback(
+			  [tccClientWeakPtr, &packetInfo, senderBweWeakPtr, &sentInfo](bool sent)
+			  {
+				  if (sent)
+				  {
+					  auto tccClient = tccClientWeakPtr.lock();
+
+					  if (tccClient)
+					  {
+						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+					  }
+
+					  auto senderBwe = senderBweWeakPtr.lock();
+
+					  if (senderBwe)
+					  {
+						  sentInfo.sentAtMs = DepLibUV::GetTimeMs();
+						  senderBwe->RtpPacketSent(sentInfo);
+					  }
+				  }
+			  });
+
+			SendRtpPacket(consumer, packet, cb);
+#else
+			const auto* cb = new onSendCallback(
+			  [tccClientWeakPtr, &packetInfo](bool sent)
+			  {
+				  if (sent)
+				  {
+					  auto tccClient = tccClientWeakPtr.lock();
+
+					  if (tccClient)
+					  {
+						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+					  }
+				  }
+			  });
+
+			listener_.SendRtpPacket(consumer, packet, cb);
+#endif
+		}
+		else
+		{
+			listener_.SendRtpPacket(consumer, packet);
+		}
+
+		this->sendRtxTransmission.Update(packet);
+	}
+	void Handler::OnConsumerKeyFrameRequested(RTC::Consumer* consumer, uint32_t mappedSsrc) {
+		MS_TRACE();
+		if (!listener_.IsConnected()) {
+			MS_WARN_TAG(rtcp, "ignoring key rame request (transport not connected)");
+			return;
+		}
+		auto* producer = this->mapConsumerProducer.at(consumer);
+		producer->RequestKeyFrame(mappedSsrc);
+	}
+	void Handler::DistributeAvailableOutgoingBitrate() {
+		MS_TRACE();
+
+		MS_ASSERT(this->tccClient, "no TransportCongestionClient");
+
+		std::multimap<uint8_t, RTC::Consumer*> multimapPriorityConsumer;
+
+		// Fill the map with Consumers and their priority (if > 0).
+		for (auto& kv : this->mapConsumers)
+		{
+			auto* consumer = kv.second;
+			auto priority  = consumer->GetBitratePriority();
+
+			if (priority > 0u)
+			{
+				multimapPriorityConsumer.emplace(priority, consumer);
+			}
+		}
+
+		// Nobody wants bitrate. Exit.
+		if (multimapPriorityConsumer.empty())
+		{
+			return;
+		}
+
+		bool baseAllocation       = true;
+		uint32_t availableBitrate = this->tccClient->GetAvailableBitrate();
+
+		this->tccClient->RescheduleNextAvailableBitrateEvent();
+
+		MS_DEBUG_DEV("before layer-by-layer iterations [availableBitrate:%" PRIu32 "]", availableBitrate);
+
+		// Redistribute the available bitrate by allowing Consumers to increase
+		// layer by layer. Initially try to spread the bitrate across all
+		// consumers. Then allocate the excess bitrate to Consumers starting
+		// with the highest priorty.
+		while (availableBitrate > 0u)
+		{
+			auto previousAvailableBitrate = availableBitrate;
+
+			for (auto it = multimapPriorityConsumer.rbegin(); it != multimapPriorityConsumer.rend(); ++it)
+			{
+				auto priority  = it->first;
+				auto* consumer = it->second;
+				auto bweType   = this->tccClient->GetBweType();
+
+				for (uint8_t i{ 1u }; i <= (baseAllocation ? 1u : priority); ++i)
+				{
+					uint32_t usedBitrate{ 0u };
+					const bool considerLoss = (bweType == RTC::BweType::REMB);
+
+					usedBitrate = consumer->IncreaseLayer(availableBitrate, considerLoss);
+
+					MS_ASSERT(usedBitrate <= availableBitrate, "Consumer used more layer bitrate than given");
+
+					availableBitrate -= usedBitrate;
+
+					// Exit the loop fast if used bitrate is 0.
+					if (usedBitrate == 0u)
+					{
+						break;
+					}
+				}
+			}
+
+			// If no Consumer used bitrate, exit the loop.
+			if (availableBitrate == previousAvailableBitrate)
+			{
+				break;
+			}
+
+			baseAllocation = false;
+		}
+
+		MS_DEBUG_DEV("after layer-by-layer iterations [availableBitrate:%" PRIu32 "]", availableBitrate);
+
+		// Finally instruct Consumers to apply their computed layers.
+		for (auto it = multimapPriorityConsumer.rbegin(); it != multimapPriorityConsumer.rend(); ++it)
+		{
+			auto* consumer = it->second;
+
+			consumer->ApplyLayers();
+		}
+	}
+
+	void Handler::ComputeOutgoingDesiredBitrate(bool forceBitrate) {
+		MS_TRACE();
+		MS_ASSERT(this->tccClient, "no TransportCongestionClient");
+		uint32_t totalDesiredBitrate{ 0u };
+		for (auto& kv : this->mapConsumers)
+		{
+			auto* consumer      = kv.second;
+			auto desiredBitrate = consumer->GetDesiredBitrate();
+
+			totalDesiredBitrate += desiredBitrate;
+		}
+		MS_DEBUG_DEV("total desired bitrate: %" PRIu32, totalDesiredBitrate);
+		this->tccClient->SetDesiredBitrate(totalDesiredBitrate, forceBitrate);
+	}	
+	void Handler::OnConsumerNeedBitrateChange(RTC::Consumer* consumer) {
+		DistributeAvailableOutgoingBitrate();
+		ComputeOutgoingDesiredBitrate();	
+	}
+	void Handler::OnConsumerNeedZeroBitrate(RTC::Consumer* consumer) {
+		MS_TRACE();
+		MS_ASSERT(this->tccClient, "no TransportCongestionClient");
+		DistributeAvailableOutgoingBitrate();
+		// This may be the latest active Consumer with BWE. If so we have to stop probation.
+		ComputeOutgoingDesiredBitrate(/*forceBitrate*/ true);
+	}
+	void Handler::OnConsumerProducerClosed(RTC::Consumer* consumer) {
+		MS_TRACE();
+		// Remove it from the maps.
+		this->mapConsumers.erase(consumer->id);
+		for (auto ssrc : consumer->GetMediaSsrcs()) {
+			this->mapSsrcConsumer.erase(ssrc);
+			// Tell the child class to clear associated SSRCs.
+			listener_.SendStreamClosed(ssrc);
+		}
+		for (auto ssrc : consumer->GetRtxSsrcs()) {
+			this->mapRtxSsrcConsumer.erase(ssrc);
+			// Tell the child class to clear associated SSRCs.
+			listener_.SendStreamClosed(ssrc);
+		}
+		// Notify the listener.
+		// NOTE:
+		// This callback is called when the Consumer has been closed because its
+		// Producer was closed, so the entry in mapProducerConsumers has already been
+		// removed.
+		auto mapConsumerProducerIt = this->mapConsumerProducer.find(consumer);
+		MS_ASSERT(
+		  mapConsumerProducerIt != this->mapConsumerProducer.end(),
+		  "Consumer not present in mapConsumerProducer");
+		// Remove the Consumer from the map.
+		this->mapConsumerProducer.erase(mapConsumerProducerIt);
+		// Delete it.
+		delete consumer;
+		// This may be the latest active Consumer with BWE. If so we have to stop probation.
+		if (this->tccClient) {
+			ComputeOutgoingDesiredBitrate(/*forceBitrate*/ true);
+		}
+	}
+
 }
 }

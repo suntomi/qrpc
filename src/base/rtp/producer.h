@@ -3,20 +3,19 @@
 #include "base/defs.h"
 #include "base/media.h"
 
-#include "base/rtp/parameters.h"
 #include "base/rtp/shared.h"
 
 #include "RTC/Producer.hpp"
 #include "RTC/RtpPacket.hpp"
 
 namespace base {
-class Media;
 namespace rtp {
   class Handler;
+  class Parameters;
   class Producer : public RTC::Producer {
     friend class ProducerFactory;
   public:
-    Producer(RTC::Shared* s, const std::string& id, RTC::Producer::Listener* l, json& d) :
+    Producer(Shared* s, const std::string& id, RTC::Producer::Listener* l, json& d) :
       RTC::Producer(s, id, l, d) {}
     ~Producer() override {}
   protected:
@@ -27,8 +26,10 @@ namespace rtp {
   public:
     ProducerFactory(Handler &h) : handler_(h) {}
     virtual ~ProducerFactory() {}
-    std::shared_ptr<RTC::Producer> Create(const std::string &id, const Parameters &p);
-    RTC::Producer *Get(const RTC::RtpPacket &p);
+    std::vector<std::shared_ptr<Producer>> &producers() { return producers_; }
+  public:
+    std::shared_ptr<Producer> Create(const std::string &id, const Parameters &p);
+    Producer *Get(const RTC::RtpPacket &p);
     inline RTC::Producer *Get(uint32_t ssrc) {
       auto it = ssrcTable.find(ssrc);
       if (it != ssrcTable.end()) {
@@ -37,17 +38,17 @@ namespace rtp {
       return nullptr;
     }
   protected:
-    bool Add(std::shared_ptr<RTC::Producer> p);
-    void Remove(std::shared_ptr<RTC::Producer> p);
+    bool Add(std::shared_ptr<Producer> &p);
+    void Remove(std::shared_ptr<Producer> &p);
   protected:
     Handler &handler_;
-    std::vector<std::shared_ptr<RTC::Producer>> producers_;
+    std::vector<std::shared_ptr<Producer>> producers_;
 		// Table of SSRC / Producer pairs.
-		std::unordered_map<uint32_t, RTC::Producer*> ssrcTable;
+		std::unordered_map<uint32_t, Producer*> ssrcTable;
 		//  Table of MID / Producer pairs.
-		std::unordered_map<std::string, RTC::Producer*> midTable;
+		std::unordered_map<std::string, Producer*> midTable;
 		//  Table of RID / Producer pairs.
-		std::unordered_map<std::string, RTC::Producer*> ridTable;
+		std::unordered_map<std::string, Producer*> ridTable;
   }; 
 }
 }

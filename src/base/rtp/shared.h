@@ -61,10 +61,21 @@ namespace rtp {
 	public:
     explicit Shared() : RTC::Shared(
       new ChannelMessageRegistrator(),
-      new Channel::ChannelNotifier(new VoidChannelSocket()),
-      new PayloadChannel::PayloadChannelNotifier(new VoidPayloadChannelSocket())
+      new Channel::ChannelNotifier(GetChannelSocket()),
+      new PayloadChannel::PayloadChannelNotifier(GetPayloadChannelSocket())
     ) {}
-		~Shared();
+		~Shared() {}
+  protected:
+    std::unique_ptr<VoidChannelSocket> cs_;
+    std::unique_ptr<VoidPayloadChannelSocket> pcs_;
+    VoidChannelSocket *GetChannelSocket() {
+      cs_ = std::make_unique<VoidChannelSocket>();
+      return cs_.get();
+    }
+    VoidPayloadChannelSocket *GetPayloadChannelSocket() {
+      pcs_ = std::make_unique<VoidPayloadChannelSocket>();
+      return pcs_.get();
+    }
 	};
 } // namespace rtp
 } // namespace base

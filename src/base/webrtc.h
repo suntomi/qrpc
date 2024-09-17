@@ -13,6 +13,7 @@
 
 // TODO: if enabling srtp, this also need to be replaced with homebrew version
 #include "RTC/SrtpSession.hpp"
+#include "RTC/RTCP/Packet.hpp"
 
 namespace base {
 namespace webrtc {

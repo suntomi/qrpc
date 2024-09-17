@@ -43,6 +43,7 @@ namespace rtp {
       virtual void SendRtcpPacket(RTC::RTCP::Packet* packet)                 = 0;
       virtual void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) = 0;
     };
+    typedef Listener::onSendCallback onSendCallback;
   public:
     Handler(Listener &l) :
       listener_(l), producer_factory_(*this), shared_(),
@@ -50,12 +51,13 @@ namespace rtp {
     inline const ExtensionIds &ext_ids() const { return recvRtpHeaderExtensionIds; }
     inline ExtensionIds &ext_ids() { return recvRtpHeaderExtensionIds; }
     inline Listener &listener() { return listener_; }
-    inline RTC::Shared &shared() { return shared_; }
+    inline const std::string &rtp_id() const { return listener_.rtp_id(); }
+    inline Shared &shared() { return shared_; }
     inline std::string FindScalabilityMode(const std::string &rid) {
       auto it = rid_scalability_mode_map_.find(rid);
       return it == rid_scalability_mode_map_.end() ? it->second : "";
     }
-    qrpc_time_t OnTimer(qrpc_time_t now) { SendRtcp(qrpc_time_to_msec(now)); }
+    qrpc_time_t OnTimer(qrpc_time_t now);
     bool SetExtensionId(uint8_t id, const std::string &uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     std::shared_ptr<Media> FindFrom(const Parameters &p);
@@ -103,6 +105,8 @@ namespace rtp {
   protected:
     void SendRtcp(uint64_t nowMs);
     void HandleRtcpPacket(RTC::RTCP::Packet *packet);
+    void DistributeAvailableOutgoingBitrate();
+    void ComputeOutgoingDesiredBitrate(bool forceBitrate = false);
 		inline void DataReceived(size_t len) { recvTransmission.Update(len, qrpc_time_msec(qrpc_time_now())); }
 		inline void DataSent(size_t len) { sendTransmission.Update(len, qrpc_time_msec(qrpc_time_now())); }
   protected:
@@ -111,7 +115,9 @@ namespace rtp {
     Shared shared_;
     ExtensionIds recvRtpHeaderExtensionIds;
 		// Allocated by this.
-		absl::flat_hash_map<std::string, RTC::Producer*> mapProducers;
+		// absl::flat_hash_map<std::string, RTC::Producer*> mapProducers;
+		absl::flat_hash_map<RTC::Producer*, absl::flat_hash_set<RTC::Consumer*>> mapProducerConsumers;
+		absl::flat_hash_map<RTC::Consumer*, RTC::Producer*> mapConsumerProducer;
 		absl::flat_hash_map<std::string, RTC::Consumer*> mapConsumers;
 		absl::flat_hash_map<uint32_t, RTC::Consumer*> mapSsrcConsumer;
 		absl::flat_hash_map<uint32_t, RTC::Consumer*> mapRtxSsrcConsumer;

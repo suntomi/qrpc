@@ -1,5 +1,8 @@
 #include "base/rtp/parameters.h"
 
+#include "base/string.h"
+#include "base/rtp/handler.h"
+
 namespace base {
 namespace rtp {
   #define FIND_OR_RAISE(__name, __it, __key) \
@@ -61,9 +64,11 @@ namespace rtp {
         return &c;
       }
     }
+    ASSERT(false);
+    return nullptr;
   }
 
-  json &&Parameters::CodecToJson() const {
+  json &&Parameters::CodecsToJson() const {
     // {
     //   mimeType    : "video/VP8",
     //   payloadType : 101,
@@ -109,13 +114,6 @@ namespace rtp {
     }
     return std::move(j);
   }
-  json &&Parameters::CodecsToJson() const {
-    json j;
-    for (auto &ext : headerExtensions) {
-      j.push_back(CodecToJson());
-    }
-    return std::move(j);
-  }
   json &&Parameters::ExtensionsToJson() const {
     json j;
     for (auto &ext : headerExtensions) {
@@ -154,7 +152,7 @@ namespace rtp {
     return std::move(j);
   }
   json &&Parameters::ToJson() const {
-    return {
+    json j = {
       {"kind", media_type},
       {"rtpParameters", {
         {"mid", mid},
@@ -164,6 +162,7 @@ namespace rtp {
         {"rtcp", RtcpToJson()}
       }}
     };
+    return std::move(j);
   }
   json &&Parameters::CodecMappingToJson() const {
     auto j = json::array();
@@ -208,10 +207,11 @@ namespace rtp {
     // 		mappedSsrc: number;
     // 	}[];
     // };
-    return {
+    json j = {
       {"codecs", CodecMappingToJson()},
       {"encodings", EncodingMappingToJson()}
     };
+    return std::move(j);
   }
 
 

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "base/crypto.h"
-#include "base/webrtc/sdp.h"
 
 #include "RTC/RtpDictionaries.hpp"
 
@@ -30,7 +29,6 @@ namespace rtp {
     Capability() {}
   public:
     std::vector<Codec> codecs;
-
   };
   class Parameters : public RTC::RtpParameters {
   public:
@@ -61,7 +59,6 @@ namespace rtp {
     json &&ToJson() const;
     json &&ToMapping() const;
   protected:
-    json &&CodecToJson() const;
     json &&CodecsToJson() const;
     json &&ExtensionsToJson() const;
     json &&EncodingsToJson() const;

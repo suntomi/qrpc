@@ -295,7 +295,7 @@ bool ConnectionFactory::Connection::connected() const {
 }
 void ConnectionFactory::Connection::InitRTP() {
   if (rtp_handler_ == nullptr) {
-    rtp_handler_ = std::make_shared<rtp::Handler>(this);
+    rtp_handler_ = std::make_shared<rtp::Handler>(*this);
   }
   if (rtcp_alarm_id_ == AlarmProcessor::INVALID_ID) {
     rtcp_alarm_id_ = sv_.alarm_processor().Set(

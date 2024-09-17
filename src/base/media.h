@@ -1,7 +1,5 @@
 #pragma once
 
-#include "base/rtp/handler.h"
-
 namespace base {
   class Media {
   public:
@@ -15,13 +13,5 @@ namespace base {
     const std::string &label() const { return label_; }
   protected:
     std::string label_;
-  };
-  class AdhocMedia : public Media {
-  public:
-    typedef std::function<void (RTC::RtpPacket &)> Handler; 
-  public:
-    AdhocMedia(const std::string &l, Handler &&h) : Media(l), handler_(h) {}
-  protected:
-    Handler handler_;
   };
 }

@@ -1,19 +1,20 @@
 #include "base/rtp/producer.h"
+#include "base/rtp/handler.h"
 
 namespace base {
 namespace rtp {
-  std::shared_ptr<RTC::Producer> ProducerFactory::Create(const std::string &id, const Parameters &p) {
+  std::shared_ptr<Producer> ProducerFactory::Create(const std::string &id, const Parameters &p) {
     auto m = handler_.FindFrom(p);
     auto data = p.ToJson();
     data["rtpMapping"] = p.ToMapping();
-		auto producer = std::make_shared<Producer>(handler_.shared(), id, this, data);
+		auto producer = std::make_shared<Producer>(&handler_.shared(), id, &handler_, data);
     producer->SetMedia(m);
     if (!Add(producer)) {
       return nullptr;
     }
     return producer;
   }
-  RTC::Producer *ProducerFactory::Get(const RTC::RtpPacket &packet) {
+  Producer *ProducerFactory::Get(const RTC::RtpPacket &packet) {
 		// First lookup into the SSRC table.
 		{
 			auto it = this->ssrcTable.find(packet.GetSsrc());
@@ -52,7 +53,7 @@ namespace rtp {
 		}
 		return nullptr;
   }
-  void ProducerFactory::Remove(std::shared_ptr<RTC::Producer> p) {
+  void ProducerFactory::Remove(std::shared_ptr<Producer> &p) {
     auto *producer = p.get();
 		// Remove from the listener tables all entries pointing to the Producer.
 		for (auto it = this->ssrcTable.begin(); it != this->ssrcTable.end();) {
@@ -76,7 +77,7 @@ namespace rtp {
 				++it;
 		}    
   }
-  bool ProducerFactory::Add(std::shared_ptr<RTC::Producer> p) {
+  bool ProducerFactory::Add(std::shared_ptr<Producer> &p) {
     producers_.push_back(p);
     auto producer = p.get();
 
