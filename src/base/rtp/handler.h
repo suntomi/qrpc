@@ -6,7 +6,7 @@
 
 #include "base/rtp/parameters.h"
 #include "base/rtp/producer.h"
-#include "base/rtp/shared.h"
+#include "base/rtp/ms/shared.h"
 
 #include "RTC/Consumer.hpp"
 #include "RTC/RtpHeaderExtensionIds.hpp"

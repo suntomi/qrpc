@@ -3,20 +3,20 @@
 #include "base/defs.h"
 #include "base/media.h"
 
-#include "base/rtp/shared.h"
+#include "base/rtp/ms/shared.h"
+#include "base/rtp/ms/Producer.hpp"
 
-#include "RTC/Producer.hpp"
 #include "RTC/RtpPacket.hpp"
 
 namespace base {
 namespace rtp {
   class Handler;
   class Parameters;
-  class Producer : public RTC::Producer {
+  class Producer : public msrtp::Producer {
     friend class ProducerFactory;
   public:
-    Producer(Shared* s, const std::string& id, RTC::Producer::Listener* l, json& d) :
-      RTC::Producer(s, id, l, d) {}
+    Producer(msrtp::Shared* s, const std::string& id, Listener* l, json& d) :
+      msrtp::Producer(s, id, l, d) {}
     ~Producer() override {}
   protected:
     void SetMedia(std::shared_ptr<Media> m) { media_ = m; }
@@ -30,7 +30,7 @@ namespace rtp {
   public:
     std::shared_ptr<Producer> Create(const std::string &id, const Parameters &p);
     Producer *Get(const RTC::RtpPacket &p);
-    inline RTC::Producer *Get(uint32_t ssrc) {
+    inline Producer *Get(uint32_t ssrc) {
       auto it = ssrcTable.find(ssrc);
       if (it != ssrcTable.end()) {
         return it->second;

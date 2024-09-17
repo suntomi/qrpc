@@ -1,13 +1,12 @@
 // replace RTC::Shared
 #pragma once
 
-#include "RTC/Shared.hpp"
 #include "ChannelMessageRegistrator.hpp"
-#include "Channel/ChannelNotifier.hpp"
-#include "PayloadChannel/PayloadChannelNotifier.hpp"
+#include "base/rtp/ms/Channel/ChannelNotifier.hpp"
+#include "base/rtp/ms/PayloadChannel/PayloadChannelNotifier.hpp"
 
 namespace base {
-namespace rtp {
+namespace ms {
   class VoidChannelSocket : public Channel::ChannelSocket {
   public:
     VoidChannelSocket() : Channel::ChannelSocket(
@@ -56,15 +55,24 @@ namespace rtp {
       uint32_t /* payloadLen */,
       ChannelWriteCtx /* ctx */) {}
   };
-	class Shared : public RTC::Shared
+	class Shared
 	{
 	public:
-    explicit Shared() : RTC::Shared(
-      new ChannelMessageRegistrator(),
-      new Channel::ChannelNotifier(GetChannelSocket()),
-      new PayloadChannel::PayloadChannelNotifier(GetPayloadChannelSocket())
-    ) {}
-		~Shared() {}
+		explicit Shared(): 
+      channelMessageRegistrator(new ChannelMessageRegistrator()),
+      channelNotifier(new Channel::ChannelNotifier(GetChannelSocket())),
+      payloadChannelNotifier(new PayloadChannel::PayloadChannelNotifier(GetPayloadChannelSocket())) {}
+		~Shared() {
+      delete this->channelMessageRegistrator;
+		  delete this->channelNotifier;
+		  delete this->payloadChannelNotifier;
+    }
+
+	public:
+		ChannelMessageRegistrator* channelMessageRegistrator{ nullptr };
+		Channel::ChannelNotifier* channelNotifier{ nullptr };
+		PayloadChannel::PayloadChannelNotifier* payloadChannelNotifier{ nullptr };
+
   protected:
     std::unique_ptr<VoidChannelSocket> cs_;
     std::unique_ptr<VoidPayloadChannelSocket> pcs_;
@@ -77,5 +85,5 @@ namespace rtp {
       return pcs_.get();
     }
 	};
-} // namespace rtp
+} // namespace msrtp
 } // namespace base
