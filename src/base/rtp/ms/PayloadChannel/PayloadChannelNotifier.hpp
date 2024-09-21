@@ -10,7 +10,8 @@ using json = nlohmann::json;
 
 namespace base {
 namespace ms {
-	using namespace PayloadChannel;
+namespace PayloadChannel 
+{
 	class PayloadChannelNotifier
 	{
 	public:
@@ -35,6 +36,7 @@ namespace ms {
 		// Passed by argument.
 		PayloadChannel::PayloadChannelSocket* payloadChannel{ nullptr };
 	};
+} // namespace PayloadChannel
 } // namespace ms
 } // namespace base
 

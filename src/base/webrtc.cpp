@@ -181,7 +181,8 @@ int ConnectionFactory::Config::Derive() {
 }
 
 // ConnectionFactory::UdpSession/TcpSession
-int ConnectionFactory::TcpSession::OnRead(const char *p, size_t sz) {
+template <class PS>
+int ConnectionFactory::TcpSessionTmpl<PS>::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
   if (connection_ == nullptr) {
     connection_ = connection_factory().FindFromStunRequest(up, sz);
@@ -190,18 +191,20 @@ int ConnectionFactory::TcpSession::OnRead(const char *p, size_t sz) {
       return QRPC_EINVAL;
     }
   } else if (connection_->closed()) {
-    QRPC_LOGJ(info, {{"ev","parent connection closed, remove the session"},{"from",addr().str()}});
+    QRPC_LOGJ(info, {{"ev","parent connection closed, remove the session"},{"from",PS::addr().str()}});
     return QRPC_EGOAWAY;
   }
   return connection_->OnPacketReceived(this, up, sz);
 }
-qrpc_time_t ConnectionFactory::TcpSession::OnShutdown() {
+template <class PS>
+qrpc_time_t ConnectionFactory::TcpSessionTmpl<PS>::OnShutdown() {
   if (connection_ != nullptr) {
     connection_->OnTcpSessionShutdown(this);
   }
   return 0;
 }
-int ConnectionFactory::UdpSession::OnRead(const char *p, size_t sz) {
+template <class PS>
+int ConnectionFactory::UdpSessionTmpl<PS>::OnRead(const char *p, size_t sz) {
   auto up = reinterpret_cast<const uint8_t *>(p);
   if (connection_ == nullptr) {
     connection_ = connection_factory().FindFromStunRequest(up, sz);
@@ -210,9 +213,11 @@ int ConnectionFactory::UdpSession::OnRead(const char *p, size_t sz) {
       return QRPC_EINVAL;
     }
   }
+  // UdpSession is not closed because fd is shared among multiple sessions
   return connection_->OnPacketReceived(this, up, sz);
 }
-qrpc_time_t ConnectionFactory::UdpSession::OnShutdown() {
+template <class PS>
+qrpc_time_t ConnectionFactory::UdpSessionTmpl<PS>::OnShutdown() {
   if (connection_ != nullptr) {
     connection_->OnUdpSessionShutdown(this);
   }
@@ -1019,16 +1024,88 @@ bool ConnectionFactory::Connection::IsConnected() const {
   return true;
 }
 void ConnectionFactory::Connection::SendRtpPacket(
-  RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb) {
+  ms::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb) {
+  MS_TRACE();
 
+  if (!IsConnected()) {
+    if (cb) {
+      (*cb)(false);
+      delete cb;
+    }
+    return;
+  }
+
+  // Ensure there is sending SRTP session.
+  if (!srtp_send_) {
+    logger::warn("ignoring RTP packet due to non sending SRTP session");
+    if (cb) {
+      (*cb)(false);
+      delete cb;
+    }
+    return;
+  }
+  const uint8_t* data = packet->GetData();
+  auto intLen         = static_cast<int>(packet->GetSize());
+  if (!srtp_send_->EncryptRtp(&data, &intLen)) {
+    if (cb) {
+      (*cb)(false);
+      delete cb;
+    }
+    return;
+  }
+  auto len = static_cast<size_t>(intLen);
+  if (ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), len) < 0) {
+    if (cb) {
+      (*cb)(false);
+      delete cb;
+    }
+    return;
+  }
+  // Increase send transmission.
+  rtp_handler_->DataSent(len);
 }
 void ConnectionFactory::Connection::SendRtcpPacket(RTC::RTCP::Packet* packet) {
+  		MS_TRACE();
 
+		if (!IsConnected()) {
+			return;
+    }
+		const uint8_t* data = packet->GetData();
+		auto intLen         = static_cast<int>(packet->GetSize());
+		// Ensure there is sending SRTP session.
+		if (!this->srtp_send_) {
+			QRPC_LOG(warn, "ignoring RTCP packet due to non sending SRTP session");
+			return;
+		}
+		if (!this->srtp_send_->EncryptRtcp(&data, &intLen)) {
+			return;
+    }
+		auto len = static_cast<size_t>(intLen);
+		this->ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), len);
+		// Increase send transmission.
+		rtp_handler_->DataSent(len);
 }
 void ConnectionFactory::Connection::SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) {
-
+    MS_TRACE();
+		if (!IsConnected()) {
+			return;
+    }
+		packet->Serialize(RTC::RTCP::Buffer);
+		const uint8_t* data = packet->GetData();
+		auto intLen         = static_cast<int>(packet->GetSize());
+		// Ensure there is sending SRTP session.
+		if (!this->srtp_send_) {
+			QRPC_LOG(warn, "ignoring RTCP compound packet due to non sending SRTP session");
+			return;
+		}
+		if (!this->srtp_send_->EncryptRtcp(&data, &intLen)) {
+			return;
+    }
+		auto len = static_cast<size_t>(intLen);
+		this->ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), len);
+		// Increase send transmission.
+		rtp_handler_->DataSent(len);
 }
-
 
 // client::WhipHttpProcessor, client::TcpSession, client::UdpSession
 namespace client {
@@ -1103,10 +1180,10 @@ namespace client {
   };
   typedef std::function<void (int)> OnIceFailure;
   template <class BASE>
-  class BaseSession : public BASE {
+  class BaseSessionTmpl : public BASE {
   public:
     typedef typename BASE::Factory Factory;
-    BaseSession(Factory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
+    BaseSessionTmpl(Factory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
       const std::string &remote_uflag, const std::string &remote_pwd, uint64_t priority,
       OnIceFailure &&on_ice_failure) : 
       BASE(f, fd, addr, c), remote_ufrag_(remote_uflag), remote_pwd_(remote_pwd), priority_(priority),
@@ -1158,19 +1235,19 @@ namespace client {
     AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
     base::Session::ReconnectionTimeoutCalculator rctc_;
   };
-  class TcpSession : public BaseSession<Client::TcpSession> {
+  class TcpSession : public BaseSessionTmpl<Client::TcpSession> {
   public:
     TcpSession(Factory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
       const Candidate &cand, OnIceFailure &&oif
-    ) : BaseSession<Client::TcpSession>(
+    ) : BaseSessionTmpl<Client::TcpSession>(
       f, fd, addr, c, std::get<3>(cand), std::get<4>(cand), std::get<5>(cand), std::move(oif)
     ) {}
   };
-  class UdpSession : public BaseSession<Client::UdpSession> {
+  class UdpSession : public BaseSessionTmpl<Client::UdpSession> {
   public:
     UdpSession(Factory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> &c,
       const Candidate &cand, OnIceFailure &&oif
-    ) : BaseSession<Client::UdpSession>(
+    ) : BaseSessionTmpl<Client::UdpSession>(
       f, fd, addr, c, std::get<3>(cand), std::get<4>(cand), std::get<5>(cand), std::move(oif)
     ) {}
   };

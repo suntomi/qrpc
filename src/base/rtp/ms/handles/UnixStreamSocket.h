@@ -5,6 +5,8 @@
 #include <uv.h>
 #include <string>
 
+namespace base {
+namespace ms {
 class UnixStreamSocket
 {
 public:
@@ -36,5 +38,7 @@ protected:
 	// Others.
 	size_t bufferDataLen{ 0u };
 };
+} // namespace ms
+} // namespace base
 
 #endif

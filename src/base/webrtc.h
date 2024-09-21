@@ -29,30 +29,36 @@ namespace webrtc {
     typedef std::string IceUFrag;
   public: // connection
     class Connection;
-    class TcpSession : public TcpSessionFactory::TcpSession {
+    template <class PS>
+    class TcpSessionTmpl : public PS {
     public:
-      TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
-        TcpSession(f, fd, addr) { connection_ = c; }
-      TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) :
-        TcpSessionFactory::TcpSession(f, fd, addr), connection_() {}
+      TcpSessionTmpl(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+        TcpSessionTmpl(f, fd, addr) { connection_ = c; }
+      TcpSessionTmpl(TcpSessionFactory &f, Fd fd, const Address &addr) :
+        PS(f, fd, addr), connection_() {}
       virtual ConnectionFactory &connection_factory() = 0;
       int OnRead(const char *p, size_t sz) override;
       qrpc_time_t OnShutdown() override;
     protected:
       std::shared_ptr<Connection> connection_;
     };
-    class UdpSession : public UdpSessionFactory::UdpSession {
+    typedef TcpSessionTmpl<TcpClient::TcpSession> TcpClientSession;
+    typedef TcpSessionTmpl<TcpListener::TcpSession> TcpListenerSession;
+    template <class PS>
+    class UdpSessionTmpl : public PS {
     public:
-      UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
-        UdpSession(f, fd, addr) { connection_ = c; }
-      UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) :
-        UdpSessionFactory::UdpSession(f, fd, addr), connection_() {}
+      UdpSessionTmpl(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+        UdpSessionTmpl(f, fd, addr) { connection_ = c; }
+      UdpSessionTmpl(UdpSessionFactory &f, Fd fd, const Address &addr) :
+        PS(f, fd, addr), connection_() {}
       virtual ConnectionFactory &connection_factory() = 0;
       int OnRead(const char *p, size_t sz) override;
       qrpc_time_t OnShutdown() override;
     protected:
       std::shared_ptr<Connection> connection_;
     };
+    typedef UdpSessionTmpl<UdpClient::UdpSession> UdpClientSession;
+    typedef UdpSessionTmpl<UdpListener::UdpSession> UdpListenerSession;
     class SyscallStream : public AdhocStream {
     public:
       static constexpr char *NAME = "$syscall";
@@ -226,7 +232,7 @@ namespace webrtc {
       void SendStreamClosed(uint32_t ssrc) override; 
       bool IsConnected() const override;
       void SendRtpPacket(
-        RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb = nullptr) override;
+        ms::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb = nullptr) override;
       void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
       void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
     protected:
@@ -291,7 +297,7 @@ namespace webrtc {
     const std::string &fingerprint() const { return config_.fingerprint; }
     const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
     const UdpSessionFactory::Config udp_listener_config() const {
-      return UdpSessionFactory::Config(config_.resolver, config_.session_timeout, config_.udp_batch_size);
+      return UdpSessionFactory::Config(config_.resolver, config_.session_timeout, config_.udp_batch_size, true);
     }
     const SessionFactory::Config http_listener_config() const {
       return SessionFactory::Config(config_.resolver, config_.http_timeout);
@@ -388,11 +394,11 @@ namespace webrtc {
     private:
       ConnectionFactory &cf_;
     };
-    class TcpSession : public ConnectionFactory::TcpSession {
+    class TcpSession : public ConnectionFactory::TcpClientSession {
     public:
       typedef TcpClient Factory;
       TcpSession(TcpClient &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
-        ConnectionFactory::TcpSession(f, fd, addr, c) {}
+        ConnectionFactory::TcpClientSession(f, fd, addr, c) {}
       ConnectionFactory &connection_factory() override { return factory().to<TcpClient>().connection_factory(); }
     };
     class UdpClient : public base::UdpClient {
@@ -403,11 +409,11 @@ namespace webrtc {
     private:
       ConnectionFactory &cf_;
     };
-    class UdpSession : public ConnectionFactory::UdpSession {
+    class UdpSession : public ConnectionFactory::UdpClientSession {
     public:
       typedef UdpClient Factory;
       UdpSession(UdpClient &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
-        ConnectionFactory::UdpSession(f, fd, addr, c) {}
+        ConnectionFactory::UdpClientSession(f, fd, addr, c) {}
       ConnectionFactory &connection_factory() override { return factory().to<UdpClient>().connection_factory(); }
     };
   public:
@@ -471,10 +477,10 @@ namespace webrtc {
   // Listener
   class Listener : public ConnectionFactory {
   public:
-    class TcpSession : public ConnectionFactory::TcpSession {
+    class TcpSession : public ConnectionFactory::TcpListenerSession {
     public:
       TcpSession(TcpListener &f, Fd fd, const Address &addr) :
-        ConnectionFactory::TcpSession(f, fd, addr) {}
+        ConnectionFactory::TcpListenerSession(f, fd, addr) {}
       ConnectionFactory &connection_factory() override;
     };
     typedef TcpListenerOf<TcpSession> TcpPortBase;
@@ -485,10 +491,10 @@ namespace webrtc {
     private:
       ConnectionFactory &cf_;
     };
-    class UdpSession : public ConnectionFactory::UdpSession {
+    class UdpSession : public ConnectionFactory::UdpListenerSession {
     public:
       UdpSession(UdpListener &f, Fd fd, const Address &addr) :
-        ConnectionFactory::UdpSession(f, fd, addr) {}
+        ConnectionFactory::UdpListenerSession(f, fd, addr) {}
       ConnectionFactory &connection_factory() override;
     };
     typedef UdpListenerOf<UdpSession> UdpPortBase;

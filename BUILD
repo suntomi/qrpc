@@ -59,6 +59,8 @@ cc_import(
     "src/ext/hedley/*.h",
     "src/ext/sha1/*.h",
     "src/ext/libsdptransform/include/*.hpp",
+  ], exclude = [
+    "src/**/*.md"
   ]),
   copts = [
     "-std=c++17"

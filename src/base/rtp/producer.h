@@ -12,11 +12,11 @@ namespace base {
 namespace rtp {
   class Handler;
   class Parameters;
-  class Producer : public msrtp::Producer {
+  class Producer : public ms::Producer {
     friend class ProducerFactory;
   public:
-    Producer(msrtp::Shared* s, const std::string& id, Listener* l, json& d) :
-      msrtp::Producer(s, id, l, d) {}
+    Producer(ms::Shared* s, const std::string& id, Listener* l, json& d) :
+      ms::Producer(s, id, l, d) {}
     ~Producer() override {}
   protected:
     void SetMedia(std::shared_ptr<Media> m) { media_ = m; }

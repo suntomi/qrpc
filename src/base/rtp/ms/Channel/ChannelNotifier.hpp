@@ -8,6 +8,8 @@
 
 using json = nlohmann::json;
 
+namespace base {
+namespace ms {
 namespace Channel
 {
 	class ChannelNotifier
@@ -26,5 +28,7 @@ namespace Channel
 		Channel::ChannelSocket* channel{ nullptr };
 	};
 } // namespace Channel
+} // namespace ms
+} // namespace base
 
 #endif

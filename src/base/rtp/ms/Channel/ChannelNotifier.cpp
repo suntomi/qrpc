@@ -2,8 +2,11 @@
 // #define MS_LOG_DEV_LEVEL 3
 
 #include "base/rtp/ms/Channel/ChannelNotifier.hpp"
+#include "base/rtp/ms/Channel/ChannelSocket.hpp"
 #include "Logger.hpp"
 
+namespace base {
+namespace ms {
 namespace Channel
 {
 	ChannelNotifier::ChannelNotifier(Channel::ChannelSocket* channel) : channel(channel)
@@ -64,3 +67,5 @@ namespace Channel
 		this->channel->Send(notification);
 	}
 } // namespace Channel
+} // namespace ms
+} // namespace base

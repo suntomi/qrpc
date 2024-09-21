@@ -273,7 +273,7 @@ bool test_udp_session(Loop &l, Resolver &r, bool listen) {
         auto uc = UdpListener(l, [](Fd fd, const Address &a) -> Session* {
             DIE("client should not call this, provide factory via SessionFactory::Connect");
             return (Session *)nullptr;
-        }, UdpListener::Config(r, qrpc_time_sec(1), 1));
+        }, UdpListener::Config(r, qrpc_time_sec(1), 1, false));
         if (!uc.Bind()) {
             DIE("fail to bind");
             return false;

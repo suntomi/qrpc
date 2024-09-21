@@ -1,9 +1,12 @@
 #define MS_CLASS "PayloadChannel::Notifier"
 // #define MS_LOG_DEV_LEVEL 3
 
-#include "PayloadChannel/PayloadChannelNotifier.hpp"
+#include "base/rtp/ms/PayloadChannel/PayloadChannelNotifier.hpp"
+#include "base/rtp/ms/Channel/ChannelSocket.hpp"
 #include "Logger.hpp"
 
+namespace base {
+namespace ms {
 namespace PayloadChannel
 {
 	PayloadChannelNotifier::PayloadChannelNotifier(PayloadChannel::PayloadChannelSocket* payloadChannel)
@@ -41,3 +44,5 @@ namespace PayloadChannel
 		this->payloadChannel->Send(jsonNotification, payload, payloadLen);
 	}
 } // namespace PayloadChannel
+} // namespace ms
+} // namespace base

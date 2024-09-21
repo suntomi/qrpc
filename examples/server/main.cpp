@@ -225,13 +225,13 @@ int main(int argc, char *argv[]) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
-    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1));
+    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1, true));
     if (!us.Listen(9999)) {
         DIE("fail to listen on UDP");
     }
     UdpListener tu(l, [&tu](Fd fd, const Address &a) {
         return new TestUdpSession(tu, fd, a);
-    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1));
+    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1, true));
     if (!tu.Listen(10000)) {
         DIE("fail to listen on UDP for test");
     }

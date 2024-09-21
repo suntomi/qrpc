@@ -3,6 +3,7 @@
 
 #include "base/rtp/ms/Consumer.hpp"
 #include "DepLibUV.hpp"
+#include "base/rtp/ms/Channel/ChannelSocket.hpp"
 #include "Logger.hpp"
 #include "MediaSoupErrors.hpp"
 #include <iterator> // std::ostream_iterator
