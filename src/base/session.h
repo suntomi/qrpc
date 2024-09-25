@@ -449,23 +449,23 @@ namespace base {
         #else
             static constexpr int BATCH_SIZE = 1;
         #endif
-            Config(Resolver &r, qrpc_time_t st, int mbs, bool nt) :
+            Config(Resolver &r, qrpc_time_t st, int mbs, bool sw) :
                 SessionFactory::Config(r, st), max_batch_size(
                 #if defined(__QRPC_USE_RECVMMSG__)
                     mbs
                 #else
                     1
                 #endif
-                ), no_truncation(nt) {}
-            Config(int mbs, bool nt) :
+                ), stream_write(sw) {}
+            Config(int mbs, bool sw) :
                 SessionFactory::Config(SessionFactory::Config::Default()),
-                max_batch_size(mbs), no_truncation(nt) {}
+                max_batch_size(mbs), stream_write(sw) {}
             static inline Config Default() {
                 return Config(BATCH_SIZE, false);
             }
         public:
             int max_batch_size;
-            bool no_truncation{false};
+            bool stream_write{false};
         };
         #if !defined(__QRPC_USE_RECVMMSG__)
         struct mmsghdr {
@@ -487,7 +487,10 @@ namespace base {
     public:
         class UdpSession : public Session {
         public:
-            UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) { AllocIovec(); }
+            UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) {
+                // stream write require prepared iovec before start
+                if (udp_session_factory().stream_write_) { AllocIovec(); }
+            }
             ~UdpSession() override { FreeIovec(); }
             DISALLOW_COPY_AND_ASSIGN(UdpSession);
             UdpSessionFactory &udp_session_factory() { return factory().to<UdpSessionFactory>(); }
@@ -529,7 +532,7 @@ namespace base {
                     iov.iov_len = 0;
                 } else if (size > 0) {
                     for (int i = 0; i < size; i++) {
-                        struct iovec &iov = write_vecs_.front();
+                        struct iovec &iov = write_vecs_[i];
                         udp_session_factory().write_buffers_.Free(iov.iov_base);
                     }
                     write_vecs_.erase(write_vecs_.begin(), write_vecs_.begin() + size);
@@ -537,39 +540,48 @@ namespace base {
             }
             int Write(const char *p, size_t sz) {
                 int r;
-                ASSERT(write_vecs_.size() > 0);
-                bool nt = udp_session_factory().no_truncation_;
-                if (nt) {
+                bool sw = udp_session_factory().stream_write_;
+                if (sw) {
+                    ASSERT(write_vecs_.size() > 0);
+                    while (sz > 0) {
+                        struct iovec &curr_iov = write_vecs_[write_vecs_.size() - 1];
+                        if (curr_iov.iov_len + sz > Syscall::kMaxOutgoingPacketSize) {
+                            size_t copied = Syscall::kMaxOutgoingPacketSize - curr_iov.iov_len;
+                            Syscall::MemCopy(
+                                reinterpret_cast<char *>(curr_iov.iov_base) + curr_iov.iov_len, p, copied
+                            );
+                            curr_iov.iov_len += copied;
+                            p += copied;
+                            sz -= copied;
+                            if (!AllocIovec()) {
+                                ASSERT(false);
+                                return QRPC_EALLOC;
+                            }
+                            curr_iov = write_vecs_[write_vecs_.size() - 1];
+                        } else {
+                            size_t copied = sz;
+                            Syscall::MemCopy(
+                                reinterpret_cast<char *>(curr_iov.iov_base) + curr_iov.iov_len, p, copied
+                            );
+                            curr_iov.iov_len += copied;
+                            break;
+                        }
+                    }
+                } else {
                     if (sz > Syscall::kMaxOutgoingPacketSize) {
                         // no truncate mode does not allow packet larger than MTU
                         QRPC_LOGJ(error, {{"ev","packet cannot be fragmented in no truncate mode"},{"sz",sz}});
                         ASSERT(false);
                         return QRPC_ESIZE;
                     }
-                }
-                while (sz > 0) {
-                    struct iovec &curr_iov = write_vecs_[write_vecs_.size() - 1];
-                    if (curr_iov.iov_len + sz > Syscall::kMaxOutgoingPacketSize) {
-                        size_t copied = Syscall::kMaxOutgoingPacketSize - curr_iov.iov_len;
-                        Syscall::MemCopy(
-                            reinterpret_cast<char *>(curr_iov.iov_base) + curr_iov.iov_len, p, copied
-                        );
-                        curr_iov.iov_len += copied;
-                        p += copied;
-                        sz -= copied;
-                        if (!AllocIovec()) {
-                            return QRPC_EALLOC;
-                        }
-                        curr_iov = write_vecs_[write_vecs_.size() - 1];
-                    } else {
-                        size_t copied = sz;
-                        Syscall::MemCopy(
-                            reinterpret_cast<char *>(curr_iov.iov_base) + curr_iov.iov_len, p, copied
-                        );
-                        curr_iov.iov_len += copied;
-                        p += copied;
-                        sz -= copied;
+                    if (!AllocIovec()) {
+                        ASSERT(false);
+                        return QRPC_EALLOC;
                     }
+                    struct iovec &curr_iov = write_vecs_[write_vecs_.size() - 1];
+                    ASSERT(curr_iov.iov_len == 0);
+                    Syscall::MemCopy(reinterpret_cast<char *>(curr_iov.iov_base), p, sz);
+                    curr_iov.iov_len = sz;
                 }
                 return QRPC_OK;
             }
@@ -579,9 +591,9 @@ namespace base {
     public:
         UdpSessionFactory(Loop &l, FactoryMethod &&m, Config config = Config::Default()) :
             SessionFactory(l, std::move(m), config), batch_size_(config.max_batch_size),
-            no_truncation_(config.no_truncation), write_buffers_(batch_size_) {}
+            stream_write_(config.stream_write), write_buffers_(batch_size_) {}
         UdpSessionFactory(UdpSessionFactory &&rhs) : SessionFactory(std::move(rhs)),
-            batch_size_(rhs.batch_size_), no_truncation_(rhs.no_truncation_),
+            batch_size_(rhs.batch_size_), stream_write_(rhs.stream_write_),
             write_buffers_(std::move(rhs.write_buffers_)) {}
         DISALLOW_COPY_AND_ASSIGN(UdpSessionFactory);
     public:
@@ -599,7 +611,7 @@ namespace base {
         }
     protected:
         int batch_size_;
-        bool no_truncation_;
+        bool stream_write_;
         Allocator<WritePacketBuffer> write_buffers_;
     };
     class UdpClient : public UdpSessionFactory {
@@ -675,11 +687,11 @@ namespace base {
     public:
         UdpClient(
             Loop &l, Resolver &r, qrpc_time_t session_timeout = qrpc_time_sec(120),
-            int batch_size = Config::BATCH_SIZE, bool no_truncation = false
+            int batch_size = Config::BATCH_SIZE, bool stream_write = false
         ) : UdpSessionFactory(l, [this](Fd fd, const Address &ap) {
             DIE("client should not call this, provide factory with SessionFactory::Connect");
             return (Session *)nullptr;
-        }, Config(r, session_timeout, batch_size, no_truncation)) {}
+        }, Config(r, session_timeout, batch_size, stream_write)) {}
         UdpClient(UdpClient &&rhs) : UdpSessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {}
         ~UdpClient() override { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(UdpClient);

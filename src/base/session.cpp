@@ -137,6 +137,7 @@ namespace base {
       h.msg_control = nullptr;
       h.msg_controllen = 0;
       if (Syscall::SendTo(fd_, &h) < 0) {
+        // reset with sent count (idx)
         Reset(idx);
         if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
             return size - idx;
@@ -291,29 +292,29 @@ namespace base {
       h.msg_controllen = Syscall::kDefaultUdpPacketControlBufferSize;
       read_packets_[i].msg_len = 0;
     }
-    #if defined(__QRPC_USE_RECVMMSG__)
-      int r = Syscall::RecvFrom(fd_, read_packets_.data(), batch_size_);
-      if (r < 0) {
-        int eno = Syscall::Errno();
-        if (Syscall::WriteMayBlocked(eno, false)) {
-          return QRPC_EAGAIN;
-        }
-        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
-        return QRPC_ESYSCALL;
+  #if defined(__QRPC_USE_RECVMMSG__)
+    int r = Syscall::RecvFrom(fd_, read_packets_.data(), batch_size_);
+    if (r < 0) {
+      int eno = Syscall::Errno();
+      if (Syscall::WriteMayBlocked(eno, false)) {
+        return QRPC_EAGAIN;
       }
-      return r;
-    #else
-      int r = Syscall::RecvFrom(fd_, &read_packets_.data()->msg_hdr);
-      if (r < 0) {
-        int eno = Syscall::Errno();
-        if (Syscall::WriteMayBlocked(eno, false)) {
-          return QRPC_EAGAIN;
-        }
-        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});
-        return QRPC_ESYSCALL;
+      logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
+      return QRPC_ESYSCALL;
+    }
+    return r;
+  #else
+    int r = Syscall::RecvFrom(fd_, &read_packets_.data()->msg_hdr);
+    if (r < 0) {
+      int eno = Syscall::Errno();
+      if (Syscall::WriteMayBlocked(eno, false)) {
+        return QRPC_EAGAIN;
       }
-      read_packets_.data()->msg_len = r;
-      return 1;
-    #endif
+      logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});
+      return QRPC_ESYSCALL;
+    }
+    read_packets_.data()->msg_len = r;
+    return 1;
+  #endif
   }
 }

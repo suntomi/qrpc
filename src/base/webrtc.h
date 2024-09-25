@@ -297,7 +297,7 @@ namespace webrtc {
     const std::string &fingerprint() const { return config_.fingerprint; }
     const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
     const UdpSessionFactory::Config udp_listener_config() const {
-      return UdpSessionFactory::Config(config_.resolver, config_.session_timeout, config_.udp_batch_size, true);
+      return UdpSessionFactory::Config(config_.resolver, config_.session_timeout, config_.udp_batch_size, false);
     }
     const SessionFactory::Config http_listener_config() const {
       return SessionFactory::Config(config_.resolver, config_.http_timeout);
