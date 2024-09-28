@@ -111,8 +111,8 @@ namespace rtp {
     void ComputeOutgoingDesiredBitrate(bool forceBitrate = false);
   protected:
     Listener &listener_;
-    ms::Shared shared_;
-    ProducerFactory producer_factory_;
+    ms::Shared shared_; // should be declared prior to producer_factory_ because its dtor depends on its existence
+    ProducerFactory producer_factory_; // should be declared prior to Producer* and Consumer* containers
     ExtensionIds recvRtpHeaderExtensionIds;
 		// Allocated by this.
 		// absl::flat_hash_map<std::string, ms::Producer*> mapProducers;

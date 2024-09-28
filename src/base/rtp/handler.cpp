@@ -572,6 +572,9 @@ namespace rtp {
 			ssrc_trackid_map_[kv.first] = kv.second.track_id;
 		}
 		auto producer = producer_factory_.Create(id, p);
+		// Insert the Producer in the maps.
+		this->mapProducerConsumers[producer.get()]; // creates empty set in the key
+
 		return producer != nullptr ? QRPC_OK : QRPC_EINVAL;
 	}
 	int Handler::CreateConsumer(const Parameters &p) {

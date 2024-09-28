@@ -503,7 +503,7 @@ namespace rtp {
       auto dir1 = dit->get<std::string>();
       auto &rids = dir1 == "send" ? simulcast.send_rids : simulcast.recv_rids;
       rids = lit->get<std::string>();
-      for (auto &rid : str::Split(rids, " ")) {
+      for (auto &rid : str::Split(rids, ";")) {
         auto scalability_mode = h.FindScalabilityMode(rid);
         AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
       }
@@ -513,7 +513,7 @@ namespace rtp {
         auto dir2 = d2it->get<std::string>();
         auto &rids = dir2 == "send" ? simulcast.send_rids : simulcast.recv_rids;
         rids = l2it->get<std::string>();
-        for (auto &rid : str::Split(rids, " ")) {
+        for (auto &rid : str::Split(rids, ";")) {
           auto scalability_mode = h.FindScalabilityMode(rid);
           AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
         }

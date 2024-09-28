@@ -255,7 +255,6 @@ a=setup:active
     json dsec, asec, vsec;
     std::map<std::string, std::string> section_answer_map;
     std::string mid, media_sections, section_answer, proto;
-    rtp::Parameters params;
     if (FindMediaSection("application", dsec)) {
       // find protocol from SCTP backed transport
       auto protoit = dsec.find("protocol");
@@ -282,6 +281,7 @@ a=setup:active
         return false;
       }
       c.dtls_transport().SetRemoteFingerprint(fp);
+      rtp::Parameters params;
       if (AnswerMediaSection(dsec, proto, c, section_answer, params)) {
         section_answer_map[params.mid] = section_answer;
       } else {
@@ -291,9 +291,11 @@ a=setup:active
         return false;
       }
     }
+    // TODO: should support multiple audio/video streams from same webrtc connection?
     if (FindMediaSection("audio", asec)) {
+      rtp::Parameters params;
       if (AnswerMediaSection(asec, proto, c, section_answer, params)) {
-        c.rtp_handler().CreateProducer(c.rtp_id(), params);
+        c.rtp_handler().CreateProducer(params.mid + "@" + c.rtp_id(), params);
         section_answer_map[params.mid] = section_answer;
       } else {
         answer = section_answer;
@@ -303,8 +305,9 @@ a=setup:active
       }
     }
     if (FindMediaSection("video", vsec)) {
+      rtp::Parameters params;
       if (AnswerMediaSection(vsec, proto, c, section_answer, params)) {
-        c.rtp_handler().CreateProducer(c.rtp_id(), params);
+        c.rtp_handler().CreateProducer(params.mid + "@" + c.rtp_id(), params);
         section_answer_map[params.mid] = section_answer;
       } else {
         answer = section_answer;
