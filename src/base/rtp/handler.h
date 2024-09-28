@@ -111,8 +111,8 @@ namespace rtp {
     void ComputeOutgoingDesiredBitrate(bool forceBitrate = false);
   protected:
     Listener &listener_;
-    ProducerFactory producer_factory_;
     ms::Shared shared_;
+    ProducerFactory producer_factory_;
     ExtensionIds recvRtpHeaderExtensionIds;
 		// Allocated by this.
 		// absl::flat_hash_map<std::string, ms::Producer*> mapProducers;

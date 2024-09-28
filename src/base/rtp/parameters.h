@@ -56,15 +56,17 @@ namespace rtp {
       return random::gen(100000000, 900000000);
     }
   public:
-    json &&ToJson() const;
-    json &&ToMapping() const;
+    json ToJson() const;
+    json ToMapping() const;
   protected:
-    json &&CodecsToJson() const;
-    json &&ExtensionsToJson() const;
-    json &&EncodingsToJson() const;
-    json &&RtcpToJson() const;
-    json &&CodecMappingToJson() const;
-    json &&EncodingMappingToJson() const;
+    // for ToJson
+    json CodecsToJson() const;
+    json ExtensionsToJson() const;
+    json EncodingsToJson() const;
+    json RtcpToJson() const;
+    // for ToMapping
+    json CodecMappingToJson() const;
+    json EncodingMappingToJson() const;
   public:
     std::string media_type; // video/audio/application
     NetworkParameters network;

@@ -51,7 +51,6 @@ namespace base {
             }
             ASSERT(m_len < m_max);
             m_p[m_len++] = *w++;
-            m_p[m_len] = '\0';
     #if defined(_DEBUG)
             //      if ((m_len % 100) == 0) { TRACE("."); }
             //      TRACE("recv[%u]:%u\n", m_len, s);

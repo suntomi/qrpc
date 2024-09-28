@@ -63,8 +63,12 @@ cc_import(
     "src/**/*.md"
   ]),
   copts = [
-    "-std=c++17"
+    "-std=c++17", "-fsanitize=address"
   ] 
+  + selects.with_or({
+    ":is_debug_build": ["-fsanitize=address"],
+    "//conditions:default": [],
+  })
   + MS_CPPARGS 
   + selects.with_or({
     (
@@ -82,6 +86,10 @@ cc_import(
     (":android", "//conditions:default"): [
       "-D__ENABLE_EPOLL__", "-D__QRPC_USE_RECVMMSG__"
     ],
+  }),
+  linkopts = selects.with_or({
+    ":is_debug_build": ["-fsanitize=address"],
+    "//conditions:default": [],
   }),
   includes = [
     "src",

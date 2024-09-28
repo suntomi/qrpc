@@ -68,7 +68,7 @@ namespace rtp {
     return nullptr;
   }
 
-  json &&Parameters::CodecsToJson() const {
+  json Parameters::CodecsToJson() const {
     // {
     //   mimeType    : "video/VP8",
     //   payloadType : 101,
@@ -112,18 +112,18 @@ namespace rtp {
       }
       j.push_back(v);
     }
-    return std::move(j);
+    return j;
   }
-  json &&Parameters::ExtensionsToJson() const {
+  json Parameters::ExtensionsToJson() const {
     json j;
     for (auto &ext : headerExtensions) {
       j.push_back({
         {"id", ext.id},{"uri",ext.uri}
       });
     }
-    return std::move(j);
+    return j;
   }
-  json &&Parameters::EncodingsToJson() const {
+  json Parameters::EncodingsToJson() const {
     json j;
     for (auto &e : encodings) {
       json map;
@@ -142,17 +142,17 @@ namespace rtp {
       }
       j.push_back(map);
     }
-    return std::move(j);
+    return j;
   }
-  json &&Parameters::RtcpToJson() const {
+  json Parameters::RtcpToJson() const {
     json j;
     if (!rtcp.cname.empty()) {
       j["cname"] = rtcp.cname;
     }
-    return std::move(j);
+    return j;
   }
-  json &&Parameters::ToJson() const {
-    json j = {
+  json Parameters::ToJson() const {
+    return {
       {"kind", media_type},
       {"rtpParameters", {
         {"mid", mid},
@@ -162,9 +162,8 @@ namespace rtp {
         {"rtcp", RtcpToJson()}
       }}
     };
-    return std::move(j);
   }
-  json &&Parameters::CodecMappingToJson() const {
+  json Parameters::CodecMappingToJson() const {
     auto j = json::array();
     for (auto &c : codecs) {
       j.push_back({
@@ -172,9 +171,9 @@ namespace rtp {
         {"mappedPayloadType", c.payloadType}
       });
     }
-    return std::move(j);
+    return j;
   }
-  json &&Parameters::EncodingMappingToJson() const {
+  json Parameters::EncodingMappingToJson() const {
     auto j = json::array();
     auto seed = GenerateSsrc();
     for (auto &e : encodings) {
@@ -189,9 +188,9 @@ namespace rtp {
       }
       j.push_back(map);
     }
-    return std::move(j);
+    return j;
   }
-  json &&Parameters::ToMapping() const {
+  json Parameters::ToMapping() const {
     // {
     // 	codecs:
     // 	{
@@ -207,11 +206,10 @@ namespace rtp {
     // 		mappedSsrc: number;
     // 	}[];
     // };
-    json j = {
+    return {
       {"codecs", CodecMappingToJson()},
       {"encodings", EncodingMappingToJson()}
     };
-    return std::move(j);
   }
 
 
