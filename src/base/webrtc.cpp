@@ -6,11 +6,14 @@
 #include "base/webrtc/sdp.h"
 
 #include "common.hpp"
+#include "handles/Timer.hpp"
+#include "handles/UnixStreamSocket.hpp"
 #include "MediaSoupErrors.hpp"
 #include "DepLibSRTP.hpp"
 #include "DepLibUV.hpp"
 #include "DepLibWebRTC.hpp"
 #include "DepOpenSSL.hpp"
+#include "Logger.hpp"
 #include "RTC/DtlsTransport.hpp"
 #include "RTC/SrtpSession.hpp"
 #include "RTC/StunPacket.hpp"
@@ -112,6 +115,7 @@ ConnectionFactory::FindFromUfrag(const IceUFrag &ufrag) {
 }
 uint32_t ConnectionFactory::g_ref_count_ = 0;
 std::mutex ConnectionFactory::g_ref_sync_mutex_;
+static Channel::ChannelSocket g_channel_socket_(INVALID_FD, INVALID_FD);
 int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 	try
 	{
@@ -125,6 +129,27 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
       Utils::Crypto::ClassInit();
       DtlsTransport::ClassInit();
       RTC::SrtpSession::ClassInit();
+      // setup RTC::Timer and UnixStreamSocket, Logger
+      Logger::ClassInit(&g_channel_socket_);
+      ::Timer::SetTimerProc(
+        [&a](const ::Timer::Handler &h, uint64_t start_at) {
+          return a.Set([hh = h]() {
+            auto intv = hh();
+            if (intv <= 0) {
+              return 0ULL;
+            }
+            return qrpc_time_now() + qrpc_time_msec(intv);
+          }, qrpc_time_now() + qrpc_time_msec(start_at));
+        },
+        [&a](uint64_t id) {
+          return a.Cancel(id);
+        }
+      );
+      UnixStreamSocket::SetWriter(
+        [](const uint8_t *p, size_t sz) {
+          QRPC_LOGJ(info,{{"ev","from rtp"},{"pl",std::string(reinterpret_cast<const char *>(p), sz)}});
+        }
+      );
     }
     g_ref_count_++;
 		return QRPC_OK;
@@ -325,7 +350,7 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   }
   // create DTLS transport
   try {
-    dtls_transport_.reset(new DtlsTransport(this, factory().alarm_processor()));
+    dtls_transport_.reset(new DtlsTransport(this));
   } catch (const MediaSoupError &error) {
     logger::error({{"ev","fail to create DTLS transport"},{"reason",error.what()}});
     return QRPC_EALLOC;
@@ -1024,7 +1049,7 @@ bool ConnectionFactory::Connection::IsConnected() const {
   return true;
 }
 void ConnectionFactory::Connection::SendRtpPacket(
-  ms::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb) {
+  RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb) {
   MS_TRACE();
 
   if (!IsConnected()) {

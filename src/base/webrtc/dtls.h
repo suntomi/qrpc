@@ -1,7 +1,7 @@
 #ifndef MS_RTC_DTLS_TRANSPORT_HPP
 #define MS_RTC_DTLS_TRANSPORT_HPP
 
-#include "base/webrtc/timer.h"
+#include "handles/Timer.hpp"
 #include "RTC/SrtpSession.hpp"
 #include <openssl/bio.h>
 #include <openssl/ssl.h>
@@ -150,7 +150,7 @@ namespace webrtc {
 		static std::vector<SrtpCryptoSuiteMapEntry> srtpCryptoSuites;
 
 	public:
-		explicit DtlsTransport(Listener* listener, AlarmProcessor &ap);
+		explicit DtlsTransport(Listener* listener);
 		~DtlsTransport() override;
 
 	public:

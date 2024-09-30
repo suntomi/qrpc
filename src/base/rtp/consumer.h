@@ -3,22 +3,21 @@
 #include "base/defs.h"
 #include "base/media.h"
 
-#include "base/rtp/ms/shared.h"
-#include "base/rtp/ms/Consumer.hpp"
-
+#include "RTC/Consumer.hpp"
 #include "RTC/RtpPacket.hpp"
+#include "RTC/Shared.hpp"
 
 namespace base {
 namespace rtp {
   class Handler;
   class Parameters;
-  class Consumer : public ms::Consumer {
+  class Consumer : public RTC::Consumer {
     friend class ProducerFactory;
   public:
-    Consumer(ms::Shared* s, 
+    Consumer(RTC::Shared* s, 
       const std::string& id, const std::string& producer_id,
       Listener* l, json& d, RTC::RtpParameters::Type type
-    ) : ms::Consumer(s, id, producer_id, l, d, type) {}
+    ) : RTC::Consumer(s, id, producer_id, l, d, type) {}
     ~Consumer() override {}
   protected:
     void SetMedia(std::shared_ptr<Media> m) { media_ = m; }

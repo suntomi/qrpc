@@ -25,6 +25,8 @@
 
 namespace base {
 namespace rtp {
+  thread_local Shared Handler::shared_;
+	
 	qrpc_time_t Handler::OnTimer(qrpc_time_t now) {
 		SendRtcp(qrpc_time_to_msec(now));
 		return now + RtcpRandomInterval();
@@ -93,7 +95,7 @@ namespace rtp {
 		}
 	}
 	// TODO: how to get ssrc of consumer, that usually not contained in SDP?
-	inline ms::Consumer* Handler::GetConsumerByMediaSsrc(uint32_t ssrc) const {
+	inline RTC::Consumer* Handler::GetConsumerByMediaSsrc(uint32_t ssrc) const {
 		MS_TRACE();
 		auto mapSsrcConsumerIt = this->mapSsrcConsumer.find(ssrc);
 		if (mapSsrcConsumerIt == this->mapSsrcConsumer.end()) {
@@ -103,7 +105,7 @@ namespace rtp {
 		return consumer;
 	}
 	// TODO: how to get rtx ssrc of consumer, that usually not contained in SDP?
-	inline ms::Consumer* Handler::GetConsumerByRtxSsrc(uint32_t ssrc) const {
+	inline RTC::Consumer* Handler::GetConsumerByRtxSsrc(uint32_t ssrc) const {
 		MS_TRACE();
 		auto mapRtxSsrcConsumerIt = this->mapRtxSsrcConsumer.find(ssrc);
 		if (mapRtxSsrcConsumerIt == this->mapRtxSsrcConsumer.end()) {
@@ -654,7 +656,7 @@ namespace rtp {
     // });
 
 		// Get the associated Producer.
-		ms::Producer* producer = producer_factory_.Get(packet);
+		RTC::Producer* producer = producer_factory_.Get(packet);
 		
 		if (!producer) {
 			packet.logger.Dropped(RTC::RtcLogger::RtpPacket::DropReason::PRODUCER_NOT_FOUND);
@@ -679,13 +681,13 @@ namespace rtp {
 
 		switch (result)
 		{
-			case ms::Producer::ReceiveRtpPacketResult::MEDIA:
+			case RTC::Producer::ReceiveRtpPacketResult::MEDIA:
 				this->recvRtpTransmission.Update(&packet);
 				break;
-			case ms::Producer::ReceiveRtpPacketResult::RETRANSMISSION:
+			case RTC::Producer::ReceiveRtpPacketResult::RETRANSMISSION:
 				this->recvRtxTransmission.Update(&packet);
 				break;
-			case ms::Producer::ReceiveRtpPacketResult::DISCARDED:
+			case RTC::Producer::ReceiveRtpPacketResult::DISCARDED:
 				// Tell the child class to remove this SSRC.
 				listener_.RecvStreamClosed(packet.GetSsrc());
 				break;
@@ -693,15 +695,15 @@ namespace rtp {
 		}
   }
 
-	/* implements ms::Producer::Listener */
-	void Handler::OnProducerPaused(ms::Producer* producer) {
+	/* implements RTC::Producer::Listener */
+	void Handler::OnProducerPaused(RTC::Producer* producer) {
 		MS_TRACE();
 		auto& consumers = this->mapProducerConsumers.at(producer);
 		for (auto* consumer : consumers) {
 			consumer->ProducerPaused();
 		}
 	}
-	void Handler::OnProducerResumed(ms::Producer* producer) {
+	void Handler::OnProducerResumed(RTC::Producer* producer) {
 		MS_TRACE();
 		auto& consumers = this->mapProducerConsumers.at(producer);
 		for (auto* consumer : consumers) {
@@ -709,7 +711,7 @@ namespace rtp {
 		}
 	}
 	void Handler::OnProducerNewRtpStream(
-		ms::Producer* producer, RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) {
+		RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, uint32_t mappedSsrc) {
 		MS_TRACE();
 		auto& consumers = this->mapProducerConsumers.at(producer);
 		for (auto* consumer : consumers) {
@@ -717,7 +719,7 @@ namespace rtp {
 		}
 	}
 	void Handler::OnProducerRtpStreamScore(
-		ms::Producer* producer,
+		RTC::Producer* producer,
 		RTC::RtpStreamRecv* rtpStream,
 		uint8_t score,
 		uint8_t previousScore) {
@@ -728,14 +730,14 @@ namespace rtp {
 		}
 	}
 	void Handler::OnProducerRtcpSenderReport(
-		ms::Producer* producer, RTC::RtpStreamRecv* rtpStream, bool first) {
+		RTC::Producer* producer, RTC::RtpStreamRecv* rtpStream, bool first) {
 		MS_TRACE();
 		auto& consumers = this->mapProducerConsumers.at(producer);
 		for (auto* consumer : consumers) {
 			consumer->ProducerRtcpSenderReport(rtpStream, first);
 		}
 	}
-	void Handler::OnProducerRtpPacketReceived(ms::Producer* producer, RTC::RtpPacket* packet) {
+	void Handler::OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RtpPacket* packet) {
 		MS_TRACE();
 		packet->logger.routerId = this->rtp_id();
 		auto& consumers = this->mapProducerConsumers.at(producer);
@@ -756,19 +758,19 @@ namespace rtp {
 			}
 		}
 	}
-	void Handler::OnProducerSendRtcpPacket(ms::Producer* /* producer */, RTC::RTCP::Packet* packet) {
+	void Handler::OnProducerSendRtcpPacket(RTC::Producer* /* producer */, RTC::RTCP::Packet* packet) {
 		listener_.SendRtcpPacket(packet);
 	}
 	void Handler::OnProducerNeedWorstRemoteFractionLost(
-		ms::Producer* producer, uint32_t mappedSsrc, uint8_t& worstRemoteFractionLost) {
+		RTC::Producer* producer, uint32_t mappedSsrc, uint8_t& worstRemoteFractionLost) {
 		MS_TRACE();
 		auto& consumers = this->mapProducerConsumers.at(producer);
 		for (auto* consumer : consumers) {
 			consumer->NeedWorstRemoteFractionLost(mappedSsrc, worstRemoteFractionLost);
 		}
 	}
-	/* implements ms::Consumer::Listener. */
-	void Handler::OnConsumerSendRtpPacket(ms::Consumer* consumer, RTC::RtpPacket* packet) {
+	/* implements RTC::Consumer::Listener. */
+	void Handler::OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet) {
 		MS_TRACE();
 
 		packet->logger.sendTransportId = this->rtp_id();
@@ -863,7 +865,7 @@ namespace rtp {
 
 		this->sendRtpTransmission.Update(packet);
 	}
-	void Handler::OnConsumerRetransmitRtpPacket(ms::Consumer* consumer, RTC::RtpPacket* packet) {
+	void Handler::OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet) {
 		MS_TRACE();
 
 		// Update abs-send-time if present.
@@ -950,7 +952,7 @@ namespace rtp {
 
 		this->sendRtxTransmission.Update(packet);
 	}
-	void Handler::OnConsumerKeyFrameRequested(ms::Consumer* consumer, uint32_t mappedSsrc) {
+	void Handler::OnConsumerKeyFrameRequested(RTC::Consumer* consumer, uint32_t mappedSsrc) {
 		MS_TRACE();
 		if (!listener_.IsConnected()) {
 			MS_WARN_TAG(rtcp, "ignoring key rame request (transport not connected)");
@@ -964,7 +966,7 @@ namespace rtp {
 
 		MS_ASSERT(this->tccClient, "no TransportCongestionClient");
 
-		std::multimap<uint8_t, ms::Consumer*> multimapPriorityConsumer;
+		std::multimap<uint8_t, RTC::Consumer*> multimapPriorityConsumer;
 
 		// Fill the map with Consumers and their priority (if > 0).
 		for (auto& kv : this->mapConsumers)
@@ -1058,18 +1060,18 @@ namespace rtp {
 		MS_DEBUG_DEV("total desired bitrate: %" PRIu32, totalDesiredBitrate);
 		this->tccClient->SetDesiredBitrate(totalDesiredBitrate, forceBitrate);
 	}	
-	void Handler::OnConsumerNeedBitrateChange(ms::Consumer* consumer) {
+	void Handler::OnConsumerNeedBitrateChange(RTC::Consumer* consumer) {
 		DistributeAvailableOutgoingBitrate();
 		ComputeOutgoingDesiredBitrate();	
 	}
-	void Handler::OnConsumerNeedZeroBitrate(ms::Consumer* consumer) {
+	void Handler::OnConsumerNeedZeroBitrate(RTC::Consumer* consumer) {
 		MS_TRACE();
 		MS_ASSERT(this->tccClient, "no TransportCongestionClient");
 		DistributeAvailableOutgoingBitrate();
 		// This may be the latest active Consumer with BWE. If so we have to stop probation.
 		ComputeOutgoingDesiredBitrate(/*forceBitrate*/ true);
 	}
-	void Handler::OnConsumerProducerClosed(ms::Consumer* consumer) {
+	void Handler::OnConsumerProducerClosed(RTC::Consumer* consumer) {
 		MS_TRACE();
 		// Remove it from the maps.
 		this->mapConsumers.erase(consumer->id);

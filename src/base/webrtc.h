@@ -232,7 +232,7 @@ namespace webrtc {
       void SendStreamClosed(uint32_t ssrc) override; 
       bool IsConnected() const override;
       void SendRtpPacket(
-        ms::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb = nullptr) override;
+        RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb = nullptr) override;
       void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
       void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
     protected:

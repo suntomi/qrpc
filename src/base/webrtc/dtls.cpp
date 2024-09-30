@@ -501,7 +501,7 @@ namespace webrtc {
 
 	/* Instance methods. */
 
-	DtlsTransport::DtlsTransport(Listener* listener, AlarmProcessor &ap) : listener(listener)
+	DtlsTransport::DtlsTransport(Listener* listener) : listener(listener)
 	{
 		MS_TRACE();
 
@@ -552,7 +552,7 @@ namespace webrtc {
 		DTLS_set_timer_cb(this->ssl, onSslDtlsTimer);
 
 		// Set the DTLS timer.
-		this->timer = new Timer(this, ap);
+		this->timer = new Timer(this);
 
 		return;
 
