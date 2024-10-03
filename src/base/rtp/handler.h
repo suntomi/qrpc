@@ -15,21 +15,26 @@
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
 #include "RTC/SenderBandwidthEstimator.hpp"
 #endif
+#include "RTC/TransportCongestionControlClient.hpp"
+#include "RTC/TransportCongestionControlServer.hpp"
 
 #include <absl/container/flat_hash_map.h>
 
 using json = nlohmann::json;
 
-namespace RTC {
-  class TransportCongestionControlClient;
-  class TransportCongestionControlServer;
-}
-
 namespace base {
 namespace rtp {
-  class Handler : public RTC::Producer::Listener, public RTC::Consumer::Listener {
+  class Handler :
+    public RTC::Producer::Listener, public RTC::Consumer::Listener,
+    public RTC::TransportCongestionControlClient::Listener,
+    public RTC::TransportCongestionControlServer::Listener {
   public:
     typedef RTC::RtpHeaderExtensionIds ExtensionIds;
+    struct Config {
+      size_t initial_outgoing_bitrate;
+      size_t max_outgoing_bitrate, max_incoming_bitrate;
+      size_t min_outgoing_bitrate;
+    };
     class Listener {
     public:
       typedef const std::function<void(bool sent)> onSendCallback;  
@@ -42,6 +47,7 @@ namespace rtp {
         RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb = nullptr) = 0;
       virtual void SendRtcpPacket(RTC::RTCP::Packet* packet)                 = 0;
       virtual void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) = 0;
+      virtual const Config &GetRtpConfig() const = 0;
     };
     typedef Listener::onSendCallback onSendCallback;
   public:
@@ -64,8 +70,8 @@ namespace rtp {
     int CreateProducer(const std::string &id, const Parameters &p);
     int CreateConsumer(const Parameters &p);
     static inline qrpc_time_t RtcpRandomInterval() { return qrpc_time_msec(random::gen(1000, 1500)); }
-		/* Pure virtual methods inherited from RTC::Producer::Listener. */
-	public:
+  public:
+		/* implements RTC::Producer::Listener. */
 		void OnProducerReceiveData(RTC::Producer* /*producer*/, size_t len) override {
 			this->DataReceived(len);
 		}
@@ -87,17 +93,30 @@ namespace rtp {
 		void OnProducerSendRtcpPacket(RTC::Producer* producer, RTC::RTCP::Packet* packet) override;
 		void OnProducerNeedWorstRemoteFractionLost(
 		  RTC::Producer* producer, uint32_t mappedSsrc, uint8_t& worstRemoteFractionLost) override;
-
-		/* Pure virtual methods inherited from RTC::Consumer::Listener. */
-	public:
+  public:
+		/* implements RTC::Consumer::Listener. */
 		void OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet) override;
 		void OnConsumerRetransmitRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet) override;
 		void OnConsumerKeyFrameRequested(RTC::Consumer* consumer, uint32_t mappedSsrc) override;
 		void OnConsumerNeedBitrateChange(RTC::Consumer* consumer) override;
 		void OnConsumerNeedZeroBitrate(RTC::Consumer* consumer) override;
 		void OnConsumerProducerClosed(RTC::Consumer* consumer) override;    
-  // borrow from src/ext/mediasoup/worker/include/RTC/Transport.hpp
   public:
+    /* implements RTC::TransportCongestionControlClient::Listener. */
+    virtual void OnTransportCongestionControlClientBitrates(
+      RTC::TransportCongestionControlClient* tccClient,
+      RTC::TransportCongestionControlClient::Bitrates& bitrates) override;
+    virtual void OnTransportCongestionControlClientSendRtpPacket(
+      RTC::TransportCongestionControlClient* tccClient,
+      RTC::RtpPacket* packet,
+      const webrtc::PacedPacketInfo& pacingInfo) override;
+  public:
+    /* implements RTC::TransportCongestionControlServer::Listener. */
+    void OnTransportCongestionControlServerSendRtcpPacket(
+			  RTC::TransportCongestionControlServer* tccServer, RTC::RTCP::Packet* packet) override;
+
+  public:
+    // from src/ext/mediasoup/worker/include/RTC/Transport.hpp
     void ReceiveRtpPacket(const std::string &id, RTC::RtpPacket &packet);
     void ReceiveRtcpPacket(RTC::RTCP::Packet *packet);
 		RTC::Consumer* GetConsumerByMediaSsrc(uint32_t ssrc) const;
@@ -109,6 +128,11 @@ namespace rtp {
     void HandleRtcpPacket(RTC::RTCP::Packet *packet);
     void DistributeAvailableOutgoingBitrate();
     void ComputeOutgoingDesiredBitrate(bool forceBitrate = false);
+		void EmitTraceEventProbationType(RTC::RtpPacket* packet) const;
+		void EmitTraceEventBweType(RTC::TransportCongestionControlClient::Bitrates& bitrates) const;
+  protected:
+    void InitTccClient(const Consumer *consumer, const Parameters &p);
+    void InitTccServer(const Parameters &p);
   protected:
     Listener &listener_;
     static thread_local Shared shared_;
@@ -135,10 +159,10 @@ namespace rtp {
 		RTC::RtpDataCounter sendRtxTransmission;
 		RTC::RtpDataCounter sendProbationTransmission;
 		uint16_t transportWideCcSeq{ 0u };
-		uint32_t initialAvailableOutgoingBitrate{ 600000u };
-		uint32_t maxIncomingBitrate{ 0u };
-		uint32_t maxOutgoingBitrate{ 0u };
-		uint32_t minOutgoingBitrate{ 0u };
+    struct TraceEventTypes {
+			bool probation{ false };
+			bool bwe{ false };
+		} traceEventTypes;
   protected:
     std::map<Media::Id, std::shared_ptr<Media>> medias_;
     std::map<Media::Rid, Media::Id> rid_label_map_;

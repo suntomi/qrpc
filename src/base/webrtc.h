@@ -235,6 +235,7 @@ namespace webrtc {
         RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb = nullptr) override;
       void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
       void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
+      const rtp::Handler::Config &GetRtpConfig() const override { return factory().config().rtp; }
     protected:
       qrpc_time_t last_active_;
       ConnectionFactory &sv_;
@@ -264,6 +265,7 @@ namespace webrtc {
     struct Config {
       std::string ip;
       std::vector<Port> ports;
+      rtp::Handler::Config rtp;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
       size_t send_buffer_size, udp_batch_size;
       qrpc_time_t session_timeout, http_timeout;

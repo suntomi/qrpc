@@ -222,7 +222,7 @@ namespace rtp {
     p.dtx = dtx;
     p.codecPayloadType = pt;
     p.hasCodecPayloadType = pt != 0;
-    p.hasRtx = rtxpt != 0;
+    p.hasRtx = rtxpt != 0; // here, rtx ssrc is unknown
     encodings.push_back(p);
   }
   void Parameters::AddEncoding(uint32_t ssrc, uint64_t pt, uint64_t rtxpt, bool dtx) {
@@ -231,7 +231,7 @@ namespace rtp {
     p.dtx = dtx;
     p.codecPayloadType = pt;
     p.hasCodecPayloadType = pt != 0;
-    p.hasRtx = rtxpt != 0;
+    p.hasRtx = rtxpt != 0; // here, rtx ssrc is unknown
     encodings.push_back(p);
   }
   int Parameters::Parse(Handler &h, const json &section, std::string &answer)  {

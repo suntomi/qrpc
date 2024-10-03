@@ -34,6 +34,7 @@ namespace rtp {
 					// Fill the ssrc table.
 					// NOTE: We may be overriding an exiting SSRC here, but we don't care.
 					this->ssrcTable[packet.GetSsrc()] = producer;
+					QRPC_LOGJ(debug, {{"ev","add to ssrc by mid"},{"mid",mid},{"ssrc",packet.GetSsrc()}});
 					return producer;
 				}
 			}
@@ -48,6 +49,7 @@ namespace rtp {
 					// Fill the ssrc table.
 					// NOTE: We may be overriding an exiting SSRC here, but we don't care.
 					this->ssrcTable[packet.GetSsrc()] = producer;
+					QRPC_LOGJ(debug, {{"ev","add to ssrc by rid"},{"rid",rid},{"ssrc",packet.GetSsrc()}});
 					return producer;
 				}
 			}
@@ -84,6 +86,7 @@ namespace rtp {
 
 		const auto& rtpParameters = producer->GetRtpParameters();
 
+		int added = 0;
 		// Add entries into the ssrcTable.
 		for (const auto& encoding : rtpParameters.encodings)
 		{
@@ -96,7 +99,9 @@ namespace rtp {
 			{
 				if (this->ssrcTable.find(ssrc) == this->ssrcTable.end())
 				{
+					QRPC_LOGJ(debug, {{"ev","add to ssrc table"},{"ssrc",ssrc},{"producer",producer->id}});
 					this->ssrcTable[ssrc] = producer;
+					added++;
 				}
 				else
 				{
@@ -114,7 +119,9 @@ namespace rtp {
 			{
 				if (this->ssrcTable.find(ssrc) == this->ssrcTable.end())
 				{
+					QRPC_LOGJ(debug, {{"ev","add to ssrc table as rtx"},{"ssrc",ssrc},{"producer",producer->id}});
 					this->ssrcTable[ssrc] = producer;
+					added++;
 				}
 				else
 				{
@@ -133,7 +140,9 @@ namespace rtp {
 
 			if (this->midTable.find(mid) == this->midTable.end())
 			{
+				QRPC_LOGJ(debug, {{"ev","add to mid table"},{"mid",mid},{"producer",producer->id}});
 				this->midTable[mid] = producer;
+				added++;
 			}
 			else
 			{
@@ -154,7 +163,9 @@ namespace rtp {
 
 			if (this->ridTable.find(rid) == this->ridTable.end())
 			{
+				QRPC_LOGJ(debug, {{"ev","add to rid table"},{"rid",rid},{"producer",producer->id}});
 				this->ridTable[rid] = producer;
+				added++;
 			}
 			// Just fail if no MID is given.
 			else if (rtpParameters.mid.empty())
@@ -165,6 +176,7 @@ namespace rtp {
         return false;
 			}
 		}
+		ASSERT(added > 0);
     return true;
   }
 }

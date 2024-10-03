@@ -147,7 +147,7 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
       );
       UnixStreamSocket::SetWriter(
         [](const uint8_t *p, size_t sz) {
-          QRPC_LOGJ(info,{{"ev","from rtp"},{"pl",std::string(reinterpret_cast<const char *>(p), sz)}});
+          QRPC_LOGJ(info,{{"ev","from rtp"},{"plen",sz}});
         }
       );
     }
@@ -573,6 +573,7 @@ void ConnectionFactory::Connection::OnUdpSessionShutdown(Session *s) {
 
 int ConnectionFactory::Connection::OnPacketReceived(Session *session, const uint8_t *p, size_t sz) {
   // Check if it's STUN.
+  Touch(qrpc_time_now());
   if (RTC::StunPacket::IsStun(p, sz)) {
     return OnStunDataReceived(session, p, sz);
   } else if (DtlsTransport::IsDtls(p, sz)) { // Check if it's DTLS.
@@ -606,7 +607,6 @@ int ConnectionFactory::Connection::OnDtlsDataReceived(Session *session, const ui
     logger::warn({{"ev","ignoring DTLS data coming from an invalid session"},{"proto","dtls"}});
     return QRPC_OK;
   }
-  Touch(qrpc_time_now());
   // Trick for clients performing aggressive ICE regardless we are ICE-Lite.
   ice_server_->MayForceSelectedSession(session);
   // Check that DTLS status is 'connecting' or 'connected'.
@@ -644,7 +644,7 @@ void ConnectionFactory::Connection::TryParseRtcpPacket(const uint8_t *p, size_t 
     return;
   }
   // we need to implement RTC::Transport::ReceiveRtcpPacket(packet) equivalent
-  logger::info({{"ev","RTCP packet received"}});
+  // logger::info({{"ev","RTCP packet received"}});
   rtp_handler_->ReceiveRtcpPacket(packet); // deletes packet
 }
 int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz) {
@@ -944,7 +944,7 @@ void ConnectionFactory::Connection::OnSctpAssociationSendData(
       {"dtls_state",dtls_transport_->GetState()}});
     return;
   }
-  logger::debug({{"proto","stcp"},{"ev","send data"},{"sz",len}});
+  // logger::debug({{"proto","sctp"},{"ev","send data"},{"sz",len}});
   dtls_transport_->SendApplicationData(data, len);
 }
 void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(

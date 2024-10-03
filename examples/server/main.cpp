@@ -97,8 +97,14 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    webrtc::AdhocListener w(l, webrtc::AdhocListener::Config {
+    base::webrtc::AdhocListener w(l, base::webrtc::AdhocListener::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
+        .rtp = {
+            .initial_outgoing_bitrate = 10000000,
+            .max_incoming_bitrate = 10000000,
+            .max_outgoing_bitrate = 0,
+            .min_outgoing_bitrate = 0,
+        },
         .send_buffer_size = 256 * 1024,
         .http_timeout = qrpc_time_sec(5),
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically

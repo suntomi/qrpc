@@ -574,13 +574,168 @@ namespace rtp {
 			ssrc_trackid_map_[kv.first] = kv.second.track_id;
 		}
 		auto producer = producer_factory_.Create(id, p);
+		InitTccServer(p);
 		// Insert the Producer in the maps.
 		this->mapProducerConsumers[producer.get()]; // creates empty set in the key
 
 		return producer != nullptr ? QRPC_OK : QRPC_EINVAL;
 	}
 	int Handler::CreateConsumer(const Parameters &p) {
+		InitTccClient(nullptr, p);
 		return QRPC_OK;
+	}
+	void Handler::InitTccClient(const Consumer *consumer, const Parameters &p) {
+		bool createTccClient{ false };
+		RTC::BweType bweType;
+		auto &codecs = p.codecs;
+
+		// Use transport-cc if:
+		// - it's a video Consumer, and
+		// - there is transport-wide-cc-01 RTP header extension, and
+		// - there is "transport-cc" in codecs RTCP feedback.
+		//
+		// clang-format off
+		if (
+			consumer->GetKind() == RTC::Media::Kind::VIDEO && ext_ids().transportWideCc01 != 0u &&
+			std::any_of(
+				codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
+				{
+					return std::any_of(
+						codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
+						{
+							return fb.type == "transport-cc";
+						});
+				})
+		)
+		// clang-format on
+		{
+			MS_DEBUG_TAG(bwe, "enabling TransportCongestionControlClient with transport-cc");
+
+			createTccClient = true;
+			bweType         = RTC::BweType::TRANSPORT_CC;
+		}
+		// Use REMB if:
+		// - it's a video Consumer, and
+		// - there is abs-send-time RTP header extension, and
+		// - there is "remb" in codecs RTCP feedback.
+		//
+		// clang-format off
+		else if (
+			consumer->GetKind() == RTC::Media::Kind::VIDEO && ext_ids().absSendTime != 0u &&
+			std::any_of(
+				codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
+				{
+					return std::any_of(
+						codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
+						{
+							return fb.type == "goog-remb";
+						});
+				})
+		)
+		// clang-format on
+		{
+			MS_DEBUG_TAG(bwe, "enabling TransportCongestionControlClient with REMB");
+
+			createTccClient = true;
+			bweType         = RTC::BweType::REMB;
+		}
+
+		if (createTccClient)
+		{
+			// Tell all the Consumers that we are gonna manage their bitrate.
+			for (auto& kv : this->mapConsumers)
+			{
+				auto* consumer = kv.second;
+
+				consumer->SetExternallyManagedBitrate();
+			};
+
+			this->tccClient = std::make_shared<RTC::TransportCongestionControlClient>(
+				this,
+				bweType,
+				listener_.GetRtpConfig().initial_outgoing_bitrate,
+				listener_.GetRtpConfig().max_outgoing_bitrate,
+				listener_.GetRtpConfig().min_outgoing_bitrate);
+
+			if (listener_.IsConnected())
+			{
+				this->tccClient->TransportConnected();
+			}
+		}
+	}
+	void Handler::InitTccServer(const Parameters &p) {
+		if (this->tccServer) {
+			return; // already initialized
+		}
+		bool createTccServer{ false };
+		RTC::BweType bweType;
+		auto &codecs = p.codecs;
+
+		// Use transport-cc if:
+		// - there is transport-wide-cc-01 RTP header extension, and
+		// - there is "transport-cc" in codecs RTCP feedback.
+		//
+		// clang-format off
+		if (
+			ext_ids().transportWideCc01 != 0u &&
+			std::any_of(
+				codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
+				{
+					return std::any_of(
+						codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
+						{
+							return fb.type == "transport-cc";
+						});
+				})
+		)
+		// clang-format on
+		{
+			MS_DEBUG_TAG(bwe, "enabling TransportCongestionControlServer with transport-cc");
+
+			createTccServer = true;
+			bweType         = RTC::BweType::TRANSPORT_CC;
+		}
+		// Use REMB if:
+		// - there is abs-send-time RTP header extension, and
+			// - there is "remb" in codecs RTCP feedback.
+			//
+			// clang-format off
+			else if (
+				ext_ids().absSendTime != 0u &&
+				std::any_of(
+					codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
+					{
+						return std::any_of(
+							codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
+							{
+								return fb.type == "goog-remb";
+							});
+					})
+			)
+			// clang-format on
+			{
+				MS_DEBUG_TAG(bwe, "enabling TransportCongestionControlServer with REMB");
+
+				createTccServer = true;
+				bweType         = RTC::BweType::REMB;
+			}
+
+			if (createTccServer)
+			{
+				this->tccServer =
+					std::make_shared<RTC::TransportCongestionControlServer>(this, bweType, RTC::MtuSize);
+
+				auto max_incoming_bitrate = listener_.GetRtpConfig().max_incoming_bitrate;
+				if (max_incoming_bitrate != 0u)
+				{
+					this->tccServer->SetMaxIncomingBitrate(max_incoming_bitrate);
+				}
+
+				if (listener_.IsConnected())
+				{
+					this->tccServer->TransportConnected();
+				}
+			}
 	}
 	bool Handler::SetExtensionId(uint8_t id, const std::string &uri) {
 		if (uri == "urn:ietf:params:rtp-hdrext:toffset") {
@@ -670,11 +825,11 @@ namespace rtp {
 			return;
 		}
 
-		QRPC_LOG(error, 
-		  "RTP packet received [ssrc:%" PRIu32 ", payloadType:%" PRIu8 ", producerId:%s]",
-		  packet.GetSsrc(),
-		  packet.GetPayloadType(),
-		 id.c_str());
+		// QRPC_LOG(error, 
+		//   "RTP packet received [ssrc:%" PRIu32 ", payloadType:%" PRIu8 ", producerId:%s]",
+		//   packet.GetSsrc(),
+		//   packet.GetPayloadType(),
+		//  id.c_str());
 
 		// Pass the RTP packet to the corresponding Producer.
 		auto result = producer->ReceiveRtpPacket(&packet);
@@ -694,6 +849,137 @@ namespace rtp {
 			default:;
 		}
   }
+
+	/* implements RTC::TransportCongestionControlClient::Listener. */
+	inline void Handler::OnTransportCongestionControlClientBitrates(
+	  RTC::TransportCongestionControlClient* /*tccClient*/,
+	  RTC::TransportCongestionControlClient::Bitrates& bitrates)
+	{
+		MS_TRACE();
+
+		MS_DEBUG_DEV("outgoing available bitrate:%" PRIu32, bitrates.availableBitrate);
+
+		DistributeAvailableOutgoingBitrate();
+		ComputeOutgoingDesiredBitrate();
+
+		// May emit 'trace' event.
+		EmitTraceEventBweType(bitrates);
+	}
+
+	inline void Handler::OnTransportCongestionControlClientSendRtpPacket(
+	  RTC::TransportCongestionControlClient* tccClient,
+	  RTC::RtpPacket* packet,
+	  const webrtc::PacedPacketInfo& pacingInfo)
+	{
+		MS_TRACE();
+
+		// Update abs-send-time if present.
+		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
+
+		// Update transport wide sequence number if present.
+		// clang-format off
+		if (
+			this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC &&
+			packet->UpdateTransportWideCc01(this->transportWideCcSeq + 1)
+		)
+		// clang-format on
+		{
+			this->transportWideCcSeq++;
+
+			// May emit 'trace' event.
+			EmitTraceEventProbationType(packet);
+
+			webrtc::RtpPacketSendInfo packetInfo;
+
+			packetInfo.ssrc                      = packet->GetSsrc();
+			packetInfo.transport_sequence_number = this->transportWideCcSeq;
+			packetInfo.has_rtp_sequence_number   = true;
+			packetInfo.rtp_sequence_number       = packet->GetSequenceNumber();
+			packetInfo.length                    = packet->GetSize();
+			packetInfo.pacing_info               = pacingInfo;
+
+			// Indicate the pacer (and prober) that a packet is to be sent.
+			this->tccClient->InsertPacket(packetInfo);
+
+			const std::weak_ptr<RTC::TransportCongestionControlClient> tccClientWeakPtr(this->tccClient);
+
+#ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
+			std::weak_ptr<RTC::SenderBandwidthEstimator> senderBweWeakPtr = this->senderBwe;
+			RTC::SenderBandwidthEstimator::SentInfo sentInfo;
+
+			sentInfo.wideSeq     = this->transportWideCcSeq;
+			sentInfo.size        = packet->GetSize();
+			sentInfo.isProbation = true;
+			sentInfo.sendingAtMs = DepLibUV::GetTimeMs();
+
+			auto* cb = new onSendCallback(
+			  [tccClientWeakPtr, &packetInfo, senderBweWeakPtr, &sentInfo](bool sent)
+			  {
+				  if (sent)
+				  {
+					  auto tccClient = tccClientWeakPtr.lock();
+
+					  if (tccClient)
+					  {
+						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+					  }
+
+					  auto senderBwe = senderBweWeakPtr.lock();
+
+					  if (senderBwe)
+					  {
+						  sentInfo.sentAtMs = DepLibUV::GetTimeMs();
+						  senderBwe->RtpPacketSent(sentInfo);
+					  }
+				  }
+			  });
+
+			SendRtpPacket(nullptr, packet, cb);
+#else
+			const auto* cb = new onSendCallback(
+			  [tccClientWeakPtr, &packetInfo](bool sent)
+			  {
+				  if (sent)
+				  {
+					  auto tccClient = tccClientWeakPtr.lock();
+
+					  if (tccClient)
+					  {
+						  tccClient->PacketSent(packetInfo, DepLibUV::GetTimeMsInt64());
+					  }
+				  }
+			  });
+
+			listener_.SendRtpPacket(nullptr, packet, cb);
+#endif
+		}
+		else
+		{
+			// May emit 'trace' event.
+			EmitTraceEventProbationType(packet);
+
+			listener_.SendRtpPacket(nullptr, packet);
+		}
+
+		this->sendProbationTransmission.Update(packet);
+
+		MS_DEBUG_DEV(
+		  "probation sent [seq:%" PRIu16 ", wideSeq:%" PRIu16 ", size:%zu, bitrate:%" PRIu32 "]",
+		  packet->GetSequenceNumber(),
+		  this->transportWideCcSeq,
+		  packet->GetSize(),
+		  this->sendProbationTransmission.GetBitrate(DepLibUV::GetTimeMs()));
+	}
+
+	/* implements RTC::TransportCongestionControlServer::Listener. */
+	void Handler::OnTransportCongestionControlServerSendRtcpPacket(
+		RTC::TransportCongestionControlServer* tccServer, RTC::RTCP::Packet* packet) {
+		MS_TRACE();
+
+		packet->Serialize(RTC::RTCP::Buffer);
+
+		listener_.SendRtcpPacket(packet);
+	}
 
 	/* implements RTC::Producer::Listener */
 	void Handler::OnProducerPaused(RTC::Producer* producer) {
@@ -1103,6 +1389,60 @@ namespace rtp {
 			ComputeOutgoingDesiredBitrate(/*forceBitrate*/ true);
 		}
 	}
+		inline void Handler::EmitTraceEventProbationType(RTC::RtpPacket* packet) const
+	{
+		MS_TRACE();
 
+		if (!this->traceEventTypes.probation)
+		{
+			return;
+		}
+
+		json data = json::object();
+
+		data["type"]      = "probation";
+		data["timestamp"] = DepLibUV::GetTimeMs();
+		data["direction"] = "out";
+
+		packet->FillJson(data["info"]);
+
+		shared_.get().channelNotifier->Emit(listener_.rtp_id(), "trace", data);
+	}
+
+	inline void Handler::EmitTraceEventBweType(
+	  RTC::TransportCongestionControlClient::Bitrates& bitrates) const
+	{
+		MS_TRACE();
+
+		if (!this->traceEventTypes.bwe)
+		{
+			return;
+		}
+
+		json data = json::object();
+
+		data["type"]                            = "bwe";
+		data["timestamp"]                       = DepLibUV::GetTimeMs();
+		data["direction"]                       = "out";
+		data["info"]["desiredBitrate"]          = bitrates.desiredBitrate;
+		data["info"]["effectiveDesiredBitrate"] = bitrates.effectiveDesiredBitrate;
+		data["info"]["minBitrate"]              = bitrates.minBitrate;
+		data["info"]["maxBitrate"]              = bitrates.maxBitrate;
+		data["info"]["startBitrate"]            = bitrates.startBitrate;
+		data["info"]["maxPaddingBitrate"]       = bitrates.maxPaddingBitrate;
+		data["info"]["availableBitrate"]        = bitrates.availableBitrate;
+
+		switch (this->tccClient->GetBweType())
+		{
+			case RTC::BweType::TRANSPORT_CC:
+				data["info"]["type"] = "transport-cc";
+				break;
+			case RTC::BweType::REMB:
+				data["info"]["type"] = "remb";
+				break;
+		}
+
+		shared_.get().channelNotifier->Emit(listener_.rtp_id(), "trace", data);
+	}
 }
 }

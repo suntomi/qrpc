@@ -23,20 +23,26 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
     Test3StreamContext test3ctx;
     int closed = 0;
     const int MAX_RECONNECT = 2;
-    webrtc::AdhocClient w(l, webrtc::ConnectionFactory::Config {
+    base::webrtc::AdhocClient w(l, base::webrtc::ConnectionFactory::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
+        .rtp = {
+            .initial_outgoing_bitrate = 10000000,
+            .max_incoming_bitrate = 10000000,
+            .max_outgoing_bitrate = 0,
+            .min_outgoing_bitrate = 0,
+        },
         .send_buffer_size = 256 * 1024,
         .http_timeout = qrpc_time_sec(5),
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
         .fingerprint_algorithm = "sha-256",
         .resolver = r,
-    }, [](webrtc::ConnectionFactory::Connection &c) {
+    }, [](base::webrtc::ConnectionFactory::Connection &c) {
         logger::info({{"ev","webrtc connected"}});
         c.OpenStream({.label = "test"});
         c.OpenStream({.label = "test3"});
         return QRPC_OK;
-    }, [&closed, &error_msg](webrtc::ConnectionFactory::Connection &) {
+    }, [&closed, &error_msg](base::webrtc::ConnectionFactory::Connection &) {
         logger::info({{"ev","webrtc closed"}});
         if (closed < MAX_RECONNECT) {
             closed++;
@@ -512,7 +518,7 @@ a=mid:2
 a=sctp-port:5000
 a=max-message-size:262144
 })sdp";
-    auto s = webrtc::SDP(sdp);
+    auto s = base::webrtc::SDP(sdp);
     QRPC_LOGJ(info, s);
     ASSERT(false);
     return true;
