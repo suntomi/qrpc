@@ -35,6 +35,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
         .http_timeout = qrpc_time_sec(5),
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
+        .consent_check_interval = qrpc_time_sec(10),
         .fingerprint_algorithm = "sha-256",
         .resolver = r,
     }, [](base::webrtc::ConnectionFactory::Connection &c) {

@@ -784,7 +784,9 @@ namespace rtp {
   void Handler::ReceiveRtpPacket(const std::string &id, RTC::RtpPacket &packet) {
     MS_TRACE();
 
+#ifdef MS_RTC_LOGGER_RTP
 		packet.logger.recvTransportId = id;
+#endif
 
 		// Apply the Transport RTP header extension ids so the RTP listener can use them.
 		packet.SetMidExtensionId(ext_ids().mid);
@@ -814,7 +816,9 @@ namespace rtp {
 		RTC::Producer* producer = producer_factory_.Get(packet);
 		
 		if (!producer) {
+#ifdef MS_RTC_LOGGER_RTP
 			packet.logger.Dropped(RTC::RtcLogger::RtpPacket::DropReason::PRODUCER_NOT_FOUND);
+#endif
 			MS_WARN_TAG(
 			  rtp,
 			  "no suitable Producer for received RTP packet [ssrc:%" PRIu32 ", payloadType:%" PRIu8 "]",
@@ -1025,7 +1029,9 @@ namespace rtp {
 	}
 	void Handler::OnProducerRtpPacketReceived(RTC::Producer* producer, RTC::RtpPacket* packet) {
 		MS_TRACE();
+#ifdef MS_RTC_LOGGER_RTP
 		packet->logger.routerId = this->rtp_id();
+#endif
 		auto& consumers = this->mapProducerConsumers.at(producer);
 		if (!consumers.empty())
 		{
@@ -1059,8 +1065,10 @@ namespace rtp {
 	void Handler::OnConsumerSendRtpPacket(RTC::Consumer* consumer, RTC::RtpPacket* packet) {
 		MS_TRACE();
 
+#ifdef MS_RTC_LOGGER_RTP
 		packet->logger.sendTransportId = this->rtp_id();
 		packet->logger.Sent();
+#endif
 
 		// Update abs-send-time if present.
 		packet->UpdateAbsSendTime(DepLibUV::GetTimeMs());
@@ -1389,7 +1397,7 @@ namespace rtp {
 			ComputeOutgoingDesiredBitrate(/*forceBitrate*/ true);
 		}
 	}
-		inline void Handler::EmitTraceEventProbationType(RTC::RtpPacket* packet) const
+	inline void Handler::EmitTraceEventProbationType(RTC::RtpPacket* packet) const
 	{
 		MS_TRACE();
 
@@ -1398,15 +1406,18 @@ namespace rtp {
 			return;
 		}
 
-		json data = json::object();
+		// TODO: Missing trace info (RTP packet dump).
+		auto notification = FBS::Transport::CreateTraceNotification(
+		  shared_.get().channelNotifier->GetBufferBuilder(),
+		  FBS::Transport::TraceEventType::PROBATION,
+		  DepLibUV::GetTimeMs(),
+		  FBS::Common::TraceDirection::DIRECTION_OUT);
 
-		data["type"]      = "probation";
-		data["timestamp"] = DepLibUV::GetTimeMs();
-		data["direction"] = "out";
-
-		packet->FillJson(data["info"]);
-
-		shared_.get().channelNotifier->Emit(listener_.rtp_id(), "trace", data);
+		shared_.get().channelNotifier->Emit(
+		  listener_.rtp_id(),
+		  FBS::Notification::Event::TRANSPORT_TRACE,
+		  FBS::Notification::Body::Transport_TraceNotification,
+		  notification);
 	}
 
 	inline void Handler::EmitTraceEventBweType(
@@ -1419,30 +1430,32 @@ namespace rtp {
 			return;
 		}
 
-		json data = json::object();
+		auto traceInfo = FBS::Transport::CreateBweTraceInfo(
+		  shared_.get().channelNotifier->GetBufferBuilder(),
+		  this->tccClient->GetBweType() == RTC::BweType::TRANSPORT_CC
+		    ? FBS::Transport::BweType::TRANSPORT_CC
+		    : FBS::Transport::BweType::REMB,
+		  bitrates.desiredBitrate,
+		  bitrates.effectiveDesiredBitrate,
+		  bitrates.minBitrate,
+		  bitrates.maxBitrate,
+		  bitrates.startBitrate,
+		  bitrates.maxPaddingBitrate,
+		  bitrates.availableBitrate);
 
-		data["type"]                            = "bwe";
-		data["timestamp"]                       = DepLibUV::GetTimeMs();
-		data["direction"]                       = "out";
-		data["info"]["desiredBitrate"]          = bitrates.desiredBitrate;
-		data["info"]["effectiveDesiredBitrate"] = bitrates.effectiveDesiredBitrate;
-		data["info"]["minBitrate"]              = bitrates.minBitrate;
-		data["info"]["maxBitrate"]              = bitrates.maxBitrate;
-		data["info"]["startBitrate"]            = bitrates.startBitrate;
-		data["info"]["maxPaddingBitrate"]       = bitrates.maxPaddingBitrate;
-		data["info"]["availableBitrate"]        = bitrates.availableBitrate;
+		auto notification = FBS::Transport::CreateTraceNotification(
+		  shared_.get().channelNotifier->GetBufferBuilder(),
+		  FBS::Transport::TraceEventType::BWE,
+		  DepLibUV::GetTimeMs(),
+		  FBS::Common::TraceDirection::DIRECTION_OUT,
+		  FBS::Transport::TraceInfo::BweTraceInfo,
+		  traceInfo.Union());
 
-		switch (this->tccClient->GetBweType())
-		{
-			case RTC::BweType::TRANSPORT_CC:
-				data["info"]["type"] = "transport-cc";
-				break;
-			case RTC::BweType::REMB:
-				data["info"]["type"] = "remb";
-				break;
-		}
-
-		shared_.get().channelNotifier->Emit(listener_.rtp_id(), "trace", data);
+		shared_.get().channelNotifier->Emit(
+		  listener_.rtp_id(),
+		  FBS::Notification::Event::TRANSPORT_TRACE,
+		  FBS::Notification::Body::Transport_TraceNotification,
+		  notification);
 	}
 }
 }

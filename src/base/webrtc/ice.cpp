@@ -12,19 +12,102 @@
 
 namespace base {
 namespace webrtc {
-	// IceServer
 	/* Static. */
 
 	static constexpr size_t StunSerializeBufferSize{ 65536 };
 	thread_local static uint8_t StunSerializeBuffer[StunSerializeBufferSize];
-	static constexpr size_t MaxTuples{ 8 };
+	static constexpr size_t MaxSessions{ 8 };
+	static constexpr uint8_t ConsentCheckMinTimeoutSec{ 10u };
+	static constexpr uint8_t ConsentCheckMaxTimeoutSec{ 60u };
+
+	/* Class methods. */
+	IceServer::IceState IceStateFromFbs(FBS::WebRtcTransport::IceState state)
+	{
+		switch (state)
+		{
+			case FBS::WebRtcTransport::IceState::NEW:
+			{
+				return IceServer::IceState::NEW;
+			}
+
+			case FBS::WebRtcTransport::IceState::CONNECTED:
+			{
+				return IceServer::IceState::CONNECTED;
+			}
+
+			case FBS::WebRtcTransport::IceState::COMPLETED:
+			{
+				return IceServer::IceState::COMPLETED;
+			}
+
+			case FBS::WebRtcTransport::IceState::DISCONNECTED:
+			{
+				return IceServer::IceState::DISCONNECTED;
+			}
+		}
+	}
+
+	FBS::WebRtcTransport::IceState IceServer::IceStateToFbs(IceServer::IceState state)
+	{
+		switch (state)
+		{
+			case IceServer::IceState::NEW:
+			{
+				return FBS::WebRtcTransport::IceState::NEW;
+			}
+
+			case IceServer::IceState::CONNECTED:
+			{
+				return FBS::WebRtcTransport::IceState::CONNECTED;
+			}
+
+			case IceServer::IceState::COMPLETED:
+			{
+				return FBS::WebRtcTransport::IceState::COMPLETED;
+			}
+
+			case IceServer::IceState::DISCONNECTED:
+			{
+				return FBS::WebRtcTransport::IceState::DISCONNECTED;
+			}
+		}
+	}
 
 	/* Instance methods. */
 
-	IceServer::IceServer(Listener* listener, const std::string& usernameFragment, const std::string& password)
+	IceServer::IceServer(
+	  Listener* listener,
+	  const std::string& usernameFragment,
+	  const std::string& password,
+	  uint8_t consentTimeoutSec)
 	  : listener(listener), usernameFragment(usernameFragment), password(password)
 	{
 		MS_TRACE();
+
+		if (consentTimeoutSec == 0u)
+		{
+			// 0 means disabled so it's a valid value.
+		}
+		else if (consentTimeoutSec < ConsentCheckMinTimeoutSec)
+		{
+			MS_WARN_TAG(
+			  ice,
+			  "consentTimeoutSec cannot be lower than %" PRIu8 " seconds, fixing it",
+			  ConsentCheckMinTimeoutSec);
+
+			consentTimeoutSec = ConsentCheckMinTimeoutSec;
+		}
+		else if (consentTimeoutSec > ConsentCheckMaxTimeoutSec)
+		{
+			MS_WARN_TAG(
+			  ice,
+			  "consentTimeoutSec cannot be higher than %" PRIu8 " seconds, fixing it",
+			  ConsentCheckMaxTimeoutSec);
+
+			consentTimeoutSec = ConsentCheckMaxTimeoutSec;
+		}
+
+		this->consentTimeoutMs = consentTimeoutSec * 1000;
 
 		// Notify the listener.
 		this->listener->OnIceServerLocalUsernameFragmentAdded(this, usernameFragment);
@@ -44,69 +127,33 @@ namespace webrtc {
 			this->listener->OnIceServerLocalUsernameFragmentRemoved(this, this->oldUsernameFragment);
 		}
 
-		for (const auto& it : this->sessions)
+		// Clear all sessions.
+		this->isRemovingSessions = true;
+
+		for (const auto storedSession : this->sessions)
 		{
 			// Notify the listener.
-			this->listener->OnIceServerSessionRemoved(this, it);
+			this->listener->OnIceServerSessionRemoved(this, storedSession);
 		}
 
+		this->isRemovingSessions = false;
+
+		// Clear all sessions.
+		// NOTE: Do it after notifying the listener since the listener may need to
+		// use/read the session being removed so we cannot free it yet.
 		this->sessions.clear();
+
+		// Unset selected session.
+		this->selectedSession = nullptr;
+
+		// Delete the ICE consent check timer.
+		delete this->consentCheckTimer;
+		this->consentCheckTimer = nullptr;
 	}
 
 	void IceServer::ProcessStunPacket(RTC::StunPacket* packet, Session *session)
 	{
 		MS_TRACE();
-
-		// Must be a Binding method.
-		if (packet->GetMethod() != RTC::StunPacket::Method::BINDING)
-		{
-			if (packet->GetClass() == RTC::StunPacket::Class::REQUEST)
-			{
-				QRPC_LOG(warn, 
-				  "ice: unknown method %#.3x in STUN Request => 400",
-				  static_cast<unsigned int>(packet->GetMethod())
-        );
-
-				// Reply 400.
-				RTC::StunPacket* response = packet->CreateErrorResponse(400);
-
-				response->Serialize(StunSerializeBuffer);
-				this->listener->OnIceServerSendStunPacket(this, response, session);
-
-				delete response;
-			}
-			else
-			{
-				QRPC_LOG(warn, 
-				  "ignoring STUN Indication or Response with unknown method %#.3x",
-				  static_cast<unsigned int>(packet->GetMethod()));
-			}
-
-			return;
-		}
-
-		// Must use FINGERPRINT (optional for ICE STUN indications).
-		if (!packet->HasFingerprint() && packet->GetClass() != RTC::StunPacket::Class::INDICATION)
-		{
-			if (packet->GetClass() == RTC::StunPacket::Class::REQUEST)
-			{
-				QRPC_LOG(warn, "STUN Binding Request without FINGERPRINT => 400");
-
-				// Reply 400.
-				RTC::StunPacket* response = packet->CreateErrorResponse(400);
-
-				response->Serialize(StunSerializeBuffer);
-				this->listener->OnIceServerSendStunPacket(this, response, session);
-
-				delete response;
-			}
-			else
-			{
-				QRPC_LOG(warn, "ignoring STUN Binding Response without FINGERPRINT");
-			}
-
-			return;
-		}
 
 		switch (packet->GetClass())
 		{
@@ -124,186 +171,85 @@ namespace webrtc {
 
 					delete response;
 					return;
-				}
-				// USERNAME, MESSAGE-INTEGRITY and PRIORITY are required.
-				if (!packet->HasMessageIntegrity() || (packet->GetPriority() == 0u) || packet->GetUsername().empty())
-				{
-					QRPC_LOG(warn, "mising required attributes in STUN Binding Request => 400");
-
-					// Reply 400.
-					RTC::StunPacket* response = packet->CreateErrorResponse(400);
-
-					response->Serialize(StunSerializeBuffer);
-					this->listener->OnIceServerSendStunPacket(this, response, session);
-
-					delete response;
-
-					return;
-				}
-
-				// Check authentication.
-				switch (packet->CheckAuthentication(this->usernameFragment, this->password))
-				{
-					case RTC::StunPacket::Authentication::OK:
-					{
-						if (!this->oldUsernameFragment.empty() && !this->oldPassword.empty())
-						{
-							QRPC_LOG(debug, "new ICE credentials applied");
-
-							// Notify the listener.
-							this->listener->OnIceServerLocalUsernameFragmentRemoved(this, this->oldUsernameFragment);
-
-							this->oldUsernameFragment.clear();
-							this->oldPassword.clear();
-						}
-
-						break;
-					}
-
-					case RTC::StunPacket::Authentication::UNAUTHORIZED:
-					{
-						// We may have changed our usernameFragment and password, so check
-						// the old ones.
-						// clang-format off
-						if (
-							!this->oldUsernameFragment.empty() &&
-							!this->oldPassword.empty() &&
-							packet->CheckAuthentication(this->oldUsernameFragment, this->oldPassword) == RTC::StunPacket::Authentication::OK
-						)
-						// clang-format on
-						{
-							QRPC_LOG(debug, "using old ICE credentials");
-
-							break;
-						}
-
-						QRPC_LOG(warn, "wrong authentication in STUN Binding Request => 401");
-
-						// Reply 401.
-						RTC::StunPacket* response = packet->CreateErrorResponse(401);
-
-						response->Serialize(StunSerializeBuffer);
-						this->listener->OnIceServerSendStunPacket(this, response, session);
-
-						delete response;
-
-						return;
-					}
-
-					case RTC::StunPacket::Authentication::BAD_REQUEST:
-					{
-						QRPC_LOG(warn, "cannot check authentication in STUN Binding Request => 400");
-
-						// Reply 400.
-						RTC::StunPacket* response = packet->CreateErrorResponse(400);
-
-						response->Serialize(StunSerializeBuffer);
-						this->listener->OnIceServerSendStunPacket(this, response, session);
-
-						delete response;
-
-						return;
-					}
-				}
-
-				// The remote peer must be ICE controlling.
-				if (packet->GetIceControlled())
-				{
-					QRPC_LOG(warn, "peer indicates ICE-CONTROLLED in STUN Binding Request => 487");
-
-					// Reply 487 (Role Conflict).
-					RTC::StunPacket* response = packet->CreateErrorResponse(487);
-
-					response->Serialize(StunSerializeBuffer);
-					this->listener->OnIceServerSendStunPacket(this, response, session);
-
-					delete response;
-
-					return;
-				}
-
-				// QRPC_LOG(debug,
-				//   "processing STUN Binding Request [Priority:%" PRIu32 ", UseCandidate:%s]",
-				//   static_cast<uint32_t>(packet->GetPriority()),
-				//   packet->HasUseCandidate() ? "true" : "false");
-
-				// Create a success response.
-				RTC::StunPacket* response = packet->CreateSuccessResponse();
-
-				// Add XOR-MAPPED-ADDRESS.
-				response->SetXorMappedAddress(session->addr().sa());
-
-				// Authenticate the response.
-				if (this->oldPassword.empty())
-				{
-					response->Authenticate(this->password);
-				}
-				else
-				{
-					response->Authenticate(this->oldPassword);
-				}
-
-				// Send back.
-				response->Serialize(StunSerializeBuffer);
-				this->listener->OnIceServerSendStunPacket(this, response, session);
-
-				delete response;
-
-				uint32_t nomination{ 0u };
-
-				if (packet->HasNomination())
-				{
-					nomination = packet->GetNomination();
-				}
-
-				// Handle the session.
-				HandleTuple(session, packet->HasUseCandidate(), packet->HasNomination(), nomination);
+				}				
+				ProcessStunRequest(packet, session);
 
 				break;
 			}
 
 			case RTC::StunPacket::Class::INDICATION:
 			{
-				QRPC_LOG(debug, "STUN Binding Indication processed");
+				ProcessStunIndication(packet);
 
 				break;
 			}
 
 			case RTC::StunPacket::Class::SUCCESS_RESPONSE:
+			case RTC::StunPacket::Class::ERROR_RESPONSE:
 			{
-				// QRPC_LOG(debug, "STUN Binding Success Response processed");
-				this->listener->OnIceServerSuccessResponded(this, packet, session);
+				ProcessStunResponse(packet, session);
 
-				uint32_t nomination{ 0u };
-				if (packet->HasNomination())
-				{
-					nomination = packet->GetNomination();
-				}
-
-				// Handle the session.
-				HandleTuple(session, packet->HasUseCandidate(), packet->HasNomination(), nomination);
 				break;
 			}
 
-			case RTC::StunPacket::Class::ERROR_RESPONSE:
+			default:
 			{
-				QRPC_LOGJ(debug, {{"ev","STUN Binding Error Response processed"},{"username",packet->GetUsername()}});
-				this->listener->OnIceServerErrorResponded(this, packet, session);
-				break;
+				MS_WARN_TAG(
+				  ice, "unknown STUN class %" PRIu16 ", discarded", static_cast<uint16_t>(packet->GetClass()));
 			}
 		}
 	}
 
-	bool IceServer::IsValidTuple(const Session *session) const
+	void IceServer::RestartIce(const std::string& usernameFragment, const std::string& password)
 	{
 		MS_TRACE();
 
-		return HasTuple(session) != nullptr;
+		if (!this->oldUsernameFragment.empty())
+		{
+			this->listener->OnIceServerLocalUsernameFragmentRemoved(this, this->oldUsernameFragment);
+		}
+
+		this->oldUsernameFragment = this->usernameFragment;
+		this->usernameFragment    = usernameFragment;
+
+		this->oldPassword = this->password;
+		this->password    = password;
+
+		this->remoteNomination = 0u;
+
+		// Notify the listener.
+		this->listener->OnIceServerLocalUsernameFragmentAdded(this, usernameFragment);
+
+		// NOTE: Do not call listener->OnIceServerLocalUsernameFragmentRemoved()
+		// yet with old usernameFragment. Wait until we receive a STUN packet
+		// with the new one.
+
+		// Restart ICE consent check (if running) to give some time to the
+		// client to establish ICE again.
+		if (IsConsentCheckSupported() && IsConsentCheckRunning())
+		{
+			RestartConsentCheck();
+		}
 	}
 
-	void IceServer::RemoveTuple(Session *session)
+	bool IceServer::IsValidSession(const Session *session) const
 	{
 		MS_TRACE();
+
+		return HasSession(session) != nullptr;
+	}
+
+	void IceServer::RemoveSession(Session *session)
+	{
+		MS_TRACE();
+
+		// If IceServer is removing a session or all sessions (for instance in the
+		// destructor), the OnIceServerSessionRemoved() callback may end triggering
+		// new calls to RemoveSession(). We must ignore it to avoid double-free issues.
+		if (this->isRemovingSessions)
+		{
+			return;
+		}
 
 		Session *removedSession{ nullptr };
 
@@ -313,11 +259,9 @@ namespace webrtc {
 		for (; it != this->sessions.end(); ++it)
 		{
 			Session *storedSession = *it;
-
 			if (storedSession == session)
 			{
-				removedSession = session;
-
+				removedSession = storedSession;
 				break;
 			}
 		}
@@ -329,7 +273,9 @@ namespace webrtc {
 		}
 
 		// Notify the listener.
+		this->isRemovingSessions = true;
 		this->listener->OnIceServerSessionRemoved(this, removedSession);
+		this->isRemovingSessions = false;
 
 		// Remove it from the list of sessions.
 		// NOTE: Do it after notifying the listener since the listener may need to
@@ -341,10 +287,20 @@ namespace webrtc {
 		{
 			this->selectedSession = nullptr;
 
-			// Mark the first session as selected session (if any).
-			if (this->sessions.begin() != this->sessions.end())
+			// Mark the first session as selected session (if any) but only if state was
+			// 'connected' or 'completed'.
+			if (
+			  (this->state == IceState::CONNECTED || this->state == IceState::COMPLETED) &&
+			  this->sessions.begin() != this->sessions.end())
 			{
 				SetSelectedSession(*this->sessions.begin());
+
+				// Restart ICE consent check to let the client send new consent requests
+				// on the new selected session.
+				if (IsConsentCheckSupported())
+				{
+					RestartConsentCheck();
+				}
 			}
 			// Or just emit 'disconnected'.
 			else
@@ -357,6 +313,242 @@ namespace webrtc {
 
 				// Notify the listener.
 				this->listener->OnIceServerDisconnected(this);
+
+				if (IsConsentCheckSupported() && IsConsentCheckRunning())
+				{
+					StopConsentCheck();
+				}
+			}
+		}
+	}
+
+	void IceServer::ProcessStunRequest(RTC::StunPacket* request, Session *session)
+	{
+		MS_TRACE();
+
+		MS_DEBUG_DEV("processing STUN request");
+
+		// Must be a Binding method.
+		if (request->GetMethod() != RTC::StunPacket::Method::BINDING)
+		{
+			MS_WARN_TAG(
+			  ice,
+			  "STUN request with unknown method %#.3x => 400",
+			  static_cast<unsigned int>(request->GetMethod()));
+
+			// Reply 400.
+			RTC::StunPacket* response = request->CreateErrorResponse(400);
+
+			response->Serialize(StunSerializeBuffer);
+			this->listener->OnIceServerSendStunPacket(this, response, session);
+
+			delete response;
+
+			return;
+		}
+
+		// Must have FINGERPRINT attribute.
+		if (!request->HasFingerprint())
+		{
+			MS_WARN_TAG(ice, "STUN Binding request without FINGERPRINT attribute => 400");
+
+			// Reply 400.
+			RTC::StunPacket* response = request->CreateErrorResponse(400);
+
+			response->Serialize(StunSerializeBuffer);
+			this->listener->OnIceServerSendStunPacket(this, response, session);
+
+			delete response;
+
+			return;
+		}
+
+		// PRIORITY attribute is required.
+		if (request->GetPriority() == 0u)
+		{
+			MS_WARN_TAG(ice, "STUN Binding request without PRIORITY attribute => 400");
+
+			// Reply 400.
+			RTC::StunPacket* response = request->CreateErrorResponse(400);
+
+			response->Serialize(StunSerializeBuffer);
+			this->listener->OnIceServerSendStunPacket(this, response, session);
+
+			delete response;
+
+			return;
+		}
+
+		// Check authentication.
+		switch (request->CheckAuthentication(this->usernameFragment, this->password))
+		{
+			case RTC::StunPacket::Authentication::OK:
+			{
+				if (!this->oldUsernameFragment.empty() && !this->oldPassword.empty())
+				{
+					MS_DEBUG_TAG(ice, "new ICE credentials applied");
+
+					// Notify the listener.
+					this->listener->OnIceServerLocalUsernameFragmentRemoved(this, this->oldUsernameFragment);
+
+					this->oldUsernameFragment.clear();
+					this->oldPassword.clear();
+				}
+
+				break;
+			}
+
+			case RTC::StunPacket::Authentication::UNAUTHORIZED:
+			{
+				// We may have changed our usernameFragment and password, so check the
+				// old ones.
+				// clang-format off
+				if (
+				  !this->oldUsernameFragment.empty() &&
+				  !this->oldPassword.empty() &&
+				  request->CheckAuthentication(
+				    this->oldUsernameFragment, this->oldPassword
+				  ) == RTC::StunPacket::Authentication::OK
+				)
+				// clang-format on
+				{
+					MS_DEBUG_TAG(ice, "using old ICE credentials");
+
+					break;
+				}
+
+				MS_WARN_TAG(ice, "wrong authentication in STUN Binding request => 401");
+
+				// Reply 401.
+				RTC::StunPacket* response = request->CreateErrorResponse(401);
+
+				response->Serialize(StunSerializeBuffer);
+				this->listener->OnIceServerSendStunPacket(this, response, session);
+
+				delete response;
+
+				return;
+			}
+
+			case RTC::StunPacket::Authentication::BAD_MESSAGE:
+			{
+				MS_WARN_TAG(ice, "cannot check authentication in STUN Binding request => 400");
+
+				// Reply 400.
+				RTC::StunPacket* response = request->CreateErrorResponse(400);
+
+				response->Serialize(StunSerializeBuffer);
+				this->listener->OnIceServerSendStunPacket(this, response, session);
+
+				delete response;
+
+				return;
+			}
+		}
+
+		// The remote peer must be ICE controlling.
+		if (request->GetIceControlled())
+		{
+			MS_WARN_TAG(ice, "peer indicates ICE-CONTROLLED in STUN Binding request => 487");
+
+			// Reply 487 (Role Conflict).
+			RTC::StunPacket* response = request->CreateErrorResponse(487);
+
+			response->Serialize(StunSerializeBuffer);
+			this->listener->OnIceServerSendStunPacket(this, response, session);
+
+			delete response;
+
+			return;
+		}
+
+		MS_DEBUG_DEV(
+		  "valid STUN Binding request [priority:%" PRIu32 ", useCandidate:%s]",
+		  static_cast<uint32_t>(request->GetPriority()),
+		  request->HasUseCandidate() ? "true" : "false");
+
+		// Create a success response.
+		RTC::StunPacket* response = request->CreateSuccessResponse();
+
+		// Add XOR-MAPPED-ADDRESS.
+		response->SetXorMappedAddress(session->addr().sa());
+
+		// Authenticate the response.
+		if (this->oldPassword.empty())
+		{
+			response->SetPassword(this->password);
+		}
+		else
+		{
+			response->SetPassword(this->oldPassword);
+		}
+
+		// Send back.
+		response->Serialize(StunSerializeBuffer);
+		this->listener->OnIceServerSendStunPacket(this, response, session);
+
+		delete response;
+
+		uint32_t nomination{ 0u };
+
+		if (request->HasNomination())
+		{
+			nomination = request->GetNomination();
+		}
+
+		// Handle the session.
+		HandleSession(session, request->HasUseCandidate(), request->HasNomination(), nomination);
+
+		// If state is 'connected' or 'completed' after handling the session, then
+		// start or restart ICE consent check (if supported).
+		if (IsConsentCheckSupported() && (this->state == IceState::CONNECTED || this->state == IceState::COMPLETED))
+		{
+			if (IsConsentCheckRunning())
+			{
+				RestartConsentCheck();
+			}
+			else
+			{
+				StartConsentCheck();
+			}
+		}
+	}
+
+	void IceServer::ProcessStunIndication(RTC::StunPacket* indication)
+	{
+		MS_TRACE();
+
+		MS_DEBUG_DEV("STUN indication received, discarded");
+
+		// Nothig else to do. We just discard STUN indications.
+	}
+
+	void IceServer::ProcessStunResponse(RTC::StunPacket* response, Session *session)
+	{
+		MS_TRACE();
+
+		const std::string responseType = response->GetClass() == RTC::StunPacket::Class::SUCCESS_RESPONSE
+		                                   ? "success"
+		                                   : std::to_string(response->GetErrorCode()) + " error";
+
+		MS_DEBUG_DEV("processing STUN %s response received, discarded", responseType.c_str());
+
+		// Nothig else to do. We just discard STUN responses because we do not
+		// generate STUN requests.
+		switch (response->GetClass())
+		{
+		case RTC::StunPacket::Class::SUCCESS_RESPONSE:
+			{
+				// QRPC_LOG(debug, "STUN Binding Success Response processed");
+				this->listener->OnIceServerSuccessResponded(this, response, session);
+				break;
+			}
+
+			case RTC::StunPacket::Class::ERROR_RESPONSE:
+			{
+				QRPC_LOGJ(debug, {{"ev","STUN Binding Error Response processed"},{"username",response->GetUsername()}});
+				this->listener->OnIceServerErrorResponded(this, response, session);
+				break;
 			}
 		}
 	}
@@ -367,25 +559,24 @@ namespace webrtc {
 
 		if (this->state != IceState::CONNECTED && this->state != IceState::COMPLETED)
 		{
-			QRPC_LOG(warn, "cannot force selected session if not in state 'connected' or 'completed'");
+			MS_WARN_TAG(ice, "cannot force selected session if not in state 'connected' or 'completed'");
 
 			return;
 		}
 
-		auto* storedTuple = HasTuple(session);
+		auto* storedSession = HasSession(session);
 
-		if (!storedTuple)
+		if (!storedSession)
 		{
-			QRPC_LOG(warn, "cannot force selected session if the given session was not already a valid one");
+			MS_WARN_TAG(ice, "cannot force selected session if the given session was not already a valid one");
 
 			return;
 		}
 
-		// Mark it as selected session.
-		SetSelectedSession(storedTuple);
+		SetSelectedSession(storedSession);
 	}
 
-	void IceServer::HandleTuple(
+	void IceServer::HandleSession(
 	  Session *session, bool hasUseCandidate, bool hasNomination, uint32_t nomination)
 	{
 		MS_TRACE();
@@ -395,12 +586,12 @@ namespace webrtc {
 			case IceState::NEW:
 			{
 				// There shouldn't be a selected session.
-				MASSERT(!this->selectedSession, "state is 'new' but there is selected session");
+				MS_ASSERT(!this->selectedSession, "state is 'new' but there is selected session");
 
 				if (!hasUseCandidate && !hasNomination)
 				{
-					QRPC_LOG(
-					  debug,
+					MS_DEBUG_TAG(
+					  ice,
 					  "transition from state 'new' to 'connected' [hasUseCandidate:%s, hasNomination:%s, nomination:%" PRIu32
 					  "]",
 					  hasUseCandidate ? "true" : "false",
@@ -408,13 +599,13 @@ namespace webrtc {
 					  nomination);
 
 					// Store the session.
-					auto* storedTuple = AddTuple(session);
-
-					// Mark it as selected session.
-					SetSelectedSession(storedTuple);
+					auto* storedSession = AddSession(session);
 
 					// Update state.
 					this->state = IceState::CONNECTED;
+
+					// Mark it as selected session.
+					SetSelectedSession(storedSession);
 
 					// Notify the listener.
 					this->listener->OnIceServerConnected(this);
@@ -422,23 +613,23 @@ namespace webrtc {
 				else
 				{
 					// Store the session.
-					auto* storedTuple = AddTuple(session);
+					auto* storedSession = AddSession(session);
 
 					if ((hasNomination && nomination > this->remoteNomination) || !hasNomination)
 					{
-						QRPC_LOG(
-						  debug,
+						MS_DEBUG_TAG(
+						  ice,
 						  "transition from state 'new' to 'completed' [hasUseCandidate:%s, hasNomination:%s, nomination:%" PRIu32
 						  "]",
 						  hasUseCandidate ? "true" : "false",
 						  hasNomination ? "true" : "false",
 						  nomination);
 
-						// Mark it as selected session.
-						SetSelectedSession(storedTuple);
-
 						// Update state.
 						this->state = IceState::COMPLETED;
+
+						// Mark it as selected session.
+						SetSelectedSession(storedSession);
 
 						// Update nomination.
 						if (hasNomination && nomination > this->remoteNomination)
@@ -457,12 +648,12 @@ namespace webrtc {
 			case IceState::DISCONNECTED:
 			{
 				// There shouldn't be a selected session.
-				MASSERT(!this->selectedSession, "state is 'disconnected' but there is selected session");
+				MS_ASSERT(!this->selectedSession, "state is 'disconnected' but there is selected session");
 
 				if (!hasUseCandidate && !hasNomination)
 				{
-					QRPC_LOG(
-					  debug,
+					MS_DEBUG_TAG(
+					  ice,
 					  "transition from state 'disconnected' to 'connected' [hasUseCandidate:%s, hasNomination:%s, nomination:%" PRIu32
 					  "]",
 					  hasUseCandidate ? "true" : "false",
@@ -470,13 +661,13 @@ namespace webrtc {
 					  nomination);
 
 					// Store the session.
-					auto* storedTuple = AddTuple(session);
-
-					// Mark it as selected session.
-					SetSelectedSession(storedTuple);
+					auto* storedSession = AddSession(session);
 
 					// Update state.
 					this->state = IceState::CONNECTED;
+
+					// Mark it as selected session.
+					SetSelectedSession(storedSession);
 
 					// Notify the listener.
 					this->listener->OnIceServerConnected(this);
@@ -484,23 +675,23 @@ namespace webrtc {
 				else
 				{
 					// Store the session.
-					auto* storedTuple = AddTuple(session);
+					auto* storedSession = AddSession(session);
 
 					if ((hasNomination && nomination > this->remoteNomination) || !hasNomination)
 					{
-            QRPC_LOG(
-              debug,
+						MS_DEBUG_TAG(
+						  ice,
 						  "transition from state 'disconnected' to 'completed' [hasUseCandidate:%s, hasNomination:%s, nomination:%" PRIu32
 						  "]",
 						  hasUseCandidate ? "true" : "false",
 						  hasNomination ? "true" : "false",
 						  nomination);
 
-						// Mark it as selected session.
-						SetSelectedSession(storedTuple);
-
 						// Update state.
 						this->state = IceState::COMPLETED;
+
+						// Mark it as selected session.
+						SetSelectedSession(storedSession);
 
 						// Update nomination.
 						if (hasNomination && nomination > this->remoteNomination)
@@ -519,20 +710,20 @@ namespace webrtc {
 			case IceState::CONNECTED:
 			{
 				// There should be some sessions.
-				MASSERT(!this->sessions.empty(), "state is 'connected' but there are no sessions");
+				MS_ASSERT(!this->sessions.empty(), "state is 'connected' but there are no sessions");
 
 				// There should be a selected session.
-				MASSERT(this->selectedSession, "state is 'connected' but there is not selected session");
+				MS_ASSERT(this->selectedSession, "state is 'connected' but there is not selected session");
 
 				if (!hasUseCandidate && !hasNomination)
 				{
 					// Store the session.
-					AddTuple(session);
+					AddSession(session);
 				}
 				else
 				{
-          QRPC_LOG(
-            debug,
+					MS_DEBUG_TAG(
+					  ice,
 					  "transition from state 'connected' to 'completed' [hasUseCandidate:%s, hasNomination:%s, nomination:%" PRIu32
 					  "]",
 					  hasUseCandidate ? "true" : "false",
@@ -540,15 +731,15 @@ namespace webrtc {
 					  nomination);
 
 					// Store the session.
-					auto* storedTuple = AddTuple(session);
+					auto* storedSession = AddSession(session);
 
 					if ((hasNomination && nomination > this->remoteNomination) || !hasNomination)
 					{
-						// Mark it as selected session.
-						SetSelectedSession(storedTuple);
-
 						// Update state.
 						this->state = IceState::COMPLETED;
+
+						// Mark it as selected session.
+						SetSelectedSession(storedSession);
 
 						// Update nomination.
 						if (hasNomination && nomination > this->remoteNomination)
@@ -567,25 +758,25 @@ namespace webrtc {
 			case IceState::COMPLETED:
 			{
 				// There should be some sessions.
-				MASSERT(!this->sessions.empty(), "state is 'completed' but there are no sessions");
+				MS_ASSERT(!this->sessions.empty(), "state is 'completed' but there are no sessions");
 
 				// There should be a selected session.
-				MASSERT(this->selectedSession, "state is 'completed' but there is not selected session");
+				MS_ASSERT(this->selectedSession, "state is 'completed' but there is not selected session");
 
 				if (!hasUseCandidate && !hasNomination)
 				{
 					// Store the session.
-					AddTuple(session);
+					AddSession(session);
 				}
 				else
 				{
 					// Store the session.
-					auto* storedTuple = AddTuple(session);
+					auto* storedSession = AddSession(session);
 
 					if ((hasNomination && nomination > this->remoteNomination) || !hasNomination)
 					{
 						// Mark it as selected session.
-						SetSelectedSession(storedTuple);
+						SetSelectedSession(storedSession);
 
 						// Update nomination.
 						if (hasNomination && nomination > this->remoteNomination)
@@ -600,15 +791,15 @@ namespace webrtc {
 		}
 	}
 
-	inline Session *IceServer::AddTuple(Session *session)
+	Session *IceServer::AddSession(Session *session)
 	{
 		MS_TRACE();
 
-		auto* storedSession = HasTuple(session);
+		auto* storedSession = HasSession(session);
 
 		if (storedSession)
 		{
-			// TRACE("session already exists");
+			MS_DEBUG_DEV("session already exists");
 
 			return storedSession;
 		}
@@ -629,10 +820,10 @@ namespace webrtc {
 		// Notify the listener.
 		this->listener->OnIceServerSessionAdded(this, storedSession);
 
-		// Don't allow more than MaxTuples.
-		if (this->sessions.size() > MaxTuples)
+		// Don't allow more than MaxSessions.
+		if (this->sessions.size() > MaxSessions)
 		{
-			QRPC_LOG(warn, "too too many sessions, removing the oldest non selected one");
+			MS_WARN_TAG(ice, "too too many sessions, removing the oldest non selected one");
 
 			// Find the oldest session which is neither the added one nor the selected
 			// one (if any), and remove it.
@@ -652,10 +843,12 @@ namespace webrtc {
 			}
 
 			// This should not happen by design.
-			MASSERT(removedSession, "couldn't find any session to be removed");
+			MS_ASSERT(removedSession, "couldn't find any session to be removed");
 
 			// Notify the listener.
+			this->isRemovingSessions = true;
 			this->listener->OnIceServerSessionRemoved(this, removedSession);
+			this->isRemovingSessions = false;
 
 			// Remove it from the list of sessions.
 			// NOTE: Do it after notifying the listener since the listener may need to
@@ -669,7 +862,7 @@ namespace webrtc {
 		return storedSession;
 	}
 
-	inline Session *IceServer::HasTuple(const Session *session) const
+	inline Session *IceServer::HasSession(const Session *session) const
 	{
 		MS_TRACE();
 
@@ -709,6 +902,92 @@ namespace webrtc {
 		this->listener->OnIceServerSelectedSession(this, this->selectedSession);
 	}
 
+	void IceServer::StartConsentCheck()
+	{
+		MS_TRACE();
+
+		MS_ASSERT(IsConsentCheckSupported(), "ICE consent check not supported");
+		MS_ASSERT(!IsConsentCheckRunning(), "ICE consent check already running");
+		MS_ASSERT(this->selectedSession, "no selected session");
+
+		// Create the ICE consent check timer if it doesn't exist.
+		if (!this->consentCheckTimer)
+		{
+			this->consentCheckTimer = new TimerHandle(this);
+		}
+
+		this->consentCheckTimer->Start(this->consentTimeoutMs);
+	}
+
+	void IceServer::RestartConsentCheck()
+	{
+		MS_TRACE();
+
+		MS_ASSERT(IsConsentCheckSupported(), "ICE consent check not supported");
+		MS_ASSERT(IsConsentCheckRunning(), "ICE consent check not running");
+		MS_ASSERT(this->selectedSession, "no selected session");
+
+		this->consentCheckTimer->Restart();
+	}
+
+	void IceServer::StopConsentCheck()
+	{
+		MS_TRACE();
+
+		MS_ASSERT(IsConsentCheckSupported(), "ICE consent check not supported");
+		MS_ASSERT(IsConsentCheckRunning(), "ICE consent check not running");
+
+		this->consentCheckTimer->Stop();
+	}
+
+	inline void IceServer::OnTimer(TimerHandle* timer)
+	{
+		MS_TRACE();
+
+		if (timer == this->consentCheckTimer)
+		{
+			MS_ASSERT(IsConsentCheckSupported(), "ICE consent check not supported");
+
+			// State must be 'connected' or 'completed'.
+			MS_ASSERT(
+			  this->state == IceState::COMPLETED || this->state == IceState::CONNECTED,
+			  "ICE consent check timer fired but state is neither 'completed' nor 'connected'");
+
+			// There should be a selected session.
+			MS_ASSERT(this->selectedSession, "ICE consent check timer fired but there is not selected session");
+
+			MS_WARN_TAG(ice, "ICE consent expired due to timeout, moving to 'disconnected' state");
+
+			// Update state.
+			this->state = IceState::DISCONNECTED;
+
+			// Reset remote nomination.
+			this->remoteNomination = 0u;
+
+			// Clear all sessions.
+			this->isRemovingSessions = true;
+
+			for (const auto storedSession : this->sessions)
+			{
+				// Notify the listener.
+				this->listener->OnIceServerSessionRemoved(this, storedSession);
+			}
+
+			this->isRemovingSessions = false;
+
+			// Clear all sessions.
+			// NOTE: Do it after notifying the listener since the listener may need to
+			// use/read the session being removed so we cannot free it yet.
+			this->sessions.clear();
+
+			// Unset selected session.
+			this->selectedSession = nullptr;
+
+			// Notify the listener.
+			this->listener->OnIceServerDisconnected(this);
+		}
+	}
+
 	// IceProber
 	void IceProber::Success() {
 		last_success_ = qrpc_time_now();
@@ -722,7 +1001,7 @@ namespace webrtc {
 		random::bytes(tx_id, sizeof(TxId));
 		ASSERT(!ufrag_.empty() && !pwd_.empty());
 		stun_packet->SetUsername((ufrag_ + ":").c_str(), ufrag_.length() + 1);
-		stun_packet->Authenticate(pwd_);
+		stun_packet->SetPassword(pwd_);
 		// https://speakerdeck.com/iwashi86/webrtc-ice-internals?slide=60
 		stun_packet->SetPriority(0x7e0000);
 		stun_packet->SetIceControlling(1);

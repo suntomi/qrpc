@@ -59,13 +59,13 @@ a=max-message-size:%u
         ASSERT(false);
         return false;
       }
-      auto algo = DtlsTransport::GetFingerprintAlgorithm(*type);
-      if (algo == DtlsTransport::FingerprintAlgorithm::NONE) {
+      auto algoit = DtlsTransport::GetString2FingerprintAlgorithm().find(*type);
+      if (algoit == DtlsTransport::GetString2FingerprintAlgorithm().end()) {
         answer = "unknown fingerprint algorithm:" + type->get<std::string>();
         ASSERT(false);
         return false;
       }
-      ret = {.algorithm = algo, .value = *hash};
+      ret = {.algorithm = algoit->second, .value = *hash};
       return true;     
   }
   std::vector<Candidate> SDP::Candidates() const {
@@ -207,7 +207,7 @@ a=max-message-size:%u)cands",
         return false;
       }
       params.mid = midit->get<std::string>();
-      params.media_type = "application";
+      params.kind = rtp::Parameters::MediaKind::APP;
       // network.port is mandatory
       params.network.port = portit->get<uint16_t>();
       payloads = " webrtc-datachannel";

@@ -16,8 +16,8 @@ namespace rtp {
   public:
     Consumer(RTC::Shared* s, 
       const std::string& id, const std::string& producer_id,
-      Listener* l, json& d, RTC::RtpParameters::Type type
-    ) : RTC::Consumer(s, id, producer_id, l, d, type) {}
+      Listener* l, RTC::RtpParameters::Type type
+    ) : RTC::Consumer(s, id, producer_id, l, nullptr, type) {}
     ~Consumer() override {}
   protected:
     void SetMedia(std::shared_ptr<Media> m) { media_ = m; }

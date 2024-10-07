@@ -269,7 +269,7 @@ namespace webrtc {
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
       size_t send_buffer_size, udp_batch_size;
       qrpc_time_t session_timeout, http_timeout;
-      qrpc_time_t connection_timeout;
+      qrpc_time_t connection_timeout, consent_check_interval;
       std::string fingerprint_algorithm;
       bool in6{false};
       Resolver &resolver{NopResolver::Instance()};

@@ -2,7 +2,10 @@
 
 #include "base/crypto.h"
 
+#include <FBS/transport.h>
 #include "RTC/RtpDictionaries.hpp"
+
+#include <optional>
 
 namespace base {
 namespace rtp {
@@ -42,6 +45,11 @@ namespace rtp {
     struct SimulcastParameter {
       std::string send_rids, recv_rids;
     };
+    enum MediaKind {
+      AUDIO = static_cast<int>(FBS::RtpParameters::MediaKind::AUDIO),
+      VIDEO = static_cast<int>(FBS::RtpParameters::MediaKind::VIDEO),
+      APP = static_cast<int>(FBS::RtpParameters::MediaKind::MAX) + 1,
+    };
   public:
     Parameters() : RTC::RtpParameters() {}
     int Parse(Handler &h, const json &section, std::string &answer);
@@ -56,19 +64,18 @@ namespace rtp {
       return random::gen(100000000, 900000000);
     }
   public:
-    json ToJson() const;
-    json ToMapping() const;
+    ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
+    MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id) const;
+    static std::optional<RTC::RtpHeaderExtensionUri::Type> FromUri(const std::string &uri);
   protected:
-    // for ToJson
-    json CodecsToJson() const;
-    json ExtensionsToJson() const;
-    json EncodingsToJson() const;
-    json RtcpToJson() const;
-    // for ToMapping
-    json CodecMappingToJson() const;
-    json EncodingMappingToJson() const;
+    std::vector<::flatbuffers::Offset<FBS::RtpParameters::CodecMapping>>
+    PackCodecMapping(::flatbuffers::FlatBufferBuilder &fbb) const;
+    std::vector<::flatbuffers::Offset<FBS::RtpParameters::EncodingMapping>>
+    PackEncodingMapping(::flatbuffers::FlatBufferBuilder &fbb) const;
+    ::flatbuffers::Offset<FBS::RtpParameters::RtpMapping>
+    PackRtpMapping(::flatbuffers::FlatBufferBuilder &fbb) const;  
   public:
-    std::string media_type; // video/audio/application
+    MediaKind kind;
     NetworkParameters network;
     std::map<uint32_t, SsrcParameter> ssrcs;
     SimulcastParameter simulcast;

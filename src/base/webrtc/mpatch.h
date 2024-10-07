@@ -32,7 +32,7 @@
 #define MS_THROW_ERROR(desc, ...) \
 	do \
 	{ \
-		std::snprintf(MediaSoupError::buffer, MediaSoupError::bufferSize, desc, ##__VA_ARGS__); \
+		std::snprintf(MediaSoupError::buffer, MediaSoupError::BufferSize, desc, ##__VA_ARGS__); \
 		QRPC_LOG(error, MediaSoupError::buffer); \
 		throw MediaSoupError(MediaSoupError::buffer); \
 	} \

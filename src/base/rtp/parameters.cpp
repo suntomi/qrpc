@@ -3,6 +3,8 @@
 #include "base/string.h"
 #include "base/rtp/handler.h"
 
+#include "FBS/transport.h"
+
 namespace base {
 namespace rtp {
   #define FIND_OR_RAISE(__name, __it, __key) \
@@ -68,150 +70,72 @@ namespace rtp {
     return nullptr;
   }
 
-  json Parameters::CodecsToJson() const {
-    // {
-    //   mimeType    : "video/VP8",
-    //   payloadType : 101,
-    //   clockRate   : 90000,
-    //   rtcpFeedback :
-    //   [
-    //     { type: "nack" },
-    //     { type: "nack", parameter: "pli" },
-    //     { type: "ccm", parameter: "fir" },
-    //     { type: "goog-remb" }
-    //   ]
-    //   parameters  : { apt: 101 }
-    // }
-    json j;
+    std::vector<::flatbuffers::Offset<FBS::RtpParameters::CodecMapping>>
+    Parameters::PackCodecMapping(::flatbuffers::FlatBufferBuilder &fbb) const {
+    std::vector<::flatbuffers::Offset<FBS::RtpParameters::CodecMapping>> r;
+    r.reserve(codecs.size());
     for (auto &c : codecs) {
-      json v = {
-        {"mimeType",c.mimeType.ToString()},
-        {"payloadType",c.payloadType},
-        {"clockRate",c.clockRate},
-      };
-      if (c.channels > 1) {
-        v["channels"] = c.channels;
-      }
-      if (c.rtcpFeedback.size() > 0) {
-        json fbs;
-        for (auto &fb : c.rtcpFeedback) {
-          json vv = {
-            {"type", fb.type}
-          };
-          if (!fb.parameter.empty()) {
-            vv["parameter"] = fb.parameter;
-          }
-          fbs.push_back(vv);
-        }
-        v["rtcpFeedback"] = fbs;
-      }
-      json p;
-      c.parameters.FillJson(p);
-      if (p.size() > 0) {
-        v["parameters"] = p;
-      }
-      j.push_back(v);
+      r.emplace_back(FBS::RtpParameters::CreateCodecMapping(
+        fbb, c.payloadType, c.payloadType
+      ));
     }
-    return j;
+    return r;
   }
-  json Parameters::ExtensionsToJson() const {
-    json j;
-    for (auto &ext : headerExtensions) {
-      j.push_back({
-        {"id", ext.id},{"uri",ext.uri}
-      });
-    }
-    return j;
-  }
-  json Parameters::EncodingsToJson() const {
-    json j;
-    for (auto &e : encodings) {
-      json map;
-      if (e.hasRtx) {
-        map["rtx"] = {
-          {"ssrc", e.rtx.ssrc}
-        };
-      }
-      if (!e.rid.empty()) {
-        map["rid"] = e.rid;
-      } else if (e.ssrc != 0) {
-        map["ssrc"] = e.ssrc;
-      }
-      if (!e.scalabilityMode.empty()) {
-        map["scalabilityMode"] = e.scalabilityMode;
-      }
-      j.push_back(map);
-    }
-    return j;
-  }
-  json Parameters::RtcpToJson() const {
-    json j;
-    if (!rtcp.cname.empty()) {
-      j["cname"] = rtcp.cname;
-    }
-    return j;
-  }
-  json Parameters::ToJson() const {
-    return {
-      {"kind", media_type},
-      {"rtpParameters", {
-        {"mid", mid},
-        {"codecs", CodecsToJson()},
-        {"headerExtensions", ExtensionsToJson()},
-        {"encodings", EncodingsToJson()},
-        {"rtcp", RtcpToJson()}
-      }}
-    };
-  }
-  json Parameters::CodecMappingToJson() const {
-    auto j = json::array();
-    for (auto &c : codecs) {
-      j.push_back({
-        {"payloadType", c.payloadType},
-        {"mappedPayloadType", c.payloadType}
-      });
-    }
-    return j;
-  }
-  json Parameters::EncodingMappingToJson() const {
-    auto j = json::array();
+  std::vector<::flatbuffers::Offset<FBS::RtpParameters::EncodingMapping>>
+    Parameters::PackEncodingMapping(::flatbuffers::FlatBufferBuilder &fbb) const {
+    std::vector<::flatbuffers::Offset<FBS::RtpParameters::EncodingMapping>> r;
+    r.reserve(encodings.size());
     auto seed = GenerateSsrc();
     for (auto &e : encodings) {
-      json map = {
-        {"mappedSsrc", seed++}
-      };
-      if (e.ssrc != 0) {
-        map["ssrc"] = e.ssrc;
-      }
-      if (!e.rid.empty()) {
-        map["rid"] = e.rid;
-      }
-      j.push_back(map);
+      r.emplace_back(FBS::RtpParameters::CreateEncodingMappingDirect(
+        fbb, e.rid.empty() ? nullptr : e.rid.c_str(), 
+        e.ssrc != 0 ? std::optional(e.ssrc) : std::nullopt,
+        e.scalabilityMode.empty() ? nullptr : e.scalabilityMode.c_str(),
+        seed++
+      ));
     }
-    return j;
+    return r;
   }
-  json Parameters::ToMapping() const {
-    // {
-    // 	codecs:
-    // 	{
-    // 		payloadType: number;
-    // 		mappedPayloadType: number;
-    // 	}[];
+  ::flatbuffers::Offset<FBS::RtpParameters::RtpMapping>
+  Parameters::PackRtpMapping(::flatbuffers::FlatBufferBuilder &fbb) const {
+    auto c = PackCodecMapping(fbb);
+    auto e = PackEncodingMapping(fbb);
+    return FBS::RtpParameters::CreateRtpMappingDirect(fbb, &c, &e);
+  }
+  ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
+  Parameters::MakeProduceRequest(
+    ::flatbuffers::FlatBufferBuilder &fbb, const std::string &id
+  ) const {
+    ASSERT(kind != MediaKind::APP);
+    return FBS::Transport::CreateProduceRequestDirect(
+      fbb, id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
+      FillBuffer(fbb),
+      PackRtpMapping(fbb)
+    );
+  }
 
-    // 	encodings:
-    // 	{
-    // 		ssrc?: number;
-    // 		rid?: string;
-    // 		scalabilityMode?: string;
-    // 		mappedSsrc: number;
-    // 	}[];
-    // };
-    return {
-      {"codecs", CodecMappingToJson()},
-      {"encodings", EncodingMappingToJson()}
+  std::optional<RTC::RtpHeaderExtensionUri::Type> Parameters::FromUri(const std::string &uri) {
+    static std::map<std::string, RTC::RtpHeaderExtensionUri::Type> map = {
+      {"urn:ietf:params:rtp-hdrext:sdes:mid", RTC::RtpHeaderExtensionUri::Type::MID},
+      {"urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id", RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID},
+      {"urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id", RTC::RtpHeaderExtensionUri::Type::REPAIRED_RTP_STREAM_ID},
+      {"http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07", RTC::RtpHeaderExtensionUri::Type::FRAME_MARKING_07},
+      {"urn:ietf:params:rtp-hdrext:framemarking", RTC::RtpHeaderExtensionUri::Type::FRAME_MARKING},
+      {"urn:ietf:params:rtp-hdrext:ssrc-audio-level", RTC::RtpHeaderExtensionUri::Type::SSRC_AUDIO_LEVEL},
+      {"urn:3gpp:video-orientation", RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION},
+      {"urn:ietf:params:rtp-hdrext:toffset", RTC::RtpHeaderExtensionUri::Type::TOFFSET},
+      {"http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01", RTC::RtpHeaderExtensionUri::Type::TRANSPORT_WIDE_CC_01},
+      {"http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time", RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME},
+      {"http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time", RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME},
+      {"http://www.webrtc.org/experiments/rtp-hdrext/playout-delay", RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY},
     };
+    auto it = map.find(uri);
+    if (it == map.end()) {
+      ASSERT(false);
+      return std::nullopt;
+    }
+    return std::optional(it->second);
   }
-
 
   void Parameters::AddEncoding(
     const std::string &rid, uint64_t pt, uint64_t rtxpt, bool dtx,
@@ -247,7 +171,20 @@ namespace rtp {
       ASSERT(false);
       return false;
     }
-    media_type = tyit->get<std::string>();
+    auto kind_str = tyit->get<std::string>();
+    static std::map<std::string, MediaKind> kind_map = {
+      {"audio", MediaKind::AUDIO},
+      {"video", MediaKind::VIDEO},
+      // {"application", MediaKind::APP}, // should not come here with kind_str == "application"
+    };
+    auto kindit = kind_map.find(kind_str);
+    if (kindit == kind_map.end()) {
+      answer = str::Format("section: invalid value for key 'type': %s", kind_str.c_str());
+      ASSERT(false);
+      return false;
+    } else {
+      kind = kindit->second;
+    }
     mid = midit->get<std::string>();
     auto rtcpit = section.find("rtcp");
     if (rtcpit != section.end()) {
@@ -276,7 +213,14 @@ namespace rtp {
       }
       RTC::RtpHeaderExtensionParameters p;
       p.id = id;
-      p.uri = uri;
+      auto t = FromUri(uri);
+      if (t.has_value()) {
+        p.type = t.value();
+      } else {
+        answer = "rtpmap: no uri type for '" + uri + "'";
+        ASSERT(false);
+        return false;
+      }
       headerExtensions.push_back(p);
     }
     // parse fmtp
@@ -346,7 +290,7 @@ namespace rtp {
         auto encit = it->find("encoding");
         try {
           RTC::RtpCodecParameters c;
-          c.mimeType.SetMimeType(str::Format("%s/%s", media_type.c_str(), codec.c_str()));
+          c.mimeType.SetMimeType(str::Format("%s/%s", FBS::RtpParameters::EnumNamesMediaKind()[kind], codec.c_str()));
           c.channels = encit == it->end() ? 0 : std::stoul(encit->get<std::string>().c_str());
           c.payloadType = pt;
           c.clockRate = rateit->get<uint64_t>();
@@ -383,9 +327,14 @@ namespace rtp {
     std::vector<uint64_t> pts = { selected_pt, rtx_pt };
     for (int i = 0; i < 2; i++) {
       auto pt = pts[i];
+      auto c = CodecByPayloadType(pt);
+      if (c == nullptr) {
+        answer = str::Format("rtpmap: no codec added for %llu", pt);
+        ASSERT(false);
+        return false;
+      }
       auto fmit = fmtpmap.find(pt);
       if (fmit != fmtpmap.end()) {
-        json params;
         for (auto t : str::Split(fmit->second, ";")) {
           auto kv = str::Split(t, "=");
           if (kv.size() != 2) {
@@ -394,18 +343,21 @@ namespace rtp {
             return false;
           }
           try {
-            params[kv[0]] = std::stoul(kv[1].c_str());
+            if (kv[1] == "true" || kv[1] == "false") {
+              c->parameters.Add(kv[0], kv[1] == "true"); // boolean
+            } else if (kv[1].find('.') != std::string::npos) { 
+              try {
+                c->parameters.Add(kv[0], std::stod(kv[1])); // double
+              } catch (std::exception &) {
+                c->parameters.Add(kv[0], std::stoi(kv[1])); // int
+              }
+            } else {
+              c->parameters.Add(kv[0], std::stoi(kv[1])); // int
+            }
           } catch (std::exception &) {
-            params[kv[0]] = kv[1];
+            c->parameters.Add(kv[0], kv[1]); // string
           }
         }
-        auto c = CodecByPayloadType(pt);
-        if (c == nullptr) {
-          answer = str::Format("rtpmap: no codec added for %llu", pt);
-          ASSERT(false);
-          return false;
-        }
-        c->parameters.Set(params);
       }
     }
     auto rtcpfbit = section.find("rtcpFb");
@@ -529,7 +481,7 @@ namespace rtp {
 		// RtcpParameters rtcp;
 		// bool hasRtcp{ false };
     std::string sdplines;
-    if (media_type == "application") {
+    if (kind == MediaKind::APP) {
       return sdplines;
     }
     if (network.port != 0 && network.ip_ver != 0) {
@@ -543,7 +495,7 @@ namespace rtp {
     }
     auto &hs = headerExtensions;
     for (size_t i = 0; i < hs.size(); i++) {
-      sdplines += str::Format("\na=extmap:%u %s", hs[i].id, hs[i].uri.c_str());
+      sdplines += str::Format("\na=extmap:%u %s", hs[i].id, hs[i].type);
     }
     for (size_t i = 0; i < codecs.size(); i++) {
       auto &c = codecs[i];
@@ -577,30 +529,28 @@ namespace rtp {
           );
         }
       }
-      json fmtp;
-      c.parameters.FillJson(fmtp);
       std::string paramsline;
-      for (auto &e : fmtp.items()) {
+      for (auto &e : c.parameters.Entries()) {
         if (!paramsline.empty()) {
           paramsline += ";";
         }
-        if (e.value().is_boolean()) {
+        if (e.second.type == RTC::Parameters::Value::Type::BOOLEAN) {
           paramsline = str::Format(
-            "%s=%s", e.key().c_str(), e.value().get<bool>() ? "true" : "false"
+            "%s=%s", e.first.c_str(), e.second.booleanValue ? "true" : "false"
           );
-        } else if (e.value().is_number_float()) {
+        } else if (e.second.type == RTC::Parameters::Value::Type::DOUBLE) {
           paramsline = str::Format(
-            "%s=%f", e.key().c_str(), e.value().get<float>()
+            "%s=%llf", e.first.c_str(), e.second.doubleValue
           );
-        } else if (e.value().is_number_integer()) {
+        } else if (e.second.type == RTC::Parameters::Value::Type::INTEGER) {
           paramsline = str::Format(
-            "%s=%llu", e.key().c_str(), e.value().get<uint64_t>()
+            "%s=%d", e.first.c_str(), e.second.integerValue
           );
-        } else if (e.value().is_string()) {
+        } else if (e.second.type == RTC::Parameters::Value::Type::STRING) {
           paramsline = str::Format(
-            "%s=%s", e.key().c_str(), e.value().get<std::string>()
+            "%s=%s", e.first.c_str(), e.second.stringValue.c_str()
           );
-        } else if (e.value().is_array()) {
+        } else if (e.second.type == RTC::Parameters::Value::Type::ARRAY_OF_INTEGERS) {
           // TODO: how format string?
           ASSERT(false);
         } else {

@@ -6,8 +6,9 @@ namespace base {
 namespace rtp {
   std::shared_ptr<Producer> ProducerFactory::Create(const std::string &id, const Parameters &p) {
     auto m = handler_.FindFrom(p);
-    auto data = p.ToJson();
-    data["rtpMapping"] = p.ToMapping();
+		::flatbuffers::FlatBufferBuilder fbb;
+		p.MakeProduceRequest(fbb, id);
+		auto data = reinterpret_cast<FBS::Transport::ProduceRequest *>(fbb.GetBufferPointer());
 		auto producer = std::make_shared<Producer>(&handler_.shared(), id, &handler_, data);
     producer->SetMedia(m);
     if (!Add(producer)) {

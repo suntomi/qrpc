@@ -6,8 +6,8 @@
 #include "base/webrtc/sdp.h"
 
 #include "common.hpp"
-#include "handles/Timer.hpp"
-#include "handles/UnixStreamSocket.hpp"
+#include "handles/TimerHandle.hpp"
+#include "handles/UnixStreamSocketHandle.hpp"
 #include "MediaSoupErrors.hpp"
 #include "DepLibSRTP.hpp"
 #include "DepLibUV.hpp"
@@ -131,8 +131,8 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
       RTC::SrtpSession::ClassInit();
       // setup RTC::Timer and UnixStreamSocket, Logger
       Logger::ClassInit(&g_channel_socket_);
-      ::Timer::SetTimerProc(
-        [&a](const ::Timer::Handler &h, uint64_t start_at) {
+      ::TimerHandle::SetTimerProc(
+        [&a](const ::TimerHandle::Handler &h, uint64_t start_at) {
           return a.Set([hh = h]() {
             auto intv = hh();
             if (intv <= 0) {
@@ -145,7 +145,7 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
           return a.Cancel(id);
         }
       );
-      UnixStreamSocket::SetWriter(
+      UnixStreamSocketHandle::SetWriter(
         [](const uint8_t *p, size_t sz) {
           QRPC_LOGJ(info,{{"ev","from rtp"},{"plen",sz}});
         }
@@ -182,8 +182,13 @@ void ConnectionFactory::GlobalFin() {
 // ConnectionFactory::Config
 int ConnectionFactory::Config::Derive() {
   for (auto fp : DtlsTransport::GetLocalFingerprints()) {
+    auto fpit = DtlsTransport::GetString2FingerprintAlgorithm().find(fingerprint_algorithm);
+    if (fpit == DtlsTransport::GetString2FingerprintAlgorithm().end()) {
+      logger::die({{"ev","invalid fingerprint algorithm name"},{"algo", fingerprint_algorithm}});
+      return QRPC_EDEPS;
+    }
     // TODO: SHA256 is enough?
-    if (fp.algorithm == DtlsTransport::GetFingerprintAlgorithm(fingerprint_algorithm)) {
+    if (fp.algorithm == fpit->second) {
       fingerprint = fp.value;
     }
   }
@@ -343,7 +348,7 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   ufrag = random::word(32);
   pwd = random::word(32);
   // create ICE server
-  ice_server_.reset(new IceServer(this, ufrag, pwd));
+  ice_server_.reset(new IceServer(this, ufrag, pwd, factory().config().consent_check_interval));
   if (ice_server_ == nullptr) {
     logger::die({{"ev","fail to create ICE server"}});
     return QRPC_EALLOC;
@@ -565,10 +570,10 @@ void ConnectionFactory::Connection::OnDtlsEstablished() {
   }
 }
 void ConnectionFactory::Connection::OnTcpSessionShutdown(Session *s) {
-  ice_server_->RemoveTuple(s);
+  ice_server_->RemoveSession(s);
 }
 void ConnectionFactory::Connection::OnUdpSessionShutdown(Session *s) {
-  ice_server_->RemoveTuple(s);
+  ice_server_->RemoveSession(s);
 }
 
 int ConnectionFactory::Connection::OnPacketReceived(Session *session, const uint8_t *p, size_t sz) {
@@ -603,7 +608,7 @@ int ConnectionFactory::Connection::OnStunDataReceived(Session *session, const ui
 int ConnectionFactory::Connection::OnDtlsDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure it comes from a valid tuple.
-  if (!ice_server_->IsValidTuple(session)) {
+  if (!ice_server_->IsValidSession(session)) {
     logger::warn({{"ev","ignoring DTLS data coming from an invalid session"},{"proto","dtls"}});
     return QRPC_OK;
   }
@@ -626,17 +631,16 @@ int ConnectionFactory::Connection::OnDtlsDataReceived(Session *session, const ui
 }
 void ConnectionFactory::Connection::TryParseRtcpPacket(const uint8_t *p, size_t sz) {
   // Decrypt the SRTCP packet.
-  auto intLen = static_cast<int>(sz);
-  auto decrypted = srtp_recv_->DecryptSrtcp(const_cast<uint8_t *>(p), &intLen);
+  auto decrypted = srtp_recv_->DecryptSrtcp(const_cast<uint8_t *>(p), &sz);
   if (!decrypted) {
     QRPC_LOGJ(warn, {{"proto","srtcp"},
       {"ev","received data is not a valid RTP packet"},
-      {"decrypted",decrypted},{"intLen",intLen},
+      {"decrypted",decrypted},{"len",sz},
       {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
     ASSERT(false);
     return;
   }
-  RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(p, static_cast<size_t>(intLen));
+  RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(p, sz);
   if (packet == nullptr) {
     logger::warn({{"proto","srtcp"},
       {"ev","received data is not a valid RTCP compound or single packet"},
@@ -660,7 +664,7 @@ int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const ui
     return QRPC_OK;
   }
   // Ensure it comes from a valid tuple.
-  if (!ice_server_->IsValidTuple(session)) {
+  if (!ice_server_->IsValidSession(session)) {
     logger::warn({{"proto","rtcp"},{"ev","ignoring RTCP packet coming from an invalid tuple"}});
     return QRPC_OK;
   }
@@ -670,13 +674,12 @@ int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const ui
 }
 void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t sz) {
   // Decrypt the SRTP packet.
-  auto intLen = static_cast<int>(sz);
-  auto decrypted = this->srtp_recv_->DecryptSrtp(const_cast<uint8_t*>(p), &intLen);
-  auto *packet = RTC::RtpPacket::Parse(p, static_cast<size_t>(intLen));
+  auto decrypted = this->srtp_recv_->DecryptSrtp(const_cast<uint8_t*>(p), &sz);
+  auto *packet = RTC::RtpPacket::Parse(p, sz);
   if (packet == nullptr) {
     QRPC_LOGJ(warn, {{"proto","rtcp"},
       {"ev","received data is not a valid RTP packet"},
-      {"decrypted",decrypted},{"intLen",intLen},
+      {"decrypted",decrypted},{"len",sz},
       {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
     ASSERT(false);
     return;
@@ -705,7 +708,7 @@ int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uin
     return QRPC_OK;
   }
   // Ensure it comes from a valid tuple.
-  if (!ice_server_->IsValidTuple(session)) {
+  if (!ice_server_->IsValidSession(session)) {
     logger::warn({{"proto","rtcp"},{"ev","ignoring RTCP packet coming from an invalid tuple"}});
     return QRPC_OK;
   }
@@ -784,19 +787,19 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
 void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
   // used for synching server's session/address map. 
-  // use OnIceServerTupleAdded to search mediasoup's example
+  // use OnIceServerSessionAdded to search mediasoup's example
 }
 void ConnectionFactory::Connection::OnIceServerSessionRemoved(
   const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionRemoved"},{"ss",str::dptr(session)}});
   // used for synching server's session/address map. 
-  // use OnIceServerTupleRemoved to search mediasoup's example
+  // use OnIceServerSessionRemoved to search mediasoup's example
 }
 void ConnectionFactory::Connection::OnIceServerSelectedSession(
   const IceServer *iceServer, Session *session) {
   TRACK();
   // just notify the app
-  // use OnIceServerSelectedTuple to search mediasoup's example
+  // use OnIceServerSelectedSession to search mediasoup's example
 }
 void ConnectionFactory::Connection::OnIceServerConnected(const IceServer *iceServer) {
   TRACK();
@@ -1070,16 +1073,15 @@ void ConnectionFactory::Connection::SendRtpPacket(
     return;
   }
   const uint8_t* data = packet->GetData();
-  auto intLen         = static_cast<int>(packet->GetSize());
-  if (!srtp_send_->EncryptRtp(&data, &intLen)) {
+  auto sz         = packet->GetSize();
+  if (!srtp_send_->EncryptRtp(&data, &sz)) {
     if (cb) {
       (*cb)(false);
       delete cb;
     }
     return;
   }
-  auto len = static_cast<size_t>(intLen);
-  if (ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), len) < 0) {
+  if (ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), sz) < 0) {
     if (cb) {
       (*cb)(false);
       delete cb;
@@ -1087,7 +1089,7 @@ void ConnectionFactory::Connection::SendRtpPacket(
     return;
   }
   // Increase send transmission.
-  rtp_handler_->DataSent(len);
+  rtp_handler_->DataSent(sz);
 }
 void ConnectionFactory::Connection::SendRtcpPacket(RTC::RTCP::Packet* packet) {
   		MS_TRACE();
@@ -1096,19 +1098,18 @@ void ConnectionFactory::Connection::SendRtcpPacket(RTC::RTCP::Packet* packet) {
 			return;
     }
 		const uint8_t* data = packet->GetData();
-		auto intLen         = static_cast<int>(packet->GetSize());
+		auto sz         = packet->GetSize();
 		// Ensure there is sending SRTP session.
 		if (!this->srtp_send_) {
 			QRPC_LOG(warn, "ignoring RTCP packet due to non sending SRTP session");
 			return;
 		}
-		if (!this->srtp_send_->EncryptRtcp(&data, &intLen)) {
+		if (!this->srtp_send_->EncryptRtcp(&data, &sz)) {
 			return;
     }
-		auto len = static_cast<size_t>(intLen);
-		this->ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), len);
+		this->ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), sz);
 		// Increase send transmission.
-		rtp_handler_->DataSent(len);
+		rtp_handler_->DataSent(sz);
 }
 void ConnectionFactory::Connection::SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) {
     MS_TRACE();
@@ -1117,19 +1118,18 @@ void ConnectionFactory::Connection::SendRtcpCompoundPacket(RTC::RTCP::CompoundPa
     }
 		packet->Serialize(RTC::RTCP::Buffer);
 		const uint8_t* data = packet->GetData();
-		auto intLen         = static_cast<int>(packet->GetSize());
+		auto sz         = packet->GetSize();
 		// Ensure there is sending SRTP session.
 		if (!this->srtp_send_) {
 			QRPC_LOG(warn, "ignoring RTCP compound packet due to non sending SRTP session");
 			return;
 		}
-		if (!this->srtp_send_->EncryptRtcp(&data, &intLen)) {
+		if (!this->srtp_send_->EncryptRtcp(&data, &sz)) {
 			return;
     }
-		auto len = static_cast<size_t>(intLen);
-		this->ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), len);
+		this->ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), sz);
 		// Increase send transmission.
-		rtp_handler_->DataSent(len);
+		rtp_handler_->DataSent(sz);
 }
 
 // client::WhipHttpProcessor, client::TcpSession, client::UdpSession
@@ -1233,7 +1233,7 @@ namespace client {
         BASE::factory().alarm_processor().Cancel(alarm_id_);
         alarm_id_ = AlarmProcessor::INVALID_ID;
       }
-      // removes Tuple(this session) from IceServer
+      // removes Session(this session) from IceServer
       BASE::OnShutdown();
       if (BASE::close_reason().code == QRPC_CLOSE_REASON_TIMEOUT) {
         on_ice_failure_(QRPC_CLOSE_REASON_TIMEOUT);

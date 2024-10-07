@@ -2,7 +2,9 @@
 #define MS_RTC_ICE_SERVER_HPP
 
 #include "common.hpp"
+#include "FBS/webRtcTransport.h"
 #include "RTC/StunPacket.hpp"
+#include "handles/TimerHandle.hpp"
 #include "base/session.h"
 #include "base/alarm.h"
 #include <list>
@@ -11,7 +13,7 @@
 namespace base {
 namespace webrtc {
 	// IceServer
-	class IceServer
+	class IceServer : public TimerHandle::Listener
 	{
 	public:
 		enum class IceState
@@ -19,8 +21,12 @@ namespace webrtc {
 			NEW = 1,
 			CONNECTED,
 			COMPLETED,
-			DISCONNECTED
+			DISCONNECTED,
 		};
+
+	public:
+		static IceState RoleFromFbs(FBS::WebRtcTransport::IceState state);
+		static FBS::WebRtcTransport::IceState IceStateToFbs(IceState state);
 
 	public:
 		class Listener
@@ -55,8 +61,12 @@ namespace webrtc {
 		};
 
 	public:
-		IceServer(Listener* listener, const std::string& usernameFragment, const std::string& password);
-		~IceServer();
+		IceServer(
+		  Listener* listener,
+		  const std::string& usernameFragment,
+		  const std::string& password,
+		  uint8_t consentTimeoutSec);
+		~IceServer() override;
 
 	public:
 		void ProcessStunPacket(RTC::StunPacket* packet, Session *session);
@@ -77,33 +87,9 @@ namespace webrtc {
 		{
 			return this->selectedSession;
 		}
-		void ForceSetSelectedSession(Session *s) {
-			this->SetSelectedSession(s);
-		}
-		void RestartIce(const std::string& usernameFragment, const std::string& password)
-		{
-			if (!this->oldUsernameFragment.empty())
-			{
-				this->listener->OnIceServerLocalUsernameFragmentRemoved(this, this->oldUsernameFragment);
-			}
-
-			this->oldUsernameFragment = this->usernameFragment;
-			this->usernameFragment    = usernameFragment;
-
-			this->oldPassword = this->password;
-			this->password    = password;
-
-			this->remoteNomination = 0u;
-
-			// Notify the listener.
-			this->listener->OnIceServerLocalUsernameFragmentAdded(this, usernameFragment);
-
-			// NOTE: Do not call listener->OnIceServerLocalUsernameFragmentRemoved()
-			// yet with old usernameFragment. Wait until we receive a STUN packet
-			// with the new one.
-		}
-		bool IsValidTuple(const Session *session) const;
-		void RemoveTuple(Session *session);
+		void RestartIce(const std::string& usernameFragment, const std::string& password);
+		bool IsValidSession(const Session *session) const;
+		void RemoveSession(Session *session);
 		/**
 		 * This should be just called in 'connected' or 'completed' state and the
 		 * given tuple must be an already valid tuple.
@@ -111,34 +97,56 @@ namespace webrtc {
 		void MayForceSelectedSession(const Session *session);
 
 	private:
-		void HandleTuple(
+		void ProcessStunRequest(RTC::StunPacket* request, Session *session);
+		void ProcessStunIndication(RTC::StunPacket* indication);
+		void ProcessStunResponse(RTC::StunPacket* response, Session *session);
+		void HandleSession(
 		  Session *session, bool hasUseCandidate, bool hasNomination, uint32_t nomination);
 		/**
 		 * Store the given tuple and return its stored address.
 		 */
-		Session *AddTuple(Session *session);
+		Session *AddSession(Session *session);
 		/**
 		 * If the given tuple exists return its stored address, nullptr otherwise.
 		 */
-		Session *HasTuple(const Session *session) const;
+		Session *HasSession(const Session *session) const;
 		/**
 		 * Set the given tuple as the selected tuple.
 		 * NOTE: The given tuple MUST be already stored within the list.
 		 */
-		void SetSelectedSession(Session *storedTuple);
+		void SetSelectedSession(Session *storedSession);
+		bool IsConsentCheckSupported() const
+		{
+			return this->consentTimeoutMs != 0u;
+		}
+		bool IsConsentCheckRunning() const
+		{
+			return (this->consentCheckTimer && this->consentCheckTimer->IsActive());
+		}
+		void StartConsentCheck();
+		void RestartConsentCheck();
+		void StopConsentCheck();
+
+		/* Pure virtual methods inherited from TimerHandle::Listener. */
+	public:
+		void OnTimer(TimerHandle* timer) override;
 
 	private:
 		// Passed by argument.
 		Listener* listener{ nullptr };
-		// Others.
 		std::string usernameFragment;
 		std::string password;
+		uint16_t consentTimeoutMs{ 30000u };
+		// Others.
 		std::string oldUsernameFragment;
 		std::string oldPassword;
 		IceState state{ IceState::NEW };
 		uint32_t remoteNomination{ 0u };
 		std::list<Session*> sessions;
 		Session *selectedSession{ nullptr };
+		TimerHandle* consentCheckTimer{ nullptr };
+		uint64_t lastConsentRequestReceivedAtMs{ 0u };
+		bool isRemovingSessions{ false };
 	};
 
 	// IceProber

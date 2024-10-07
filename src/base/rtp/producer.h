@@ -14,8 +14,10 @@ namespace rtp {
   class Producer : public RTC::Producer {
     friend class ProducerFactory;
   public:
-    Producer(RTC::Shared* s, const std::string& id, Listener* l, json& d) :
-      RTC::Producer(s, id, l, d) {}
+    Producer(
+      RTC::Shared* s, const std::string& id, Listener* l, 
+      const FBS::Transport::ProduceRequest* d
+    ) : RTC::Producer(s, id, l, d) {}
     ~Producer() override {}
   protected:
     void SetMedia(std::shared_ptr<Media> m) { media_ = m; }

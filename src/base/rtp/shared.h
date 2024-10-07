@@ -6,16 +6,14 @@ namespace base {
 namespace rtp {
   class Shared {
   public:
-    Shared() : cs_(-1, -1), pcs_(-1, -1), shared_(
+    Shared() : cs_(-1, -1), shared_(
       new ChannelMessageRegistrator(),
-      new Channel::ChannelNotifier(&cs_),
-      new PayloadChannel::PayloadChannelNotifier(&pcs_)
+      new Channel::ChannelNotifier(&cs_)
     ) {}
     ~Shared() {}
     RTC::Shared &get() { return shared_; }
   protected:
     Channel::ChannelSocket cs_;
-    PayloadChannel::PayloadChannelSocket pcs_;
     RTC::Shared shared_;
   };
 }

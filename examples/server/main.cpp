@@ -109,6 +109,7 @@ int main(int argc, char *argv[]) {
         .http_timeout = qrpc_time_sec(5),
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
+        .consent_check_interval = qrpc_time_sec(10),
         .fingerprint_algorithm = "sha-256",
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
