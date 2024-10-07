@@ -96,3 +96,9 @@ def setup_targets():
       name = "openbsd",
       values = {"cpu": "openbsd"},
   )
+
+  # sanitizer
+  native.config_setting(
+    name = "asan",
+    define_values= {"SAN": "address"},
+  )

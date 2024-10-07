@@ -67,6 +67,7 @@ namespace rtp {
     ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
     MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id) const;
     static std::optional<RTC::RtpHeaderExtensionUri::Type> FromUri(const std::string &uri);
+    static void SetupHeaderExtensionMap();
   protected:
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::CodecMapping>>
     PackCodecMapping(::flatbuffers::FlatBufferBuilder &fbb) const;

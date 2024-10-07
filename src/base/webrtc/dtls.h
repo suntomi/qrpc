@@ -116,7 +116,7 @@ namespace webrtc {
 		{
 			return DtlsTransport::localFingerprints;
 		}
-		static absl::flat_hash_map<std::string, DtlsTransport::FingerprintAlgorithm> GetString2FingerprintAlgorithm()
+		static absl::flat_hash_map<std::string, DtlsTransport::FingerprintAlgorithm> &GetString2FingerprintAlgorithm()
 		{
 			return DtlsTransport::string2FingerprintAlgorithm;
 		}

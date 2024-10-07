@@ -550,6 +550,13 @@ namespace webrtc {
 				this->listener->OnIceServerErrorResponded(this, response, session);
 				break;
 			}
+
+			default:
+			{
+				QRPC_LOGJ(debug, {{"ev","STUN Binding Unknown Response processed"},{"username",response->GetUsername()}});
+				ASSERT(false);
+				break;
+			}
 		}
 	}
 

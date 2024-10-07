@@ -63,10 +63,10 @@ cc_import(
     "src/**/*.md"
   ]),
   copts = [
-    "-std=c++17", "-fsanitize=address"
+    "-std=c++17",
   ] 
   + selects.with_or({
-    ":is_debug_build": ["-fsanitize=address"],
+    ":asan": ["-fsanitize=address"],
     "//conditions:default": [],
   })
   + MS_CPPARGS 
@@ -81,14 +81,14 @@ cc_import(
       "-D__ENABLE_KQUEUE__",
     ],
     ":windows": [
-      "-D__ENABLE_IOCP__",
+      "-D__ENABLE_UV__", # TODO: fallback to uv. but we need to support native windows?
     ],
     (":android", "//conditions:default"): [
       "-D__ENABLE_EPOLL__", "-D__QRPC_USE_RECVMMSG__"
     ],
   }),
   linkopts = selects.with_or({
-    ":is_debug_build": ["-fsanitize=address"],
+    ":asan": ["-fsanitize=address"],
     "//conditions:default": [],
   }),
   includes = [

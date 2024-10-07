@@ -129,7 +129,8 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
       Utils::Crypto::ClassInit();
       DtlsTransport::ClassInit();
       RTC::SrtpSession::ClassInit();
-      // setup RTC::Timer and UnixStreamSocket, Logger
+      // setup RTC::Timer and UnixStreamSocket, Logger, rtp::Parameters
+      rtp::Parameters::SetupHeaderExtensionMap();
       Logger::ClassInit(&g_channel_socket_);
       ::TimerHandle::SetTimerProc(
         [&a](const ::TimerHandle::Handler &h, uint64_t start_at) {

@@ -114,23 +114,29 @@ namespace rtp {
     );
   }
 
+  static std::map<std::string, RTC::RtpHeaderExtensionUri::Type> g_map = {
+    {"urn:ietf:params:rtp-hdrext:sdes:mid", RTC::RtpHeaderExtensionUri::Type::MID},
+    {"urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id", RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID},
+    {"urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id", RTC::RtpHeaderExtensionUri::Type::REPAIRED_RTP_STREAM_ID},
+    {"http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07", RTC::RtpHeaderExtensionUri::Type::FRAME_MARKING_07},
+    {"urn:ietf:params:rtp-hdrext:framemarking", RTC::RtpHeaderExtensionUri::Type::FRAME_MARKING},
+    {"urn:ietf:params:rtp-hdrext:ssrc-audio-level", RTC::RtpHeaderExtensionUri::Type::SSRC_AUDIO_LEVEL},
+    {"urn:3gpp:video-orientation", RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION},
+    {"urn:ietf:params:rtp-hdrext:toffset", RTC::RtpHeaderExtensionUri::Type::TOFFSET},
+    {"http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01", RTC::RtpHeaderExtensionUri::Type::TRANSPORT_WIDE_CC_01},
+    {"http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time", RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME},
+    {"http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time", RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME},
+    {"http://www.webrtc.org/experiments/rtp-hdrext/playout-delay", RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY},
+  };
+  static std::map<RTC::RtpHeaderExtensionUri::Type, std::string> g_rmap;
+  void Parameters::SetupHeaderExtensionMap() {
+    for (auto &kv : g_map) {
+      g_rmap[kv.second] = kv.first;
+    }
+  }
   std::optional<RTC::RtpHeaderExtensionUri::Type> Parameters::FromUri(const std::string &uri) {
-    static std::map<std::string, RTC::RtpHeaderExtensionUri::Type> map = {
-      {"urn:ietf:params:rtp-hdrext:sdes:mid", RTC::RtpHeaderExtensionUri::Type::MID},
-      {"urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id", RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID},
-      {"urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id", RTC::RtpHeaderExtensionUri::Type::REPAIRED_RTP_STREAM_ID},
-      {"http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07", RTC::RtpHeaderExtensionUri::Type::FRAME_MARKING_07},
-      {"urn:ietf:params:rtp-hdrext:framemarking", RTC::RtpHeaderExtensionUri::Type::FRAME_MARKING},
-      {"urn:ietf:params:rtp-hdrext:ssrc-audio-level", RTC::RtpHeaderExtensionUri::Type::SSRC_AUDIO_LEVEL},
-      {"urn:3gpp:video-orientation", RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION},
-      {"urn:ietf:params:rtp-hdrext:toffset", RTC::RtpHeaderExtensionUri::Type::TOFFSET},
-      {"http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01", RTC::RtpHeaderExtensionUri::Type::TRANSPORT_WIDE_CC_01},
-      {"http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time", RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME},
-      {"http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time", RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME},
-      {"http://www.webrtc.org/experiments/rtp-hdrext/playout-delay", RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY},
-    };
-    auto it = map.find(uri);
-    if (it == map.end()) {
+    auto it = g_map.find(uri);
+    if (it == g_map.end()) {
       ASSERT(false);
       return std::nullopt;
     }
@@ -327,6 +333,9 @@ namespace rtp {
     std::vector<uint64_t> pts = { selected_pt, rtx_pt };
     for (int i = 0; i < 2; i++) {
       auto pt = pts[i];
+      if (pt == 0) {
+        continue;
+      }
       auto c = CodecByPayloadType(pt);
       if (c == nullptr) {
         answer = str::Format("rtpmap: no codec added for %llu", pt);
@@ -495,7 +504,13 @@ namespace rtp {
     }
     auto &hs = headerExtensions;
     for (size_t i = 0; i < hs.size(); i++) {
-      sdplines += str::Format("\na=extmap:%u %s", hs[i].id, hs[i].type);
+      auto urit = g_rmap.find(hs[i].type);
+      if (urit == g_rmap.end()) {
+        QRPC_LOGJ(warn, {{"ev","unsupported header extension type id"},{"type",hs[i].type}});
+        ASSERT(false);
+        continue;
+      }
+      sdplines += str::Format("\na=extmap:%u %s", hs[i].id, urit->second.c_str());
     }
     for (size_t i = 0; i < codecs.size(); i++) {
       auto &c = codecs[i];
