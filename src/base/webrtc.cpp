@@ -334,7 +334,7 @@ void ConnectionFactory::Connection::InitRTP() {
     rtp_handler_ = std::make_shared<rtp::Handler>(*this);
   }
   if (rtcp_alarm_id_ == AlarmProcessor::INVALID_ID) {
-    rtcp_alarm_id_ = sv_.alarm_processor().Set(
+    rtcp_alarm_id_ = factory_.alarm_processor().Set(
       [this]() { return this->rtp_handler_->OnTimer(qrpc_time_now()); },
       qrpc_time_now() + rtp::Handler::RtcpRandomInterval()
     );
@@ -783,7 +783,7 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentAdded(
 void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
   logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"c",str::dptr(this)},{"ufrag",usernameFragment}});
-  sv_.ScheduleClose(usernameFragment);
+  factory_.ScheduleClose(usernameFragment);
 }
 void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
@@ -1042,7 +1042,6 @@ void ConnectionFactory::Connection::RecvStreamClosed(uint32_t ssrc) {
   if (srtp_recv_ != nullptr) {
     srtp_recv_->RemoveStream(ssrc);
   }
-
 }
 void ConnectionFactory::Connection::SendStreamClosed(uint32_t ssrc) {
   if (srtp_send_ != nullptr) {
@@ -1050,7 +1049,7 @@ void ConnectionFactory::Connection::SendStreamClosed(uint32_t ssrc) {
   }
 }
 bool ConnectionFactory::Connection::IsConnected() const {
-  return true;
+  return connected() && this->ice_server_->GetSelectedSession() != nullptr;
 }
 void ConnectionFactory::Connection::SendRtpPacket(
   RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb) {

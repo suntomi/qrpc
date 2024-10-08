@@ -81,7 +81,7 @@ namespace webrtc {
       friend class ConnectionFactory;
     public:
       Connection(ConnectionFactory &sv, DtlsTransport::Role dtls_role) :
-        sv_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
+        factory_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr), srtp_send_(nullptr), srtp_recv_(nullptr),
         rtp_handler_(nullptr), streams_(), syscall_(), stream_id_factory_(),
         alarm_id_(AlarmProcessor::INVALID_ID), rtcp_alarm_id_(AlarmProcessor::INVALID_ID),
@@ -101,10 +101,10 @@ namespace webrtc {
         }
       virtual ~Connection() {
         if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-          sv_.alarm_processor().Cancel(alarm_id_);
+          factory_.alarm_processor().Cancel(alarm_id_);
         }
         if (rtcp_alarm_id_ != AlarmProcessor::INVALID_ID) {
-          sv_.alarm_processor().Cancel(rtcp_alarm_id_);
+          factory_.alarm_processor().Cancel(rtcp_alarm_id_);
         }
       }
     public:
@@ -124,8 +124,8 @@ namespace webrtc {
     public:
       bool connected() const;
       inline bool closed() const { return closed_; }
-      inline ConnectionFactory &factory() { return sv_; }
-      inline const ConnectionFactory &factory() const { return sv_; }
+      inline ConnectionFactory &factory() { return factory_; }
+      inline const ConnectionFactory &factory() const { return factory_; }
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
       inline const IceUFrag &ufrag() const { return ice_server().GetUsernameFragment(); }
       inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
@@ -238,7 +238,7 @@ namespace webrtc {
       const rtp::Handler::Config &GetRtpConfig() const override { return factory().config().rtp; }
     protected:
       qrpc_time_t last_active_;
-      ConnectionFactory &sv_;
+      ConnectionFactory &factory_;
       std::unique_ptr<IceServer> ice_server_; // ICE
       std::unique_ptr<IceProber> ice_prober_; // ICE(client)
       DtlsTransport::Role dtls_role_;
