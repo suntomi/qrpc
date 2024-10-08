@@ -584,7 +584,25 @@ namespace rtp {
 		InitTccClient(nullptr, p);
 		return QRPC_OK;
 	}
-	void Handler::InitTccClient(const Consumer *consumer, const Parameters &p) {
+	void Handler::TransportConnected() {
+		if (this->tccServer) { this->tccServer->TransportConnected(); }
+		if (this->tccClient) { this->tccClient->TransportConnected(); }
+	#ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
+		// Tell the SenderBandwidthEstimator.
+		if (this->senderBwe) { this->senderBwe->TransportConnected(); }
+	#endif
+		// TODO: call consumer->TransportConnected(); for all consumers
+	}
+	void Handler::TransportDisconnected() {
+		if (this->tccServer) { this->tccServer->TransportDisconnected(); }
+		if (this->tccClient) { this->tccClient->TransportDisconnected(); }
+	#ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
+		// Tell the SenderBandwidthEstimator.
+		if (this->senderBwe) { this->senderBwe->TransportDisconnected(); }
+	#endif
+		// TODO: call consumer->TransportDisconnected(); for all consumers
+	}
+	void Handler::InitTccClient(Consumer *consumer, const Parameters &p) {
 		bool createTccClient{ false };
 		RTC::BweType bweType;
 		auto &codecs = p.codecs;
@@ -661,6 +679,68 @@ namespace rtp {
 			{
 				this->tccClient->TransportConnected();
 			}
+		}
+		// If applicable, tell the new Consumer that we are gonna manage its
+		// bitrate.
+		if (this->tccClient)
+		{
+			consumer->SetExternallyManagedBitrate();
+		}
+
+#ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
+		// Create SenderBandwidthEstimator if:
+		// - not already created,
+		// - it's a video Consumer, and
+		// - there is transport-wide-cc-01 RTP header extension, and
+		// - there is "transport-cc" in codecs RTCP feedback.
+		//
+		// clang-format off
+		if (
+			!this->senderBwe &&
+			consumer->GetKind() == RTC::Media::Kind::VIDEO &&
+			rtpHeaderExtensionIds.transportWideCc01 != 0u &&
+			std::any_of(
+				codecs.begin(), codecs.end(), [](const RTC::RtpCodecParameters& codec)
+				{
+					return std::any_of(
+						codec.rtcpFeedback.begin(), codec.rtcpFeedback.end(), [](const RTC::RtcpFeedback& fb)
+						{
+							return fb.type == "transport-cc";
+						});
+				})
+			)
+		// clang-format on
+		{
+			MS_DEBUG_TAG(bwe, "enabling SenderBandwidthEstimator");
+
+			// Tell all the Consumers that we are gonna manage their bitrate.
+			for (auto& kv : this->mapConsumers)
+			{
+				auto* consumer = kv.second;
+
+				consumer->SetExternallyManagedBitrate();
+			};
+
+			this->senderBwe = std::make_shared<RTC::SenderBandwidthEstimator>(
+				this, this->initialAvailableOutgoingBitrate);
+
+			if (listener_.IsConnected())
+			{
+				this->senderBwe->TransportConnected();
+			}
+		}
+
+		// If applicable, tell the new Consumer that we are gonna manage its
+		// bitrate.
+		if (this->senderBwe)
+		{
+			consumer->SetExternallyManagedBitrate();
+		}
+#endif
+
+		if (listener_.IsConnected())
+		{
+			consumer->TransportConnected();
 		}
 	}
 	void Handler::InitTccServer(const Parameters &p) {

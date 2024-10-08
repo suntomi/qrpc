@@ -432,6 +432,9 @@ void ConnectionFactory::Connection::Fin() {
   if (ice_prober_ != nullptr) {
     ice_prober_->Reset();
   }
+  if (rtp_handler_ != nullptr) {
+    rtp_handler_->TransportDisconnected();
+  }
   for (auto s = streams_.begin(); s != streams_.end();) {
     auto cur = s++;
     (*cur).second->OnShutdown();
@@ -563,6 +566,9 @@ int ConnectionFactory::Connection::RunDtlsTransport() {
 }
 void ConnectionFactory::Connection::OnDtlsEstablished() {
   sctp_association_->TransportConnected();
+  if (rtp_handler_ != nullptr) {
+    rtp_handler_->TransportConnected();
+  }
   int r;
   if ((r = OnConnect()) < 0) {
     logger::error({{"ev","application reject connection"},{"rc",r}});
@@ -1048,7 +1054,7 @@ void ConnectionFactory::Connection::SendStreamClosed(uint32_t ssrc) {
   }
 }
 bool ConnectionFactory::Connection::IsConnected() const {
-  return connected() && this->ice_server_->GetSelectedSession() != nullptr;
+  return this->ice_server_->GetSelectedSession() != nullptr;
 }
 void ConnectionFactory::Connection::SendRtpPacket(
   RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb) {

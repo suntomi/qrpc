@@ -69,6 +69,8 @@ namespace rtp {
     std::shared_ptr<Media> FindFrom(const Parameters &p);
     int CreateProducer(const std::string &id, const Parameters &p);
     int CreateConsumer(const Parameters &p);
+    void TransportConnected();
+    void TransportDisconnected();
     static inline qrpc_time_t RtcpRandomInterval() { return qrpc_time_msec(random::gen(1000, 1500)); }
   public:
 		/* implements RTC::Producer::Listener. */
@@ -131,7 +133,7 @@ namespace rtp {
 		void EmitTraceEventProbationType(RTC::RtpPacket* packet) const;
 		void EmitTraceEventBweType(RTC::TransportCongestionControlClient::Bitrates& bitrates) const;
   protected:
-    void InitTccClient(const Consumer *consumer, const Parameters &p);
+    void InitTccClient(Consumer *consumer, const Parameters &p);
     void InitTccServer(const Parameters &p);
   protected:
     Listener &listener_;
