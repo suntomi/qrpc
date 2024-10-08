@@ -29,7 +29,7 @@ namespace webrtc {
     bool FindMediaSection(const std::string &type, json &j) const;
   protected:
     std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c) const;
-    bool GetRemoteFingerPrint(const json &section, std::string &answer, DtlsTransport::Fingerprint &ret) const;
+    bool GetRemoteFingerPrint(const json &section, std::string &answer, RTC::DtlsTransport::Fingerprint &ret) const;
     bool AnswerMediaSection(
       const json &section, const std::string &proto, ConnectionFactory::Connection &c,
       std::string &answer, rtp::Parameters &param) const;

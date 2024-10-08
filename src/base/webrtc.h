@@ -8,10 +8,10 @@
 #include "base/rtp/handler.h"
 #include "base/webrtc/ice.h"
 #include "base/webrtc/sctp.h"
-#include "base/webrtc/dtls.h"
 #include "base/webrtc/candidate.h"
 
 // TODO: if enabling srtp, this also need to be replaced with homebrew version
+#include "RTC/DtlsTransport.hpp"
 #include "RTC/SrtpSession.hpp"
 #include "RTC/RTCP/Packet.hpp"
 
@@ -74,13 +74,13 @@ namespace webrtc {
   public: // connections
     class Connection : public base::Connection, 
                        public IceServer::Listener,
-                       public DtlsTransport::Listener,
+                       public RTC::DtlsTransport::Listener,
                        public SctpAssociation::Listener,
                        public rtp::Handler::Listener {
     public:
       friend class ConnectionFactory;
     public:
-      Connection(ConnectionFactory &sv, DtlsTransport::Role dtls_role) :
+      Connection(ConnectionFactory &sv, RTC::DtlsTransport::Role dtls_role) :
         factory_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr), srtp_send_(nullptr), srtp_recv_(nullptr),
         rtp_handler_(nullptr), streams_(), syscall_(), stream_id_factory_(),
@@ -88,10 +88,10 @@ namespace webrtc {
         sctp_connected_(false), closed_(false) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
-            case DtlsTransport::Role::CLIENT:
+            case RTC::DtlsTransport::Role::CLIENT:
               stream_id_factory_.configure(0, 2); // zero is allowed to be stream id of client
               break;
-            case DtlsTransport::Role::SERVER:
+            case RTC::DtlsTransport::Role::SERVER:
               stream_id_factory_.configure(1, 2);
               break;
             default:
@@ -128,11 +128,11 @@ namespace webrtc {
       inline const ConnectionFactory &factory() const { return factory_; }
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
       inline const IceUFrag &ufrag() const { return ice_server().GetUsernameFragment(); }
-      inline DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
+      inline RTC::DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
       inline rtp::Handler &rtp_handler() { return *rtp_handler_.get(); }
       // for now, qrpc server initiates dtls transport because safari does not initiate it
       // even if we specify "setup: passive" in SDP of whip response
-      inline bool is_client() const { return dtls_role_ == DtlsTransport::Role::SERVER; }
+      inline bool is_client() const { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void InitRTP();
@@ -181,10 +181,10 @@ namespace webrtc {
 			void OnIceServerErrorResponded(
 				const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) override;
 
-      // implements DtlsTransport::Listener
-			void OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) override;
+      // implements RTC::DtlsTransport::Listener
+			void OnDtlsTransportConnecting(const RTC::DtlsTransport* dtlsTransport) override;
 			void OnDtlsTransportConnected(
-			  const DtlsTransport* dtlsTransport,
+			  const RTC::DtlsTransport* dtlsTransport,
 			  RTC::SrtpSession::CryptoSuite srtpCryptoSuite,
 			  uint8_t* srtpLocalKey,
 			  size_t srtpLocalKeyLen,
@@ -193,15 +193,15 @@ namespace webrtc {
 			  std::string& remoteCert) override;
 			// The DTLS connection has been closed as the result of an error (such as a
 			// DTLS alert or a failure to validate the remote fingerprint).
-			void OnDtlsTransportFailed(const DtlsTransport* dtlsTransport) override;
+			void OnDtlsTransportFailed(const RTC::DtlsTransport* dtlsTransport) override;
 			// The DTLS connection has been closed due to receipt of a close_notify alert.
-			void OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) override;
+			void OnDtlsTransportClosed(const RTC::DtlsTransport* dtlsTransport) override;
 			// Need to send DTLS data to the peer.
 			void OnDtlsTransportSendData(
-			  const DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;
+			  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;
 			// DTLS application data received.
 			void OnDtlsTransportApplicationDataReceived(
-			  const DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;  
+			  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;  
 
       // implements SctpAssociation::Listener
 			void OnSctpAssociationConnecting(SctpAssociation* sctpAssociation) override;
@@ -241,8 +241,8 @@ namespace webrtc {
       ConnectionFactory &factory_;
       std::unique_ptr<IceServer> ice_server_; // ICE
       std::unique_ptr<IceProber> ice_prober_; // ICE(client)
-      DtlsTransport::Role dtls_role_;
-      std::unique_ptr<DtlsTransport> dtls_transport_; // DTLS
+      RTC::DtlsTransport::Role dtls_role_;
+      std::unique_ptr<RTC::DtlsTransport> dtls_transport_; // DTLS
       std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
       std::shared_ptr<rtp::Handler> rtp_handler_; // RTP, RTCP
@@ -252,7 +252,7 @@ namespace webrtc {
       AlarmProcessor::Id alarm_id_, rtcp_alarm_id_;
       bool sctp_connected_, closed_;
     };
-    typedef std::function<Connection *(ConnectionFactory &, DtlsTransport::Role)> FactoryMethod;
+    typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
     struct Port {
       enum Protocol {
         NONE = 0,
@@ -284,7 +284,7 @@ namespace webrtc {
     ConnectionFactory(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       loop_(l), config_(config), factory_method_(fm), stream_factory_(sf), connections_() {}
     ConnectionFactory(Loop &l, Config &&config, StreamFactory &&sf) :
-      loop_(l), config_(config), factory_method_([](ConnectionFactory &cf, DtlsTransport::Role role) {
+      loop_(l), config_(config), factory_method_([](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
         return new Connection(cf, role);
       }), stream_factory_(sf), connections_() {}
     virtual ~ConnectionFactory() { Fin(); }
@@ -370,7 +370,7 @@ namespace webrtc {
     typedef std::function<int (ConnectionFactory::Connection &)> ConnectHandler;
     typedef std::function<qrpc_time_t (ConnectionFactory::Connection &)> ShutdownHandler;
   public:
-    AdhocConnection(ConnectionFactory &sv, DtlsTransport::Role dtls_role, ConnectHandler &&ch, ShutdownHandler &&sh) :
+    AdhocConnection(ConnectionFactory &sv, RTC::DtlsTransport::Role dtls_role, ConnectHandler &&ch, ShutdownHandler &&sh) :
       Connection(sv, dtls_role), connect_handler_(std::move(ch)), shutdown_handler_(std::move(sh)) {};
     int OnConnect() override { return connect_handler_(*this); }
     qrpc_time_t OnShutdown() override { return shutdown_handler_(*this); }
@@ -465,7 +465,7 @@ namespace webrtc {
     AdhocClient(Loop &l, Config &&c, 
       AdhocConnection::ConnectHandler &&cch, AdhocConnection::ShutdownHandler &&csh,
       Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
-      Client(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, DtlsTransport::Role role) {
+      Client(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
         auto cchh = cch; auto cshh = csh;
         return new AdhocConnection(cf, role, std::move(cchh), std::move(cshh));
       }, [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](const Stream::Config &config, base::Connection &conn) {
@@ -559,7 +559,7 @@ namespace webrtc {
     AdhocListener(Loop &l, Config &&c, 
       AdhocConnection::ConnectHandler &&cch, AdhocConnection::ShutdownHandler &&csh,
       Stream::Handler &&h, AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
-      Listener(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, DtlsTransport::Role role) {
+      Listener(l, std::move(c), [cch = std::move(cch), csh = std::move(csh)](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
         auto cchh = cch; auto cshh = csh;
         return new AdhocConnection(cf, role, std::move(cchh), std::move(cshh));
       }, [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](const Stream::Config &config, base::Connection &conn) {

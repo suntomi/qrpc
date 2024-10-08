@@ -14,7 +14,6 @@
 #include "DepLibWebRTC.hpp"
 #include "DepOpenSSL.hpp"
 #include "Logger.hpp"
-#include "RTC/DtlsTransport.hpp"
 #include "RTC/SrtpSession.hpp"
 #include "RTC/StunPacket.hpp"
 #include "RTC/RtpPacket.hpp"
@@ -127,7 +126,7 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
       DepUsrSCTP::ClassInit(a);
       DepLibWebRTC::ClassInit();
       Utils::Crypto::ClassInit();
-      DtlsTransport::ClassInit();
+      RTC::DtlsTransport::ClassInit();
       RTC::SrtpSession::ClassInit();
       // setup RTC::Timer and UnixStreamSocket, Logger, rtp::Parameters
       rtp::Parameters::SetupHeaderExtensionMap();
@@ -169,7 +168,7 @@ void ConnectionFactory::GlobalFin() {
       return;
     }
     // Free static stuff.
-		DtlsTransport::ClassDestroy();
+		RTC::DtlsTransport::ClassDestroy();
 		Utils::Crypto::ClassDestroy();
 		DepLibWebRTC::ClassDestroy();
 		DepUsrSCTP::ClassDestroy();
@@ -182,9 +181,9 @@ void ConnectionFactory::GlobalFin() {
 
 // ConnectionFactory::Config
 int ConnectionFactory::Config::Derive() {
-  for (auto fp : DtlsTransport::GetLocalFingerprints()) {
-    auto fpit = DtlsTransport::GetString2FingerprintAlgorithm().find(fingerprint_algorithm);
-    if (fpit == DtlsTransport::GetString2FingerprintAlgorithm().end()) {
+  for (auto fp : RTC::DtlsTransport::GetLocalFingerprints()) {
+    auto fpit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(fingerprint_algorithm);
+    if (fpit == RTC::DtlsTransport::GetString2FingerprintAlgorithm().end()) {
       logger::die({{"ev","invalid fingerprint algorithm name"},{"algo", fingerprint_algorithm}});
       return QRPC_EDEPS;
     }
@@ -326,7 +325,7 @@ bool ConnectionFactory::Connection::connected() const {
     (
       ice_server_->GetState() == IceServer::IceState::CONNECTED ||
       ice_server_->GetState() == IceServer::IceState::COMPLETED
-    ) && dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED
+    ) && dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED
   );
 }
 void ConnectionFactory::Connection::InitRTP() {
@@ -356,7 +355,7 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   }
   // create DTLS transport
   try {
-    dtls_transport_.reset(new DtlsTransport(this));
+    dtls_transport_.reset(new RTC::DtlsTransport(this));
   } catch (const MediaSoupError &error) {
     logger::error({{"ev","fail to create DTLS transport"},{"reason",error.what()}});
     return QRPC_EALLOC;
@@ -511,7 +510,7 @@ int ConnectionFactory::Connection::RunDtlsTransport() {
   switch (dtls_role_) {
     // If still 'auto' then transition to 'server' if ICE is 'connected' or
     // 'completed'.
-    case DtlsTransport::Role::AUTO: {
+    case RTC::DtlsTransport::Role::AUTO: {
       if (
         ice_server_->GetState() == IceServer::IceState::CONNECTED ||
         ice_server_->GetState() == IceServer::IceState::COMPLETED
@@ -519,8 +518,8 @@ int ConnectionFactory::Connection::RunDtlsTransport() {
         logger::info(
           {{"proto","dtls"},{"ev","transition from DTLS local role 'auto' to 'server' and running DTLS transport"}}
         );
-        dtls_role_ = DtlsTransport::Role::SERVER;
-        dtls_transport_->Run(DtlsTransport::Role::SERVER);
+        dtls_role_ = RTC::DtlsTransport::Role::SERVER;
+        dtls_transport_->Run(RTC::DtlsTransport::Role::SERVER);
       }
       break;
     }
@@ -531,26 +530,26 @@ int ConnectionFactory::Connection::RunDtlsTransport() {
     //
     // NOTE: This is the theory, however let's be more flexible as told here:
     //   https://bugs.chromium.org/p/webrtc/issues/detail?id=3661
-    case DtlsTransport::Role::CLIENT: {
+    case RTC::DtlsTransport::Role::CLIENT: {
       if (
         ice_server_->GetState() == IceServer::IceState::CONNECTED ||
         ice_server_->GetState() == IceServer::IceState::COMPLETED
       ) {
         logger::debug({{"proto","dtls"},{"ev","running DTLS transport in local role 'client'"}});
-        dtls_transport_->Run(DtlsTransport::Role::CLIENT);
+        dtls_transport_->Run(RTC::DtlsTransport::Role::CLIENT);
       }
       break;
     }
 
     // If 'server' then run the DTLS transport if ICE is 'connected' (not yet
     // USE-CANDIDATE) or 'completed'.
-    case DtlsTransport::Role::SERVER: {
+    case RTC::DtlsTransport::Role::SERVER: {
       if (
         ice_server_->GetState() == IceServer::IceState::CONNECTED ||
         ice_server_->GetState() == IceServer::IceState::COMPLETED
       ) {
         logger::debug({{"proto","dtls"},{"ev","running DTLS transport in local role 'server'"}});
-        dtls_transport_->Run(DtlsTransport::Role::SERVER);
+        dtls_transport_->Run(RTC::DtlsTransport::Role::SERVER);
       }
       break;
     }
@@ -582,7 +581,7 @@ int ConnectionFactory::Connection::OnPacketReceived(Session *session, const uint
   Touch(qrpc_time_now());
   if (RTC::StunPacket::IsStun(p, sz)) {
     return OnStunDataReceived(session, p, sz);
-  } else if (DtlsTransport::IsDtls(p, sz)) { // Check if it's DTLS.
+  } else if (RTC::DtlsTransport::IsDtls(p, sz)) { // Check if it's DTLS.
     return OnDtlsDataReceived(session, p, sz);
   } else if (RTC::RTCP::Packet::IsRtcp(p, sz)) { // Check if it's RTCP.
     return OnRtcpDataReceived(session, p, sz);
@@ -617,8 +616,8 @@ int ConnectionFactory::Connection::OnDtlsDataReceived(Session *session, const ui
   ice_server_->MayForceSelectedSession(session);
   // Check that DTLS status is 'connecting' or 'connected'.
   if (
-    dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTING ||
-    dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED) {
+    dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTING ||
+    dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED) {
     // logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"}});
     dtls_transport_->ProcessDtlsData(p, sz);
   } else {
@@ -655,7 +654,7 @@ void ConnectionFactory::Connection::TryParseRtcpPacket(const uint8_t *p, size_t 
 int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure DTLS is connected.
-  if (dtls_transport_->GetState() != DtlsTransport::DtlsState::CONNECTED) {
+  if (dtls_transport_->GetState() != RTC::DtlsTransport::DtlsState::CONNECTED) {
     logger::debug({{"ev","ignoring RTCP packet while DTLS not connected"},{"proto","dtls,rtcp"}});
     return QRPC_OK;
   }
@@ -699,7 +698,7 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
 int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
   // Ensure DTLS is connected.
-  if (dtls_transport_->GetState() != DtlsTransport::DtlsState::CONNECTED) {
+  if (dtls_transport_->GetState() != RTC::DtlsTransport::DtlsState::CONNECTED) {
     logger::debug({{"ev","ignoring RTCP packet while DTLS not connected"},{"proto","dtls,rtcp"}});
     return QRPC_OK;
   }
@@ -742,7 +741,7 @@ void ConnectionFactory::Connection::Close(Stream &s) {
   if (!s.reset()) {
     // client: even is outgoing, odd is incoming
     // server: even is incoming, odd is outgoing
-    // bool isOutgoing = (dtls_role_ == DtlsTransport::Role::CLIENT) == ((s.id() % 2) == 0);
+    // bool isOutgoing = (dtls_role_ == RTC::DtlsTransport::Role::CLIENT) == ((s.id() % 2) == 0);
     sctp_association_->DataConsumerClosed(&s);
     s.SetReset();
   } else {
@@ -812,7 +811,7 @@ void ConnectionFactory::Connection::OnIceServerConnected(const IceServer *iceSer
   }
 
   // If DTLS was already connected, notify the parent class.
-  if (dtls_transport_->GetState() == DtlsTransport::DtlsState::CONNECTED) {
+  if (dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED) {
     OnDtlsEstablished();
   }
 }
@@ -825,7 +824,7 @@ void ConnectionFactory::Connection::OnIceServerDisconnected(const IceServer *ice
 }
 void ConnectionFactory::Connection::OnIceServerSuccessResponded(
   const IceServer *iceServer, const RTC::StunPacket* packet, Session *session) {
-  if (!ice_prober_ || dtls_role_ == DtlsTransport::Role::CLIENT) {
+  if (!ice_prober_ || dtls_role_ == RTC::DtlsTransport::Role::CLIENT) {
     logger::warn({{"ev","stun packet response receive with invalid state"},{"dtls_role",dtls_role_}});
     ASSERT(false);
     return;
@@ -846,11 +845,11 @@ void ConnectionFactory::Connection::OnIceServerErrorResponded(
 }
 
 // implements IceServer::Listener
-void ConnectionFactory::Connection::OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) {
+void ConnectionFactory::Connection::OnDtlsTransportConnecting(const RTC::DtlsTransport* dtlsTransport) {
   TRACK();
 }
 void ConnectionFactory::Connection::OnDtlsTransportConnected(
-  const DtlsTransport* dtlsTransport,
+  const RTC::DtlsTransport* dtlsTransport,
   RTC::SrtpSession::CryptoSuite srtpCryptoSuite,
   uint8_t* srtpLocalKey,
   size_t srtpLocalKeyLen,
@@ -877,12 +876,12 @@ void ConnectionFactory::Connection::OnDtlsTransportConnected(
 }
 // The DTLS connection has been closed as the result of an error (such as a
 // DTLS alert or a failure to validate the remote fingerprint).
-void ConnectionFactory::Connection::OnDtlsTransportFailed(const DtlsTransport* dtlsTransport) {
+void ConnectionFactory::Connection::OnDtlsTransportFailed(const RTC::DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls failed"}});
   OnDtlsTransportClosed(dtlsTransport);
 }
 // The DTLS connection has been closed due to receipt of a close_notify alert.
-void ConnectionFactory::Connection::OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) {
+void ConnectionFactory::Connection::OnDtlsTransportClosed(const RTC::DtlsTransport* dtlsTransport) {
   logger::info({{"ev","tls closed"}});
   // Tell the parent class. (if we handle srtp, need to implement equivalent)
   // RTC::Transport::Disconnected();
@@ -892,7 +891,7 @@ void ConnectionFactory::Connection::OnDtlsTransportClosed(const DtlsTransport* d
 }
 // Need to send DTLS data to the peer.
 void ConnectionFactory::Connection::OnDtlsTransportSendData(
-  const DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) {
+  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) {
   TRACK();
   auto *session = ice_server_->GetSelectedSession();
   if (session == nullptr) {
@@ -906,7 +905,7 @@ void ConnectionFactory::Connection::OnDtlsTransportSendData(
 }
 // DTLS application data received.
 void ConnectionFactory::Connection::OnDtlsTransportApplicationDataReceived(
-  const DtlsTransport*, const uint8_t* data, size_t len) {
+  const RTC::DtlsTransport*, const uint8_t* data, size_t len) {
   TRACK();
   sctp_association_->ProcessSctpData(data, len);
 }
@@ -1329,7 +1328,7 @@ int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
   logger::info({{"ev","new client connection"}});
   // client connection's dtls role is server, workaround fo osx safari (16.4) does not initiate DTLS handshake
   // even if sdp anwser ask to do it.
-  auto c = std::shared_ptr<Connection>(factory_method_(*this, DtlsTransport::Role::SERVER));
+  auto c = std::shared_ptr<Connection>(factory_method_(*this, RTC::DtlsTransport::Role::SERVER));
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return QRPC_EALLOC;
@@ -1458,7 +1457,7 @@ int Listener::Accept(const std::string &client_req_body, std::string &server_sdp
     auto client_sdp = client_sdp_it->get<std::string>();
     // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
     // even if sdp anwser ask to do it.
-    auto c = std::shared_ptr<Connection>(factory_method_(*this, DtlsTransport::Role::CLIENT));
+    auto c = std::shared_ptr<Connection>(factory_method_(*this, RTC::DtlsTransport::Role::CLIENT));
     if (c == nullptr) {
       logger::error({{"ev","fail to allocate connection"}});
       return QRPC_EALLOC;

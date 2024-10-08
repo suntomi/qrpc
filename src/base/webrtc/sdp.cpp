@@ -37,7 +37,7 @@ a=max-message-size:%u
     );
     return QRPC_OK;
   }
-  bool SDP::GetRemoteFingerPrint(const json &section, std::string &answer, DtlsTransport::Fingerprint &ret) const {
+  bool SDP::GetRemoteFingerPrint(const json &section, std::string &answer, RTC::DtlsTransport::Fingerprint &ret) const {
       auto root_fp = find("fingerprint");
       auto fp = root_fp;
       if (fp == end()) {
@@ -59,8 +59,8 @@ a=max-message-size:%u
         ASSERT(false);
         return false;
       }
-      auto algoit = DtlsTransport::GetString2FingerprintAlgorithm().find(*type);
-      if (algoit == DtlsTransport::GetString2FingerprintAlgorithm().end()) {
+      auto algoit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(*type);
+      if (algoit == RTC::DtlsTransport::GetString2FingerprintAlgorithm().end()) {
         answer = "unknown fingerprint algorithm:" + type->get<std::string>();
         ASSERT(false);
         return false;
@@ -123,7 +123,7 @@ a=max-message-size:%u
           continue;
         }
         std::string answer;
-        DtlsTransport::Fingerprint fp;
+        RTC::DtlsTransport::Fingerprint fp;
         if (!GetRemoteFingerPrint(*it, answer, fp)) {
           logger::warn({{"ev","failed to get remote fingerprint"},{"reason",answer}});
           continue;
@@ -275,7 +275,7 @@ a=setup:active
         return false;
       }
       // protocol found. set remote fingerprint
-      DtlsTransport::Fingerprint fp;
+      RTC::DtlsTransport::Fingerprint fp;
       if (!GetRemoteFingerPrint(dsec, answer, fp)) {
         QRPC_LOGJ(warn, {{"ev","failed to get remote fingerprint"},{"reason",answer}});
         return false;
