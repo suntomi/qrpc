@@ -295,7 +295,7 @@ a=setup:active
     if (FindMediaSection("audio", asec)) {
       rtp::Parameters params;
       if (AnswerMediaSection(asec, proto, c, section_answer, params)) {
-        c.rtp_handler().CreateProducer(params.mid + "@" + c.rtp_id(), params);
+        c.rtp_handler().CreateProducer(c.rtp_id(), params);
         section_answer_map[params.mid] = section_answer;
       } else {
         answer = section_answer;
@@ -307,7 +307,7 @@ a=setup:active
     if (FindMediaSection("video", vsec)) {
       rtp::Parameters params;
       if (AnswerMediaSection(vsec, proto, c, section_answer, params)) {
-        c.rtp_handler().CreateProducer(params.mid + "@" + c.rtp_id(), params);
+        c.rtp_handler().CreateProducer(c.rtp_id(), params);
         section_answer_map[params.mid] = section_answer;
       } else {
         answer = section_answer;

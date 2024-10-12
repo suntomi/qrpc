@@ -27,6 +27,7 @@ namespace webrtc {
   class ConnectionFactory {
   public:
     typedef std::string IceUFrag;
+    typedef rtp::Handler::ConsumeOptions ConsumeOptions;
   public: // connection
     class Connection;
     template <class PS>
@@ -138,7 +139,8 @@ namespace webrtc {
       void InitRTP();
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
-      void OnTimer(qrpc_time_t now) {}
+      bool Consume(const std::string &peer_id, const std::string &label, const ConsumeOptions &options);
+      inline void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();
       IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority);
       void OnDtlsEstablished();
@@ -313,6 +315,7 @@ namespace webrtc {
   public:
     int Init();
     void Fin();
+    std::shared_ptr<rtp::Handler> FindHandler(const std::string &id);
     std::shared_ptr<Connection> FindFromUfrag(const IceUFrag &ufrag);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
     void ScheduleClose(Connection &c) {

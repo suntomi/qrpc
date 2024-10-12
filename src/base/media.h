@@ -5,6 +5,7 @@ namespace base {
   public:
     typedef std::string Id; // label of the media
     typedef std::string Rid; // Rid of RTP stream
+    typedef std::string Mid; // Rid of RTP stream
     typedef std::string TrackId; // track id of WebRTC js API
     typedef std::string ScalabilityMode; // scalability mode of RTP stream (SVC)
     typedef uint64_t Ssrc; // Ssrc of RTP stream

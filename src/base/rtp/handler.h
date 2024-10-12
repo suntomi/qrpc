@@ -35,6 +35,9 @@ namespace rtp {
       size_t max_outgoing_bitrate, max_incoming_bitrate;
       size_t min_outgoing_bitrate;
     };
+    struct ConsumeOptions {
+      bool audio{true}, video{true};
+    };
     class Listener {
     public:
       typedef const std::function<void(bool sent)> onSendCallback;  
@@ -52,7 +55,7 @@ namespace rtp {
     typedef Listener::onSendCallback onSendCallback;
   public:
     Handler(Listener &l) :
-      listener_(l), producer_factory_(*this), medias_(),
+      listener_(l), producer_factory_(*this), consumer_factory_(*this), medias_(),
       rid_label_map_(), trackid_label_map_(), ssrc_trackid_map_(), rid_scalability_mode_map_() {}
     inline const ExtensionIds &ext_ids() const { return recvRtpHeaderExtensionIds; }
     inline ExtensionIds &ext_ids() { return recvRtpHeaderExtensionIds; }
@@ -64,11 +67,13 @@ namespace rtp {
       return it == rid_scalability_mode_map_.end() ? it->second : "";
     }
     qrpc_time_t OnTimer(qrpc_time_t now);
+    bool Consume(Handler &peer, const std::string &label, const ConsumeOptions &options);
+    bool ConsumeTrack(Parameters::MediaKind kind, Handler &peer, const std::string &label);
     bool SetExtensionId(uint8_t id, const std::string &uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     std::shared_ptr<Media> FindFrom(const Parameters &p);
     int CreateProducer(const std::string &id, const Parameters &p);
-    int CreateConsumer(const Parameters &p);
+    std::shared_ptr<Producer> FindProducer(const std::string &label, Parameters::MediaKind kind);
     void TransportConnected();
     void TransportDisconnected();
     static inline qrpc_time_t RtcpRandomInterval() { return qrpc_time_msec(random::gen(1000, 1500)); }
@@ -133,12 +138,14 @@ namespace rtp {
 		void EmitTraceEventProbationType(RTC::RtpPacket* packet) const;
 		void EmitTraceEventBweType(RTC::TransportCongestionControlClient::Bitrates& bitrates) const;
   protected:
+    int CreateConsumer(const Parameters &p);
     void InitTccClient(Consumer *consumer, const Parameters &p);
     void InitTccServer(const Parameters &p);
   protected:
     Listener &listener_;
     static thread_local Shared shared_;
     ProducerFactory producer_factory_; // should be declared prior to Producer* and Consumer* containers
+    ConsumerFactory consumer_factory_;
     ExtensionIds recvRtpHeaderExtensionIds;
 		// Allocated by this.
 		// absl::flat_hash_map<std::string, RTC::Producer*> mapProducers;
@@ -169,6 +176,7 @@ namespace rtp {
     std::map<Media::Id, std::shared_ptr<Media>> medias_;
     std::map<Media::Rid, Media::Id> rid_label_map_;
     std::map<Media::TrackId, Media::Id> trackid_label_map_;
+    std::map<Media::Mid, Media::Id> mid_label_map_;
     std::map<Media::Ssrc, Media::TrackId> ssrc_trackid_map_;
     std::map<Media::Rid, Media::ScalabilityMode> rid_scalability_mode_map_;
   };

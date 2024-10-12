@@ -4,6 +4,7 @@
 #include "base/string.h"
 
 #include "base/webrtc/mpatch.h"
+#include "base/rtp/parameters.h"
 
 #include "RTC/BweType.hpp"
 // #include "RTC/PipeConsumer.hpp"
@@ -30,6 +31,37 @@ namespace rtp {
 	qrpc_time_t Handler::OnTimer(qrpc_time_t now) {
 		SendRtcp(qrpc_time_to_msec(now));
 		return now + RtcpRandomInterval();
+	}
+	bool Handler::Consume(Handler &peer, const std::string &label, const ConsumeOptions &options) {
+		if (options.audio && !ConsumeTrack(Parameters::MediaKind::AUDIO, peer, label)) {
+			return false;
+		}
+		if (options.video && !ConsumeTrack(Parameters::MediaKind::VIDEO, peer, label)) {
+			return false;
+		}
+		return true;
+	}
+	bool Handler::ConsumeTrack(Parameters::MediaKind kind, Handler &peer, const std::string &label) {
+		// 1. get corresponding producer from peer handler
+		//	first, find correspoinding producer id with label, audio/video, from peer handler 
+		// 2. create consumer with the found producer, parameters, and label
+		// 3. add the created consumer to mapConsumers
+		auto consumed_producer = peer.FindProducer(label, kind);
+		if (consumed_producer == nullptr) {
+			return false;
+		}
+		auto producer = FindProducer(label, kind);
+		consumer_factory_.Create(*consumed_producer, label, kind, RTC::RtpParameters::Type::SIMULCAST, producer->params());
+		return true;
+	}
+	std::shared_ptr<Producer> Handler::FindProducer(const std::string &label, Parameters::MediaKind kind) {
+		auto gid = ProducerFactory::GenerateId(rtp_id(), label, kind);
+		auto it = producer_factory_.producers().find(gid);
+		if (it == producer_factory_.producers().end()) {
+			return nullptr;
+		} else {
+			return it->second;
+		}
 	}
 	void Handler::ReceiveRtcpPacket(RTC::RTCP::Packet *packet) {
 		MS_TRACE();
@@ -71,7 +103,8 @@ namespace rtp {
 			}
 		}
 
-		for (auto& producer : this->producer_factory_.producers()) {
+		for (auto kv : this->producer_factory_.producers()) {
+			auto *producer = kv.second.get();
 			auto rtcpAdded = producer->GetRtcp(packet.get(), nowMs);
 
 			// RTCP data couldn't be added because the Compound packet is full.
@@ -514,18 +547,23 @@ namespace rtp {
 	void Handler::SetNegotiationArgs(const std::map<std::string, json> &args) {
 		const auto rlmit = args.find("ridLabelMap");
 		if (rlmit != args.end()) {
-			rid_label_map_ = rlmit->second.get<std::map<std::string,std::string>>();
+			rid_label_map_ = rlmit->second.get<std::map<Media::Rid,Media::Id>>();
 			QRPC_LOGJ(info, {{"ev","new rid label map"},{"map",*rlmit}});
 		}
 		const auto tlmit = args.find("trackIdLabelMap");
 		if (tlmit != args.end()) {
-			trackid_label_map_ = tlmit->second.get<std::map<std::string,std::string>>();
+			trackid_label_map_ = tlmit->second.get<std::map<Media::TrackId,Media::Id>>();
 			QRPC_LOGJ(info, {{"ev","new track id label map"},{"map",*tlmit}});
 		}
 		const auto rsmit = args.find("ridScalabilityModeMap");
 		if (rsmit != args.end()) {
-			rid_scalability_mode_map_ = rsmit->second.get<std::map<std::string,Media::ScalabilityMode>>();
+			rid_scalability_mode_map_ = rsmit->second.get<std::map<Media::Rid,Media::ScalabilityMode>>();
 			QRPC_LOGJ(info, {{"ev","new rid scalability mode map"},{"map",*rsmit}});
+		}
+		const auto midit = args.find("midLabelMap");
+		if (midit != args.end()) {
+			mid_label_map_ = midit->second.get<std::map<Media::Mid,Media::Id>>();
+			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",*midit}});
 		}
 	}
 	std::shared_ptr<Media> Handler::FindFrom(const Parameters &p) {
@@ -570,10 +608,16 @@ namespace rtp {
 		return nullptr;
 	}
 	int Handler::CreateProducer(const std::string &id, const Parameters &p) {
+		auto lit = mid_label_map_.find(p.mid);
+		if (lit == mid_label_map_.end()) {
+			QRPC_LOGJ(error, {{"ev","failed to find mid label"},{"mid",p.mid}});
+			return QRPC_EINVAL;
+		}
+		auto gid = ProducerFactory::GenerateId(id, lit->second, p.kind);
 		for (auto kv : p.ssrcs) {
 			ssrc_trackid_map_[kv.first] = kv.second.track_id;
 		}
-		auto producer = producer_factory_.Create(id, p);
+		auto producer = producer_factory_.Create(gid, p);
 		InitTccServer(p);
 		// Insert the Producer in the maps.
 		this->mapProducerConsumers[producer.get()]; // creates empty set in the key

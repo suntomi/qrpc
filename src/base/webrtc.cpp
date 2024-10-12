@@ -104,6 +104,22 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
   }
   return it->second;
 }
+std::shared_ptr<rtp::Handler>
+ConnectionFactory::FindHandler(const std::string &peer_id) {
+  auto c = FindFromUfrag(peer_id);
+  if (c == nullptr) {
+    // TODO: now it targets peer that connected to the node. to scale, we have to be able to watch remote peer
+    // this should be achieved like following:
+    // 1. create kind of 'proxy connection' that acts like rtp::Handler::Listener
+    //   - this proxy connection connects the node that has peer which id is `peer_id`
+    //   - so maybe this function acts like async function because it needs to query remote controller which knows where `peer_id` is
+    // 2. create handler with that proxy connection
+    QRPC_LOGJ(info, {{"ev","peer not found"},{"peer_id",peer_id}});
+    return nullptr;
+  }
+  return c->rtp_handler_;
+}
+
 std::shared_ptr<ConnectionFactory::Connection>
 ConnectionFactory::FindFromUfrag(const IceUFrag &ufrag) {
     auto it = connections_.find(ufrag);
@@ -301,6 +317,42 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         return QRPC_OK;
       }
       Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"sdp",answer}});
+    } else if (fn == "consume") {
+      const auto ait = data.find("args");
+      if (ait == data.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'args'"}});
+        return QRPC_OK;
+      }
+      const auto &args = ait->get<std::map<std::string,json>>();
+      const auto idit = args.find("id");
+      if (idit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'id'"}});
+        return QRPC_OK;
+      }
+      const auto lit = args.find("label");
+      if (lit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
+        return QRPC_OK;
+      }
+      ConsumeOptions options;
+      const auto oit = args.find("options");
+      if (oit != args.end()) {
+        const auto &opts = oit->second.get<std::map<std::string,bool>>();
+        const auto v = opts.find("video");
+        if (v != opts.end()) {
+          options.video = v->second;
+        }
+        const auto a = opts.find("audio");
+        if (a != opts.end()) {
+          options.video = a->second;
+        }
+      }
+      auto id = idit->second.get<std::string>();
+      auto label = lit->second.get<std::string>();
+      if (!c.Consume(id, label, options)) {
+        QRPC_LOGJ(error, {{"ev","fail to consume"},{"id",id}});
+        return QRPC_OK;
+      }
     } else {
       QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
       ASSERT(false);
@@ -339,7 +391,10 @@ void ConnectionFactory::Connection::InitRTP() {
     );
   }
 }
-
+bool ConnectionFactory::Connection::Consume(const std::string &id, const std::string &label, const ConsumeOptions &options) {
+  auto h = factory().FindHandler(id);
+  return rtp_handler().Consume(*h, label, options);
+}
 int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   if (ice_server_ != nullptr) {
     logger::warn({{"ev","already init"}});

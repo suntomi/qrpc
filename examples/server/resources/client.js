@@ -24,16 +24,18 @@ class QRPCMedia {
   // c: QRPClient
   open(c) {
     if (this.tracks.video) {
-      c.pc.addTransceiver(
+      const t = c.pc.addTransceiver(
         this.tracks.video,
         {direction: 'sendonly', sendEncodings: this.encodings, streams: [this.stream]}
       );
+      this.midLabelMap[t.mid] = this.label;
     }
     if (this.tracks.audio) {
-      c.pc.addTransceiver(
+      const t = c.pc.addTransceiver(
         this.tracks.audio,
         {direction: 'sendonly', streams: [this.stream]}
       );
+      this.midLabelMap[t.mid] = this.label;
     }
   }
   close() {
@@ -104,6 +106,7 @@ class QRPClient {
     this.medias = {};
     this.trackIdLabelMap = {};
     this.ridLabelMap = {};
+    this.midLabelMap = {};
     this.ridScalabilityModeMap = {};
     this.sdpOfferMap = {};
     this.sdpGen = -1;    
@@ -304,12 +307,14 @@ class QRPClient {
     if (
       Object.keys(this.ridLabelMap).length !== 0 ||
       Object.keys(this.ridScalabilityModeMap).length !== 0 ||
-      Object.keys(this.trackIdLabelMap).length !== 0
+      Object.keys(this.trackIdLabelMap).length !== 0 ||
+      Object.keys(this.midLabelMap).length !== 0
     ) {
       return {
         ridLabelMap:this.ridLabelMap,
         ridScalabilityModeMap:this.ridScalabilityModeMap,
         trackIdLabelMap:this.trackIdLabelMap,
+        midLabelMap:this.midLabelMap,
       };
     }
     return undefined;

@@ -2,6 +2,7 @@
 
 #include "base/defs.h"
 #include "base/media.h"
+#include "base/rtp/parameters.h"
 
 #include "RTC/Consumer.hpp"
 #include "RTC/RtpPacket.hpp"
@@ -10,33 +11,20 @@
 namespace base {
 namespace rtp {
   class Handler;
-  class Parameters;
-  class Consumer : public RTC::Consumer {
-    friend class ProducerFactory;
-  public:
-    Consumer(RTC::Shared* s, 
-      const std::string& id, const std::string& producer_id,
-      Listener* l, RTC::RtpParameters::Type type
-    ) : RTC::Consumer(s, id, producer_id, l, nullptr, type) {}
-    ~Consumer() override {}
-  protected:
-    void SetMedia(std::shared_ptr<Media> m) { media_ = m; }
-    std::shared_ptr<Media> media_;
-  };
+  class Producer;
+  typedef RTC::Consumer Consumer;
   class ConsumerFactory {
   public:
     ConsumerFactory(Handler &h) : handler_(h) {}
     virtual ~ConsumerFactory() {}
-    std::vector<std::shared_ptr<Consumer>> &consumers() { return consumers_; }
+    std::map<std::string, std::shared_ptr<Consumer>> &consumers() { return consumers_; }
   public:
-    std::shared_ptr<Consumer> Create(const std::string &id, const Parameters &p);
-    Consumer *Get(const RTC::RtpPacket &p);
-  protected:
-    bool Add(std::shared_ptr<Consumer> &p);
-    void Remove(std::shared_ptr<Consumer> &p);
+    std::shared_ptr<Consumer> Create(
+      const Producer &producer, const std::string &label, Parameters::MediaKind kind,
+      RTC::RtpParameters::Type type, const Parameters &p);
   protected:
     Handler &handler_;
-    std::vector<std::shared_ptr<Consumer>> consumers_;
+    std::map<std::string, std::shared_ptr<Consumer>> consumers_;
   }; 
 }
 }

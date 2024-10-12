@@ -69,9 +69,17 @@ namespace rtp {
     ASSERT(false);
     return nullptr;
   }
-
-    std::vector<::flatbuffers::Offset<FBS::RtpParameters::CodecMapping>>
-    Parameters::PackCodecMapping(::flatbuffers::FlatBufferBuilder &fbb) const {
+  std::string Parameters::FromMediaKind(MediaKind k) {
+    switch (k) {
+      case MediaKind::AUDIO: return "audio";
+      case MediaKind::VIDEO: return "video";
+      case MediaKind::APP: return "application";
+    }
+    ASSERT(false);
+    return "";
+  }
+  std::vector<::flatbuffers::Offset<FBS::RtpParameters::CodecMapping>>
+  Parameters::PackCodecMapping(::flatbuffers::FlatBufferBuilder &fbb) const {
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::CodecMapping>> r;
     r.reserve(codecs.size());
     for (auto &c : codecs) {
@@ -82,7 +90,7 @@ namespace rtp {
     return r;
   }
   std::vector<::flatbuffers::Offset<FBS::RtpParameters::EncodingMapping>>
-    Parameters::PackEncodingMapping(::flatbuffers::FlatBufferBuilder &fbb) const {
+  Parameters::PackEncodingMapping(::flatbuffers::FlatBufferBuilder &fbb) const {
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::EncodingMapping>> r;
     r.reserve(encodings.size());
     auto seed = GenerateSsrc();
@@ -102,16 +110,15 @@ namespace rtp {
     auto e = PackEncodingMapping(fbb);
     return FBS::RtpParameters::CreateRtpMappingDirect(fbb, &c, &e);
   }
-  ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
-  Parameters::MakeProduceRequest(
-    ::flatbuffers::FlatBufferBuilder &fbb, const std::string &id
-  ) const {
-    ASSERT(kind != MediaKind::APP);
-    return FBS::Transport::CreateProduceRequestDirect(
+  const FBS::Transport::ProduceRequest* Parameters::MakeProduceRequest(const std::string &id) const {
+    static thread_local ::flatbuffers::FlatBufferBuilder fbb;
+    fbb.Clear();
+    fbb.Finish(FBS::Transport::CreateProduceRequestDirect(
       fbb, id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
       FillBuffer(fbb),
       PackRtpMapping(fbb)
-    );
+    ));
+    return flatbuffers::GetRoot<FBS::Transport::ProduceRequest>(fbb.GetBufferPointer());
   }
 
   static std::map<std::string, RTC::RtpHeaderExtensionUri::Type> g_map = {

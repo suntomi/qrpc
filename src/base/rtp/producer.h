@@ -2,6 +2,7 @@
 
 #include "base/defs.h"
 #include "base/media.h"
+#include "base/rtp/parameters.h"
 
 #include "RTC/Producer.hpp"
 #include "RTC/RtpPacket.hpp"
@@ -10,24 +11,27 @@
 namespace base {
 namespace rtp {
   class Handler;
-  class Parameters;
   class Producer : public RTC::Producer {
     friend class ProducerFactory;
   public:
     Producer(
       RTC::Shared* s, const std::string& id, Listener* l, 
-      const FBS::Transport::ProduceRequest* d
-    ) : RTC::Producer(s, id, l, d) {}
+      const Parameters &p, std::shared_ptr<Media> m
+    ) : RTC::Producer(s, id, l, p.MakeProduceRequest(id)), params_(p), media_(m) {}
     ~Producer() override {}
+    std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
+    PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const;
+    inline Parameters &params() { return params_; }
   protected:
-    void SetMedia(std::shared_ptr<Media> m) { media_ = m; }
+    Parameters params_;
     std::shared_ptr<Media> media_;
   };
   class ProducerFactory {
   public:
     ProducerFactory(Handler &h) : handler_(h) {}
     virtual ~ProducerFactory() {}
-    std::vector<std::shared_ptr<Producer>> &producers() { return producers_; }
+    std::map<std::string, std::shared_ptr<Producer>> &producers() { return producers_; }
+    static std::string GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind);
   public:
     std::shared_ptr<Producer> Create(const std::string &id, const Parameters &p);
     Producer *Get(const RTC::RtpPacket &p);
@@ -43,7 +47,7 @@ namespace rtp {
     void Remove(std::shared_ptr<Producer> &p);
   protected:
     Handler &handler_;
-    std::vector<std::shared_ptr<Producer>> producers_;
+    std::map<std::string, std::shared_ptr<Producer>> producers_;
 		// Table of SSRC / Producer pairs.
 		std::unordered_map<uint32_t, Producer*> ssrcTable;
 		//  Table of MID / Producer pairs.

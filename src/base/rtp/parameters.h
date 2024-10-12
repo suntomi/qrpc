@@ -54,6 +54,8 @@ namespace rtp {
     Parameters() : RTC::RtpParameters() {}
     int Parse(Handler &h, const json &section, std::string &answer);
     std::string Answer() const;
+    static std::string FromMediaKind(MediaKind k);
+    inline std::string MediaKindName() const { return FromMediaKind(kind); }
     RTC::RtpCodecParameters *CodecByPayloadType(uint64_t pt);
     void AddEncoding(
       const std::string &rid, uint64_t pt, uint64_t rtxpt, bool dtx,
@@ -64,8 +66,7 @@ namespace rtp {
       return random::gen(100000000, 900000000);
     }
   public:
-    ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
-    MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id) const;
+    const FBS::Transport::ProduceRequest* MakeProduceRequest(const std::string &id) const;
     static std::optional<RTC::RtpHeaderExtensionUri::Type> FromUri(const std::string &uri);
     static void SetupHeaderExtensionMap();
   protected:

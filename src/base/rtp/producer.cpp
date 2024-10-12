@@ -1,20 +1,36 @@
 #include "base/rtp/producer.h"
+#include "base/rtp/parameters.h"
 #include "base/rtp/handler.h"
 #include "base/string.h"
 
 namespace base {
 namespace rtp {
+	std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
+	Producer::PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const {
+		std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>> encodings;
+		encodings.reserve(this->GetRtpParameters().encodings.size());
+			// now, producer's encodings are already limited to the ones that are consumable
+		for (const auto &encoding : this->GetRtpParameters().encodings) {
+			encodings.emplace_back(encoding.FillBuffer(fbb));
+		}
+		return encodings;
+	}
+
+	std::string ProducerFactory::GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind) { 
+		return "/" + id + "/" + label + "/" + Parameters::FromMediaKind(kind);
+	}
   std::shared_ptr<Producer> ProducerFactory::Create(const std::string &id, const Parameters &p) {
     auto m = handler_.FindFrom(p);
-		::flatbuffers::FlatBufferBuilder fbb;
-		fbb.Finish(p.MakeProduceRequest(fbb, id));
-		auto data = flatbuffers::GetRoot<FBS::Transport::ProduceRequest>(fbb.GetBufferPointer());
-		auto producer = std::make_shared<Producer>(&handler_.shared(), id, &handler_, data);
-    producer->SetMedia(m);
-    if (!Add(producer)) {
-      return nullptr;
-    }
-    return producer;
+		try {
+			auto producer = std::make_shared<Producer>(&handler_.shared(), id, &handler_, p, m);
+			if (!Add(producer)) {
+				return nullptr;
+			}
+			return producer;
+		} catch (std::exception &e) {
+			QRPC_LOG(error, "failed to create producer: %s", e.what());
+			return nullptr;
+		}
   }
   Producer *ProducerFactory::Get(const RTC::RtpPacket &packet) {
 		// First lookup into the SSRC table.
@@ -58,6 +74,7 @@ namespace rtp {
 		return nullptr;
   }
   void ProducerFactory::Remove(std::shared_ptr<Producer> &p) {
+		producers_.erase(p->id);
     auto *producer = p.get();
 		// Remove from the listener tables all entries pointing to the Producer.
 		for (auto it = this->ssrcTable.begin(); it != this->ssrcTable.end();) {
@@ -82,7 +99,7 @@ namespace rtp {
 		}    
   }
   bool ProducerFactory::Add(std::shared_ptr<Producer> &p) {
-    producers_.push_back(p);
+    producers_[p->id] = p;
     auto producer = p.get();
 
 		const auto& rtpParameters = producer->GetRtpParameters();
