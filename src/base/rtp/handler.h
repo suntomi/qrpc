@@ -36,7 +36,8 @@ namespace rtp {
       size_t min_outgoing_bitrate;
     };
     struct ConsumeOptions {
-      bool audio{true}, video{true};
+      bool pause_video{false};
+      bool pause_audio{false};
     };
     class Listener {
     public:
@@ -67,11 +68,18 @@ namespace rtp {
       return it == rid_scalability_mode_map_.end() ? it->second : "";
     }
     qrpc_time_t OnTimer(qrpc_time_t now);
-    bool Consume(Handler &peer, const std::string &label, const ConsumeOptions &options);
-    bool ConsumeTrack(Parameters::MediaKind kind, Handler &peer, const std::string &label);
+    bool Consume(
+      Handler &peer, const std::string &media_id, const ConsumeOptions &options,
+      std::vector<uint32_t> &generated_ssrcs
+    );
+    bool ConsumeMedia(
+      Parameters::MediaKind kind, Handler &peer, const std::string &label, bool paused,
+      std::vector<uint32_t> &generated_ssrcs
+    );
     bool SetExtensionId(uint8_t id, const std::string &uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     std::shared_ptr<Media> FindFrom(const Parameters &p);
+    std::shared_ptr<Media> FindFrom(const std::string &label);
     int CreateProducer(const std::string &id, const Parameters &p);
     std::shared_ptr<Producer> FindProducer(const std::string &label, Parameters::MediaKind kind);
     void TransportConnected();

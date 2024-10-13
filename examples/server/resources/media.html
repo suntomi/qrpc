@@ -4,21 +4,11 @@
     <title>WebRTC with QRPC media</title>
   </head>
   <body>
+    <div id="conn_id"></div>
+    <input type="text" id="idedit" placeholder="input connection id of other peer and press Enter"/>
+
     <script src="http://localhost:8888/client.js"></script>
     <script>
-      showError = (err) => {
-        showResult("error:" + err);
-        throw new Error(err);
-      }
-      showResult = (result) => {
-        let div = document.getElementById("result");
-        if (!div) {
-          div = document.createElement("div");
-          div.id = "result";
-          document.body.appendChild(div);
-        }
-        div.innerText = result;
-      };
       showMedia = (m, t) => {
         if (t.kind == "video") {
           console.log("play video", m.label);
@@ -42,6 +32,22 @@
           audioElement.srcObject = m.stream;          
         }
       }
+      setupUI = (c) => {
+        // このconnectionのidを表示
+        let idElement = document.getElementById("conn_id");
+        if (idElement) {
+          idElement.innerText = c.id;
+        }
+        // 編集ボックスのEnterキーイベントリスナーを追加
+        document.getElementById('idedit').addEventListener('keydown', async (event) => {
+        if (event.key === 'Enter') {
+          const id = event.target.value;
+          console.log(`input id = ${id}`);
+          await c.consumeMedia(`webcam?id=${id}`);
+        }
+      });
+         
+      }
       //Create whip client
       const url = "http://localhost:8888/qrpc";
       const c = new QRPClient(url);
@@ -50,6 +56,7 @@
       let closed = 0;
       c.onopen = async () => {
         console.log("client onopen called");
+        setupUI(c);
         await c.openMedia("webcam", await navigator.mediaDevices.getUserMedia({
           video: {width: {ideal: 1280}, height: {ideal: 720}},
           audio: true
@@ -70,8 +77,6 @@
           closed++;
           return 2000 * 1000 * 1000;
         } else {
-          // stop reconnection
-          showResult("success");
           return;
         }
       };
@@ -83,6 +88,7 @@
         onclose: (m)=>{
           console.log("media close", m.stream.id);
           document.getElementById(`video-${m.stream.id}`).remove();
+          document.getElementById(`audio-${m.stream.id}`).remove();
         },
       });
       c.connect();

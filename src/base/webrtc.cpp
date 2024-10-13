@@ -303,6 +303,12 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'gen'"}});
         return QRPC_OK;
       }
+      const auto mit = args.find("msgid");
+      if (mit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
+        return QRPC_OK;
+      }
+      const auto msgid = mit->second.get<uint64_t>();
       const auto rtpit = args.find("rtp");
       if (rtpit != args.end()) {
         c.InitRTP();
@@ -313,10 +319,10 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       SDP sdp(sdp_text);
       if (!sdp.Answer(c, answer)) {
         QRPC_LOGJ(error, {{"ev","invalid client sdp"},{"sdp",sdp_text},{"reason",answer}});
-        Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"error",answer}});
+        Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"msgid",msgid},{"error",answer}});
         return QRPC_OK;
       }
-      Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"sdp",answer}});
+      Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"msgid",msgid},{"sdp",answer}});
     } else if (fn == "consume") {
       const auto ait = data.find("args");
       if (ait == data.end()) {
@@ -324,35 +330,38 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         return QRPC_OK;
       }
       const auto &args = ait->get<std::map<std::string,json>>();
-      const auto idit = args.find("id");
-      if (idit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'id'"}});
+      const auto pathit = args.find("path");
+      if (pathit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'path'"}});
         return QRPC_OK;
       }
-      const auto lit = args.find("label");
-      if (lit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
+      const auto mit = args.find("msgid");
+      if (mit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
         return QRPC_OK;
       }
+      const auto msgid = mit->second.get<uint64_t>();
       ConsumeOptions options;
       const auto oit = args.find("options");
       if (oit != args.end()) {
-        const auto &opts = oit->second.get<std::map<std::string,bool>>();
-        const auto v = opts.find("video");
+        const auto &opts = oit->second.get<std::map<std::string,json>>();
+        const auto v = opts.find("pause_video");
         if (v != opts.end()) {
-          options.video = v->second;
+          options.pause_video = v->second;
         }
-        const auto a = opts.find("audio");
+        const auto a = opts.find("pause_audio");
         if (a != opts.end()) {
-          options.video = a->second;
+          options.pause_video = a->second;
         }
       }
-      auto id = idit->second.get<std::string>();
-      auto label = lit->second.get<std::string>();
-      if (!c.Consume(id, label, options)) {
-        QRPC_LOGJ(error, {{"ev","fail to consume"},{"id",id}});
+      auto path = pathit->second.get<std::string>();
+      std::map<uint32_t,std::string> ssrc_label_map;
+      if (!c.Consume(path, options, ssrc_label_map)) {
+        QRPC_LOGJ(error, {{"ev","fail to consume"},{"path",path}});
+        Call("nego_ack",{{"msgid",msgid},{"error","fail to consume"}});
         return QRPC_OK;
       }
+      Call("nego_ack",{{"msgid",msgid},{"ssrc_label_map",ssrc_label_map}});
     } else {
       QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
       ASSERT(false);
@@ -391,9 +400,26 @@ void ConnectionFactory::Connection::InitRTP() {
     );
   }
 }
-bool ConnectionFactory::Connection::Consume(const std::string &id, const std::string &label, const ConsumeOptions &options) {
-  auto h = factory().FindHandler(id);
-  return rtp_handler().Consume(*h, label, options);
+bool ConnectionFactory::Connection::Consume(
+  const std::string &media_path, const ConsumeOptions &options,
+  std::map<uint32_t,std::string> &ssrc_label_map
+) {
+  auto parsed = str::Split(media_path, "/");
+  if (parsed.size() < 2) {
+    QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",media_path}});
+    ASSERT(false);
+    return false;
+  }
+  auto h = factory().FindHandler(parsed[0]);
+  std::vector<uint32_t> generated_ssrcs;
+  if (rtp_handler().Consume(*h, parsed[1], options, generated_ssrcs)) {
+    for (const auto ssrc : generated_ssrcs) {
+      ssrc_label_map[ssrc] = parsed[1];
+    }
+    return true;
+  } else {
+    return false;
+  }
 }
 int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   if (ice_server_ != nullptr) {

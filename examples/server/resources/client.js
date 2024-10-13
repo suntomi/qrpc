@@ -3,6 +3,7 @@ class QRPCMedia {
     this.label = label;
     this.stream = stream;
     this.tracks = {};
+    this.receivers = {}
     if (encodings) {
       this.encodings = encodings;
       const vtracks = stream.getVideoTracks();
@@ -24,18 +25,16 @@ class QRPCMedia {
   // c: QRPClient
   open(c) {
     if (this.tracks.video) {
-      const t = c.pc.addTransceiver(
+      this.receivers.video = c.pc.addTransceiver(
         this.tracks.video,
         {direction: 'sendonly', sendEncodings: this.encodings, streams: [this.stream]}
       );
-      this.midLabelMap[t.mid] = this.label;
     }
     if (this.tracks.audio) {
-      const t = c.pc.addTransceiver(
+      this.receivers.audio = c.pc.addTransceiver(
         this.tracks.audio,
         {direction: 'sendonly', streams: [this.stream]}
       );
-      this.midLabelMap[t.mid] = this.label;
     }
   }
   close() {
@@ -48,14 +47,25 @@ class QRPCMedia {
       this.tracks[name] = t;
     }
   }
+  getMidLabelMap(c) {
+    for (const k in this.receivers) {
+      const r = this.receivers[k];
+      c.midLabelMap[r.mid] = this.label;
+    }    
+  }  
 }
 class QRPClient {
   static SYSCALL_STREAM = "$syscall";
   static DEFAULT_SCALABILITY_MODE = "L1T3";
-  constructor(url) {
+  static MAX_MSGID = Number.MAX_SAFE_INTEGER;
+  constructor(url, id) {
     this.url = url;
+    const bytes = new Uint8Array(8);
+    this.id = id || this.#genId();
+    console.log("QRPClient", this.id, url);
     this.hdmap = {};
     this.mdmap = {};
+    this.reconnect = 0;
     this.#clear();
     this.handlerResolver = (c, label, isMedia) => {
       const handler_id = label.indexOf("?") > 0 ? label.split("?")[0] : label;
@@ -75,31 +85,53 @@ class QRPClient {
           await this.pc.setRemoteDescription({type:"offer",sdp:data.args.sdp});
           const answer = await this.pc.createAnswer();
           await this.pc.setLocalDescription(answer);
-          this.syscall("nego_ack",{sdp:answer.sdp,gen:this.sdpGen});
+          this.syscall("nego_ack",{sdp:answer.sdp,gen:this.sdpGen,msgid:data.args.msgid});
         } else if (data.fn === "nego_ack") {
-          const offer = this.sdpOfferMap[data.args.gen];
-          if (!offer) {
-            console.log(`sdp offer for gen:${data.args.gen} does not exist`);
+          const promise = this.#fetchPromise(data.args.msgid);
+          if (!promise) {
+            console.log(`promises for gen:${data.args.gen} does not exist`);
             return;
           }
-          this.sdpOfferMap[data.args.gen] = null;
           if (this.sdpGen > data.args.gen) {
-            console.log(`old sdp anwser for ${data.args.gen} ignored`);
+            promise.reject(new Error(`old sdp anwser for gen:${data.args.gen} ignored`));
             return;
           } else if (this.sdpGen < data.args.gen) {
-            console.log(`future sdp anwser for ${data.args.gen} ignored`);
+            promise.reject(new Error(`future sdp anwser for gen:${data.args.gen} ignored`));
             return;
           }
           if (data.args.error) {
-            console.log(`invalid sdp ${offer.sdp}: ${data.args.error}`);
+            promise.reject(new Error(`invalid sdp ${offer.sdp}: ${data.args.error}`));
             return;
           } else {
-            console.log("answer sdp", data.args.sdp)
-            await this.#setupSdp(offer, data.args.sdp);
+            promise.resolve(data.args.sdp);
+          }
+        } else if (data.fn == "consume") {
+          throw new Error("does not suported");
+        } else if (data.fn == "consume_ack") {
+          const promise = this.#fetchPromise(data.args.msgid);
+          if (!promise) {
+            console.log(`promises for gen:${data.args.gen} does not exist`);
+            return;
+          }
+          if (data.args.error) {
+            promise.reject(new Error(data.args.error));
+            return;
+          } else {
+            if (data.args.ssrc_label_map) {
+              promise.reject(new Error(`invalid response: no ssrc_label_map: ${JSON.stringify(data.args)}`));
+              return;
+            }
+            Object.assign(this.ssrcLabelMap,data.args.ssrc_label_map);
+            promise.resolve();
           }
         }
       }
     });
+  }
+  #genId() {
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    return btoa(String.fromCharCode(...bytes));
   }
   #clear() {
     this.streams = {};
@@ -107,9 +139,11 @@ class QRPClient {
     this.trackIdLabelMap = {};
     this.ridLabelMap = {};
     this.midLabelMap = {};
+    this.ssrcLabelMap = {};
     this.ridScalabilityModeMap = {};
-    this.sdpOfferMap = {};
-    this.sdpGen = -1;    
+    this.rpcPromises = {};
+    this.sdpGen = -1;
+    this.msgidSeed = 1;
   }
   initIce() {
     //Ice properties
@@ -118,6 +152,18 @@ class QRPClient {
     //Pending candidadtes
     this.candidates = [];
     this.endOfcandidates = false;
+  }
+  #newMsgId() {
+    const msgid = this.msgidSeed++;
+    if (this.msgidSeed > QRPClient.MAX_MSGID) {
+      this.msgidSeed = 1;
+    }
+    return msgid;
+  }
+  #fetchPromise(msgid) {
+    const promise = this.rpcPromises[msgid];
+    this.rpcPromises[msgid] = undefined;
+    return promise;
   }
   async connect() {
     //If already publishing
@@ -145,26 +191,46 @@ class QRPClient {
     };
 
     //Listen addition of media tracks
-    pc.ontrack = (event) => {
+    pc.ontrack = async (event) => {
       console.log("ontrack", event);
-      const t = event.track;
-      const tid = t.id;
-      let label = this.trackIdLabelMap[tid];
-      if (!label) {
-        // if local track, event.transceiver.sender.track may be registered
-        if (event.transceiver) {
-          label = this.trackIdLabelMap[event.transceiver.sender.track.id];
+      const track = event.track;
+      const tid = track.id;
+      const receiver = event.receiver;
+      // RTCRtpReceiverの統計情報を取得
+      const stats = await receiver.getStats();
+      let label = undefined;
+      for (const report of stats.values()) {
+        if (report.type === 'inbound-rtp') {
+          console.log(`track id: ${tid}, SSRC: ${report.ssrc}`);
+          label = this.ssrcLabelMap[report.ssrc];
+          if (!label) {
+            console.log(`No label is defined for ssrc = ${report.ssrc}`);
+            event.track.stop();
+            return;
+          }
+          break;
+        } else {
+          console.log(`track id: ${event.track.id}, no video track ${report}`);
         }
+      }
+      if (!label) {
+        label = this.trackIdLabelMap[tid];
         if (!label) {
-          console.log(`No label is defined for tid =${tid}`);
-          event.track.stop();
-          return;
+          // if local track, event.transceiver.sender.track may be registered
+          if (event.transceiver) {
+            label = this.trackIdLabelMap[event.transceiver.sender.track.id];
+          }
+          if (!label) {
+            console.log(`No label is defined for tid = ${tid}`);
+            track.stop();
+            return;
+          }
         }
       }
       const h = this.handlerResolver(this, label, true);
       if (!h) {
         console.log(`No handler is defined for label = ${label} (${tid})`);
-        event.track.stop();
+        track.stop();
         return;
       }
       let m = this.medias[label];
@@ -220,56 +286,82 @@ class QRPClient {
       }
     }
 
-    // generate syscall stream
+    // generate syscall stream (it also ensures that SDP for data channel is generated)
     this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM);
 
     if (this.onopen) {
       this.context = await this.onopen();
-    } else {
-      throw new Error("must set onopen callback and open initial stream in it");
     }
 
-    //Create SDP offer
-    const offer = await pc.createOffer();
-
-    //Request headers
-    const headers = {
-      "Content-Type": "application/sdp"
-    };
-
-    console.log("offer sdp", offer.sdp);
-
-    //Do the post request to the WHIP endpoint with the SDP offer
-    const fetched = await fetch(this.url, {
-      method: "POST",
-      body: JSON.stringify({
-        sdp:offer.sdp,rtp:this.#rtpPayload()
-      }),
-      headers
-    });
-
-    if (!fetched.ok)
-      throw new Error(`Request rejected with status ${fetched.status}`)
-
-    //Get the SDP answer
-    const answer = await fetched.text();
-
-    console.log("answer sdp", answer)
-
-    await this.#setupSdp(offer, answer);
-
-    this.sdpGen++;
+    await this.#handshake();
   }
-  async #setupSdp(offer, answer_sdp) {
-    //Set local description
+  async #handshake() {
+    // Create new SDP offer
+    const offer = await this.pc.createOffer();
+    // generate unique ice ufrag for each connect attempt, by using this.reconnect
+    offer.sdp.replace(/a=ice-ufrag:.*\r\n/, `a=ice-ufrag:${this.id}/${this.reconnect}`);
+    const oldSdp = this.pc.localDescription;
+    // (re)Set local description
     await this.pc.setLocalDescription(offer);
+
+    // gathering mid-label mapping, because it needs to call after sdp is set,
+    // setLocalDescription must called before running these codes
+    for (const k in this.medias) {
+      const m = this.medias[k];
+      m.getMidLabelMap(this);
+    }
 
     //store ice ufrag/pwd
     this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)\r\n/)[1];
     this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)\r\n/)[1];
+
+    console.log("offer sdp", offer.sdp);
+
+    let answer;
+    if (this.sdpGen < 0) {
+      //Do the post request to the WHIP endpoint with the SDP offer
+      const fetched = await fetch(this.url, {
+        method: "POST",
+        body: JSON.stringify({sdp:offer.sdp,rtp:this.#rtpPayload()}),
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (!fetched.ok)
+        throw new Error(`Request rejected with status ${fetched.status}`)
+
+      //Get the SDP answer
+      answer = await fetched.text();
+      this.sdpGen++;
+    } else {
+      const gen = this.sdpGen++;
+      const reconnect = this.reconnect;
+      try {
+        answer = await new Promise((resolve, reject) => {
+          const msgid = this.#newMsgId();
+          this.syscall("nego", {sdp:offer.sdp,gen,rtp:this.#rtpPayload(),msgid});
+          this.rpcPromises[msgid] = { resolve, reject };
+        });
+      } catch (e) {
+        console.log("syscall.nego fails:", gen, e.message);
+        if (gen === this.sdpGen && reconnect === this.reconnect) {
+          console.log("rollback sdp for gen:", this.sdpGen, "reconnect:", this.reconnect);
+          // rollback
+          this.setLocalDescription(oldSdp.sdp);
+        } else {
+          console.log(
+            "ignore rollback sdp for gen:", gen, "current gen:", this.sdpGen,
+            "reconnect:", reconnect, "current reconnect:", this.reconnect
+          );
+        }
+      }
+    }
+
+    console.log("answer sdp", answer)
     
     //And set remote description
-    await this.pc.setRemoteDescription({type:"answer",sdp:answer_sdp});
+    await this.pc.setRemoteDescription({type:"answer",sdp:answer});
   }
   close() {
     if (!this.pc) {
@@ -297,6 +389,7 @@ class QRPClient {
     if (reconnectionWaitMS > 0) {
       console.log(`attempt reconnect after ${reconnectionWaitMS} ms`);
       setTimeout(() => {
+        this.reconnect++;
         this.connect();
       }, reconnectionWaitMS);
     } else {
@@ -318,20 +411,6 @@ class QRPClient {
       };
     }
     return undefined;
-  }
-  async renegotiation() {
-    if (this.sdpGen < 0) {
-      console.log("QRPClient yet initialized: wait for connect() calling");
-      return;
-    }
-    this.sdpGen++;
-    const offer = await this.pc.createOffer();
-    this.sdpOfferMap[this.sdpGen] = offer;
-    console.log("offer sdp", offer.sdp);
-    this.syscall("nego", {
-      sdp:offer.sdp,gen:this.sdpGen,
-      rtp:this.#rtpPayload()
-    });
   }
   handleMedia(handler_name, callbacks) {
     if (this.mdmap[handler_name]) {
@@ -363,8 +442,15 @@ class QRPClient {
     const m = new QRPCMedia(label, stream, encodings);
     this.medias[label] = m;
     m.open(this);
-    await this.renegotiation();
+    await this.#handshake();
     return m;
+  }
+  async consumeMedia(path, options) {
+    await new Promise((resolve, reject) => {
+      const msgid = this.#newMsgId();
+      this.syscall("consume", { path, options, msgid });
+      this.rpcPromises[msgid] = { resolve, reject };
+    });
   }
   closeMedia(label) {
     const m = this.medias[label];

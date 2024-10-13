@@ -213,7 +213,7 @@ a=max-message-size:%u)cands",
       payloads = " webrtc-datachannel";
     } else {
       c.InitRTP();
-      if (params.Parse(c.rtp_handler(), section, answer) != QRPC_OK) {
+      if (!params.Parse(c.rtp_handler(), section, answer)) {
         return false;
       }
       for (auto &c : params.codecs) {
@@ -295,7 +295,10 @@ a=setup:active
     if (FindMediaSection("audio", asec)) {
       rtp::Parameters params;
       if (AnswerMediaSection(asec, proto, c, section_answer, params)) {
-        c.rtp_handler().CreateProducer(c.rtp_id(), params);
+        if (c.rtp_handler().CreateProducer(c.rtp_id(), params) != QRPC_OK) {
+          answer = "fail to create audio producer";
+          return false;
+        }
         section_answer_map[params.mid] = section_answer;
       } else {
         answer = section_answer;
@@ -307,7 +310,10 @@ a=setup:active
     if (FindMediaSection("video", vsec)) {
       rtp::Parameters params;
       if (AnswerMediaSection(vsec, proto, c, section_answer, params)) {
-        c.rtp_handler().CreateProducer(c.rtp_id(), params);
+        if (c.rtp_handler().CreateProducer(c.rtp_id(), params) != QRPC_OK) {
+          answer = "fail to create video producer";
+          return false;
+        }
         section_answer_map[params.mid] = section_answer;
       } else {
         answer = section_answer;
@@ -321,7 +327,7 @@ a=setup:active
       media_sections += kv.second;
     }
     // string value to the str::Format should be converted to c string like str.c_str()
-    answer = str::Format(16384, R"sdp(v=0
+    answer = str::Format(16 * 1024, R"sdp(v=0
 o=- %llu %llu IN IP4 0.0.0.0
 s=-
 t=0 0

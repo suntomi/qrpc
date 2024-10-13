@@ -273,6 +273,8 @@ QRPC_DECL_CLOSURE(void, qrpc_on_server_conn_close_t, void *, qrpc_conn_t,  const
 QRPC_DECL_CLOSURE(void, qrpc_on_conn_validate_t, void *, qrpc_conn_t, const char *);
 //called when qrpc_conn_modify_hdmap invoked with valid qrpc_conn_t
 QRPC_DECL_CLOSURE(void, qrpc_on_conn_modify_hdmap_t, void *, qrpc_hdmap_t);
+//called when qrpc_conn emit event
+QRPC_DECL_CLOSURE(void, qrpc_on_event_t, void *, qrpc_conn_t, const void *);
 
 
 /* stream */
@@ -533,6 +535,10 @@ QAPI_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reacha
 //get fd attached to the conn. client conn returns dedicated fd for the connection,
 //server side returns lister fd, which is shared among connections.sz
 QAPI_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn);
+//emit event on this conn. when this called, cb registered by qrpc_conn_watch, is called with `args`
+QAPI_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, const char *event, const void *args);
+//make cb callbacked when corresponding qrpc_conn_emit with `event` called
+QAPI_THREADSAFE void qrpc_conn_watch(const char *event, qrpc_on_event_t cb);
 
 
 // --------------------------

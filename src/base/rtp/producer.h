@@ -21,7 +21,8 @@ namespace rtp {
     ~Producer() override {}
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
     PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const;
-    inline Parameters &params() { return params_; }
+    bool consume_params(const RTC::RtpParameters &consumed_producer_params, RTC::RtpParameters &p) const;
+    const RTC::RtpParameters &params() const { return params_; }
   protected:
     Parameters params_;
     std::shared_ptr<Media> media_;

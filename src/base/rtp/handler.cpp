@@ -32,16 +32,24 @@ namespace rtp {
 		SendRtcp(qrpc_time_to_msec(now));
 		return now + RtcpRandomInterval();
 	}
-	bool Handler::Consume(Handler &peer, const std::string &label, const ConsumeOptions &options) {
-		if (options.audio && !ConsumeTrack(Parameters::MediaKind::AUDIO, peer, label)) {
-			return false;
-		}
-		if (options.video && !ConsumeTrack(Parameters::MediaKind::VIDEO, peer, label)) {
-			return false;
+	bool Handler::Consume(
+		Handler &peer, const std::string &label, const ConsumeOptions &options,
+		std::vector<uint32_t> &generated_ssrcs
+	) {
+		static const std::vector<Parameters::MediaKind> kinds = {
+			Parameters::MediaKind::AUDIO, Parameters::MediaKind::VIDEO
+		};
+		for (const auto k : kinds) {
+			if (!ConsumeMedia(k, peer, label, options.pause_audio, generated_ssrcs)) {
+				return false;
+			}
 		}
 		return true;
 	}
-	bool Handler::ConsumeTrack(Parameters::MediaKind kind, Handler &peer, const std::string &label) {
+	bool Handler::ConsumeMedia(
+		Parameters::MediaKind kind, Handler &peer, const std::string &label, bool paused,
+		std::vector<uint32_t> &generated_ssrcs
+	) {
 		// 1. get corresponding producer from peer handler
 		//	first, find correspoinding producer id with label, audio/video, from peer handler 
 		// 2. create consumer with the found producer, parameters, and label
@@ -51,7 +59,34 @@ namespace rtp {
 			return false;
 		}
 		auto producer = FindProducer(label, kind);
-		consumer_factory_.Create(*consumed_producer, label, kind, RTC::RtpParameters::Type::SIMULCAST, producer->params());
+		if (producer == nullptr) {
+			QRPC_LOGJ(error, {{"ev","producer not found"},{"label",label},{"kind",Parameters::FromMediaKind(kind)}});
+			return false;
+		}
+		RTC::RtpParameters consuming_params;
+		if (!producer->consume_params(consumed_producer->params(), consuming_params)) {
+			QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
+			ASSERT(false);
+			return false;
+		}
+		for (const auto &e : consuming_params.encodings) {
+			if (e.ssrc == 0) {
+				QRPC_LOGJ(error, {{"ev","invalid encoding for consumer: ssrc should not be 0"}});
+				ASSERT(false);
+				return false;
+			}
+			generated_ssrcs.emplace_back(e.ssrc);
+		}
+		auto consumer = consumer_factory_.Create(
+			*consumed_producer, label, kind, RTC::RtpParameters::Type::SIMULCAST, consuming_params, paused
+		);
+		auto cit = this->mapProducerConsumers.find(producer.get());
+		if (cit == this->mapProducerConsumers.end()) {
+			QRPC_LOGJ(error, {{"ev","consumer list for producer not found"},{"producer_id",producer->id}});
+			ASSERT(false);
+			return false;
+		}
+		cit->second.insert(consumer.get());
 		return true;
 	}
 	std::shared_ptr<Producer> Handler::FindProducer(const std::string &label, Parameters::MediaKind kind) {
@@ -565,6 +600,15 @@ namespace rtp {
 			mid_label_map_ = midit->second.get<std::map<Media::Mid,Media::Id>>();
 			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",*midit}});
 		}
+	}
+	std::shared_ptr<Media> Handler::FindFrom(const std::string &label) {
+		auto mit = medias_.find(label);
+		if (mit == medias_.end()) {
+			auto m = std::make_shared<Media>(label);
+			medias_[label] = m;
+			return m;
+		}
+		return mit->second;
 	}
 	std::shared_ptr<Media> Handler::FindFrom(const Parameters &p) {
 		// 1. if encodings[*].rid has value, find label from rid by using rid_label_map_

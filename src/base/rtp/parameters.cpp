@@ -32,7 +32,7 @@ namespace rtp {
     "VP8", "VP9", "H264", "opus",
   };
 
-  static uint64_t SelectRtpmap(std::map<uint64_t, RtpMap> &rtpmaps, std::string &answer) {
+  static uint64_t SelectRtpmap(std::map<uint64_t, RtpMap> &rtpmaps) {
     size_t candidate_index = -1;
     uint64_t current_candidate = 0;
     for (auto &kv : rtpmaps) {
@@ -61,12 +61,11 @@ namespace rtp {
   }
 
   RTC::RtpCodecParameters *Parameters::CodecByPayloadType(uint64_t pt) {
-    for (auto &c : codecs) {
+    for (auto &c : codec_capabilities) {
       if (c.payloadType == pt) {
         return &c;
       }
     }
-    ASSERT(false);
     return nullptr;
   }
   std::string Parameters::FromMediaKind(MediaKind k) {
@@ -171,7 +170,7 @@ namespace rtp {
     p.hasRtx = rtxpt != 0; // here, rtx ssrc is unknown
     encodings.push_back(p);
   }
-  int Parameters::Parse(Handler &h, const json &section, std::string &answer)  {
+  bool Parameters::Parse(Handler &h, const json &section, std::string &answer)  {
     auto midit = section.find("mid");
     if (midit == section.end()) {
       answer = "section: no value for key 'mid'";
@@ -198,7 +197,7 @@ namespace rtp {
     } else {
       kind = kindit->second;
     }
-    mid = midit->get<std::string>();
+    this->mid = midit->get<std::string>();
     auto rtcpit = section.find("rtcp");
     if (rtcpit != section.end()) {
       FIND_OR_RAISE(ait, rtcpit, "address");
@@ -234,7 +233,7 @@ namespace rtp {
         ASSERT(false);
         return false;
       }
-      headerExtensions.push_back(p);
+      this->headerExtensions.push_back(p);
     }
     // parse fmtp
     std::map<uint64_t, std::string> fmtpmap;
@@ -265,6 +264,7 @@ namespace rtp {
     }
     // parse rtpmaps
     std::map<uint64_t, RtpMap> rtpmaps;
+    std::set<uint64_t> filtered_ptmap;
     auto rtpmit = section.find("rtp");
     if (rtpmit == section.end()) {
       answer = "rtpmap: no value for key 'rtp'";
@@ -291,7 +291,18 @@ namespace rtp {
           auto fit2 = std::find(resilient_codecs.begin(), resilient_codecs.end(), codec);
           if (fit2 == resilient_codecs.end()) {
             // really unsupported
+            filtered_ptmap.insert(pt);
             continue;
+          } else {
+            for (auto &kv : rtxmap) {
+              if (kv.second == pt) {
+                // if pt is rtx codec and its target pt filtered, the rtx codec also should be filtered
+                if (filtered_ptmap.find(kv.first) == filtered_ptmap.end()) {
+                  filtered_ptmap.insert(pt);
+                  continue;
+                }
+              }
+            }
           }
         }
         auto rateit = it->find("rate");
@@ -302,11 +313,44 @@ namespace rtp {
         }
         auto encit = it->find("encoding");
         try {
-          RTC::RtpCodecParameters c;
+          auto &c = this->codec_capabilities.emplace_back();
           c.mimeType.SetMimeType(str::Format("%s/%s", FBS::RtpParameters::EnumNamesMediaKind()[kind], codec.c_str()));
           c.channels = encit == it->end() ? 0 : std::stoul(encit->get<std::string>().c_str());
           c.payloadType = pt;
           c.clockRate = rateit->get<uint64_t>();
+          auto fmit = fmtpmap.find(pt);
+          if (fmit != fmtpmap.end()) {
+            for (auto t : str::Split(fmit->second, ";")) {
+              auto kv = str::Split(t, "=");
+              if (kv.size() != 2) {
+                kv = str::Split(t, "/");
+                if (kv.size() == 2) {
+                  // seems to be special case for RED payload fmtp, like 111/111.
+                  // TODO: but actually how to set value for c.parameters for the case?
+                  c.parameters.Add("red_payload_params", t);
+                  continue;
+                }
+                answer = str::Format("rtpmap: invalid fmtp format: %s", fmit->second.c_str());
+                ASSERT(false);
+                return false;
+              }
+              try {
+                if (kv[1] == "true" || kv[1] == "false") {
+                  c.parameters.Add(kv[0], kv[1] == "true"); // boolean
+                } else if (kv[1].find('.') != std::string::npos) { 
+                  try {
+                    c.parameters.Add(kv[0], std::stod(kv[1])); // double
+                  } catch (std::exception &) {
+                    c.parameters.Add(kv[0], std::stoi(kv[1])); // int
+                  }
+                } else {
+                  c.parameters.Add(kv[0], std::stoi(kv[1])); // int
+                }
+              } catch (std::exception &) {
+                c.parameters.Add(kv[0], kv[1]); // string
+              }
+            }
+          }
           auto sit = std::find(resilient_codecs.begin(), resilient_codecs.end(), codec);
           rtpmaps[pt] = {codec, c, sit != resilient_codecs.end()};
         } catch (std::exception &e) {
@@ -315,66 +359,33 @@ namespace rtp {
           return false;
         }
       }
-    }    
-    auto selected_pt = SelectRtpmap(rtpmaps, answer);
+    }
+    // TODO: select from this->codec
+    auto selected_pt = SelectRtpmap(rtpmaps);
     if (selected_pt == 0) {
       answer = "no suitable rtpmap";
       ASSERT(false);
       return false;
     }
-    auto &rtp = rtpmaps[selected_pt];
-    codecs.push_back(rtp.params);
-    uint64_t rtx_pt = 0;
+    auto selected_codec = CodecByPayloadType(selected_pt);
+    if (selected_codec == nullptr) {
+        answer = str::Format("rtpmap: selected pt not found: %llu", selected_pt);
+        ASSERT(false);
+        return false;
+    } 
+    this->codecs.emplace_back(*selected_codec);
     auto rtxit = rtxmap.find(selected_pt);
     auto usedtx = dtxmap.find(selected_pt) != dtxmap.end();
+    auto rtx_pt = 0;
     if (rtxit != rtxmap.end()) {
       rtx_pt = rtxit->second;
-      auto rtxrtpit = rtpmaps.find(rtx_pt);
-      if (rtxrtpit == rtpmaps.end()) {
+      auto rtx_codec = CodecByPayloadType(rtx_pt);
+      if (rtx_codec == nullptr) {
         answer = str::Format("rtpmap: rtx pt not found: %llu", rtx_pt);
         ASSERT(false);
         return false;
       }
-      codecs.push_back(rtxrtpit->second.params);
-    }
-    std::vector<uint64_t> pts = { selected_pt, rtx_pt };
-    for (int i = 0; i < 2; i++) {
-      auto pt = pts[i];
-      if (pt == 0) {
-        continue;
-      }
-      auto c = CodecByPayloadType(pt);
-      if (c == nullptr) {
-        answer = str::Format("rtpmap: no codec added for %llu", pt);
-        ASSERT(false);
-        return false;
-      }
-      auto fmit = fmtpmap.find(pt);
-      if (fmit != fmtpmap.end()) {
-        for (auto t : str::Split(fmit->second, ";")) {
-          auto kv = str::Split(t, "=");
-          if (kv.size() != 2) {
-            answer = str::Format("rtpmap: invalid fmtp format: %s", fmit->second.c_str());
-            ASSERT(false);
-            return false;
-          }
-          try {
-            if (kv[1] == "true" || kv[1] == "false") {
-              c->parameters.Add(kv[0], kv[1] == "true"); // boolean
-            } else if (kv[1].find('.') != std::string::npos) { 
-              try {
-                c->parameters.Add(kv[0], std::stod(kv[1])); // double
-              } catch (std::exception &) {
-                c->parameters.Add(kv[0], std::stoi(kv[1])); // int
-              }
-            } else {
-              c->parameters.Add(kv[0], std::stoi(kv[1])); // int
-            }
-          } catch (std::exception &) {
-            c->parameters.Add(kv[0], kv[1]); // string
-          }
-        }
-      }
+      this->codecs.emplace_back(*rtx_codec);
     }
     auto rtcpfbit = section.find("rtcpFb");
     if (rtcpfbit != section.end()) {
@@ -388,14 +399,10 @@ namespace rtp {
         RTC::RtpCodecParameters *c;
         try {
           auto pt = std::stoul(plit->get<std::string>());
-          if (std::find(pts.begin(), pts.end(), pt) == pts.end()) {
-            continue;
-          }
+          // TODO: if it too heavy, process only selected payload type, may work (including processed with consumer)
           c = CodecByPayloadType(pt);
           if (c == nullptr) {
-            answer = str::Format("rtpmap: no codec added for %llu", pt);
-            ASSERT(false);
-            return false;
+            continue;
           }
         } catch (std::exception &e) {
           answer = str::Format("rtcp-fb: parse payload value error %s", e.what());
@@ -487,7 +494,7 @@ namespace rtp {
         }
       }
     }
-    return QRPC_OK;
+    return true;
   }
   std::string Parameters::Answer() const {
 		// std::string mid;
@@ -519,8 +526,8 @@ namespace rtp {
       }
       sdplines += str::Format("\na=extmap:%u %s", hs[i].id, urit->second.c_str());
     }
-    for (size_t i = 0; i < codecs.size(); i++) {
-      auto &c = codecs[i];
+    for (size_t i = 0; i < this->codecs.size(); i++) {
+      auto &c = this->codecs[i];
       auto mimeTypeVec = str::Split(c.mimeType.ToString(), "/");
       if (c.channels > 1) {
         sdplines += str::Format(

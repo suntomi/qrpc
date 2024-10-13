@@ -21,30 +21,37 @@ namespace rtp {
     std::shared_ptr<Media> media_;
   };
   std::shared_ptr<Consumer> ConsumerFactory::Create(
-    const Producer &producer, const std::string &label, Parameters::MediaKind kind,
-    RTC::RtpParameters::Type type, const Parameters &p
+    const Producer &consumed_producer, const std::string &label, Parameters::MediaKind kind,
+    RTC::RtpParameters::Type type, const RTC::RtpParameters &p, bool paused
   ) {
-    auto m = handler_.FindFrom(p);
+    // generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
+    // now rtx is always enabled
+    // TODO: support pipe consumer & disable rtx?
+    auto m = handler_.FindFrom(label);
 		::flatbuffers::FlatBufferBuilder fbb;
-    auto encodings = producer.PackConsumableEncodings(fbb);
+    auto encodings = consumed_producer.PackConsumableEncodings(fbb);
     auto id = ProducerFactory::GenerateId(handler_.rtp_id(), label, kind);
+    auto &producer_id = consumed_producer.id;
     fbb.Finish(FBS::Transport::CreateConsumeRequestDirect(
-      fbb, id.c_str(), producer.id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(p.kind),
-      p.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings
+      fbb, id.c_str(), producer_id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
+      p.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings, paused
     ));
 		auto data = flatbuffers::GetRoot<FBS::Transport::ConsumeRequest>(fbb.GetBufferPointer());
 		try {
+      std::shared_ptr<Consumer> c;
       switch (type) {
         case RTC::RtpParameters::Type::SIMPLE:
-          return std::make_shared<Wrap<RTC::SimpleConsumer>>(&handler_.shared(), id, producer.id, &handler_, data, m);
+          c = std::make_shared<Wrap<RTC::SimpleConsumer>>(&handler_.shared(), id, producer_id, &handler_, data, m);
         case RTC::RtpParameters::Type::SIMULCAST:
-          return std::make_shared<Wrap<RTC::SimulcastConsumer>>(&handler_.shared(), id, producer.id, &handler_, data, m);
+          c = std::make_shared<Wrap<RTC::SimulcastConsumer>>(&handler_.shared(), id, producer_id, &handler_, data, m);
         case RTC::RtpParameters::Type::PIPE:
-          return std::make_shared<Wrap<RTC::PipeConsumer>>(&handler_.shared(), id, producer.id, &handler_, data, m);
+          c = std::make_shared<Wrap<RTC::PipeConsumer>>(&handler_.shared(), id, producer_id, &handler_, data, m);
         default:
           QRPC_LOG(error, "invalid type: %d", type);
           return nullptr;
       }
+      consumers_[id] = c;
+      return c;
     } catch (std::exception &e) {
       QRPC_LOG(error, "failed to create consumer: %s", e.what());
       return nullptr;

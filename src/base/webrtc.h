@@ -139,7 +139,7 @@ namespace webrtc {
       void InitRTP();
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
-      bool Consume(const std::string &peer_id, const std::string &label, const ConsumeOptions &options);
+      bool Consume(const std::string &media_path, const ConsumeOptions &options, std::map<uint32_t,std::string> &ssrc_label_map);
       inline void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();
       IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority);

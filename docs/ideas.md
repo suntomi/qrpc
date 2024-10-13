@@ -35,6 +35,21 @@ fuga.com/guild-service/spec みたいなところを叩くと ソースコード
 circuit breakerとかfallbackとか、色々定義できると良さそうではある。ホットリロードできるかな？
 
 ラベルの:以降にもいくつかのルールを設けるべきかもしれない。
-例えばlabelに使うプロトコル以外の情報を埋め込みたい可能性は高い(並列でファイルを送りつけるときにプロトコルは全て同じファイル転送だが、ファイル名などの情報を埋め込みたいとか)
+例えばlabelに使うプロトコル以外の情報を埋め込みたい可能性は高い(並列でいくつかのでかいデータを分割して送りつけるときにプロトコルは全て同じだが、別々のストリームとして扱いたいときなど)
 なので、?以下をパラメータとして、chat:write?id=hogeみたいな感じにするのがいいのかもしれない。プロトコルとのマッチングは?以下を無視する。
 それともラベル名とストリームプロトコルのマッチング自体をカスタマイズ可能にしておき、デフォルトでは文字列としての完全マッチ、みたいにしてもいいかも
+
+### for produce
+$path is configurable, but typically qrpc for stream, qrpc/medias for media
+stream label: $host/$path/@$name?$k1=$v1&$k2=v2...
+media label : $host/$path/@$name?$k1=$v1&$k2=v2...
+
+### for consume
+$path is configurable, but typically qrpc for stream, qrpc/medias for media
+stream label: $host/$path/@$id/$name?$k1=$v1&$k2=v2...
+media label : $host/$path/@$id/$name?$k1=$v1&$k2=v2...
+
+
+GET $host/$path/@$id => should return all labels available, correspondint $path
+eg) GET $host/qrpc/@$id => ["app","filetx","chat"]
+eg) GET $host/qrpc/medias/@$id => ["webcam","webcam2","ingame"]

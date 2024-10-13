@@ -52,7 +52,7 @@ namespace rtp {
     };
   public:
     Parameters() : RTC::RtpParameters() {}
-    int Parse(Handler &h, const json &section, std::string &answer);
+    bool Parse(Handler &h, const json &section, std::string &answer);
     std::string Answer() const;
     static std::string FromMediaKind(MediaKind k);
     inline std::string MediaKindName() const { return FromMediaKind(kind); }
@@ -80,6 +80,7 @@ namespace rtp {
     MediaKind kind;
     NetworkParameters network;
     std::map<uint32_t, SsrcParameter> ssrcs;
+    std::vector<RTC::RtpCodecParameters> codec_capabilities;
     SimulcastParameter simulcast;
   };
 }
