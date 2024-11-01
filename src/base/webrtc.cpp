@@ -53,12 +53,13 @@ void ConnectionFactory::Fin() {
   GlobalFin();
 }
 void ConnectionFactory::CloseConnection(Connection &c) {
-  logger::info({{"ev","close webrtc connection"},{"ufrag",c.ufrag()}});
+  logger::info({{"ev","close webrtc connection"},{"ufrag",c.ufrag()},{"cname",c.cname()}});
   c.Fin(); // cleanup resources if not yet
   connections_.erase(c.ufrag());
+  cnmap_.erase(c.cname());
   // c might be freed here
 }
-static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket* packet) {
+static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket& packet) {
   TRACK();
 
   // Here we inspect the USERNAME attribute of a received STUN request and
@@ -66,7 +67,7 @@ static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket* 
   // local usernameFragment) which is the first value in the attribute value
   // before the ":" symbol.
 
-  const auto& username  = packet->GetUsername();
+  const auto& username  = packet.GetUsername();
   const size_t colonPos = username.find(':');
 
   // If no colon is found just return the whole USERNAME attribute anyway.
@@ -78,14 +79,14 @@ static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket* 
 }
 std::shared_ptr<ConnectionFactory::Connection>
 ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
-  RTC::StunPacket* packet = RTC::StunPacket::Parse(p, sz);
+  auto packet = std::unique_ptr<RTC::StunPacket>(RTC::StunPacket::Parse(p, sz));
   if (packet == nullptr) {
     QRPC_LOG(warn, "ignoring wrong STUN packet received");
     return nullptr;
   }
   QRPC_LOGJ(info, {{"ev","STUN packet received"},{"username",packet->GetUsername()}})
   // try to match the local ICE username fragment.
-  auto key = GetLocalIceUFragFrom(packet);
+  auto key = GetLocalIceUFragFrom(*packet);
   // stun binding response from server does not contains username fragment
   // usually client session created with Connection object, no FindFromStunRequest call needed.
   // but when client give up one endpoint in SDP and using next one, packet from old endpoint might be received.
@@ -93,11 +94,16 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
   // control flow will reach to here. so for client, we ignore that error
   ASSERT(!key.empty() || is_client());
   auto it = connections_.find(key);
-  delete packet;
-
   if (it == this->connections_.end()) {
     logger::warn({
       {"ev","ignoring received STUN packet with unknown remote ICE usernameFragment"},
+      {"ufrag",key}
+    });
+    return nullptr;
+    // validate packet is properly authorized    
+  } else if (!it->second->ice_server().ValidatePacket(*packet)) {
+    logger::warn({
+      {"ev","ignoring received STUN packet that does not have proper token or not binding request"},
       {"ufrag",key}
     });
     return nullptr;
@@ -105,19 +111,19 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
   return it->second;
 }
 std::shared_ptr<rtp::Handler>
-ConnectionFactory::FindHandler(const std::string &peer_id) {
-  auto c = FindFromUfrag(peer_id);
-  if (c == nullptr) {
+ConnectionFactory::FindHandler(const std::string &cname) {
+  auto it = cnmap_.find(cname);
+  if (it == cnmap_.end()) {
     // TODO: now it targets peer that connected to the node. to scale, we have to be able to watch remote peer
     // this should be achieved like following:
     // 1. create kind of 'proxy connection' that acts like rtp::Handler::Listener
-    //   - this proxy connection connects the node that has peer which id is `peer_id`
-    //   - so maybe this function acts like async function because it needs to query remote controller which knows where `peer_id` is
+    //   - this proxy connection connects the node that has peer which id is `cname`
+    //   - so maybe this function acts like async function because it needs to query remote controller which knows where `cname` is
     // 2. create handler with that proxy connection
-    QRPC_LOGJ(info, {{"ev","peer not found"},{"peer_id",peer_id}});
+    QRPC_LOGJ(info, {{"ev","peer not found"},{"cname",cname}});
     return nullptr;
   }
-  return c->rtp_handler_;
+  return it->second->rtp_handler_;
 }
 
 std::shared_ptr<ConnectionFactory::Connection>
@@ -456,6 +462,19 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
     return QRPC_EALLOC;
   }
   return QRPC_OK;
+}
+void ConnectionFactory::Connection::SetCname(const std::string &cname) {
+  ASSERT(cname_.empty());
+  cname_ = cname;
+  // we need to use existing std::shared_ptr. because if we insert `this` to ConnectionFactory::cnmap_ directly,
+  // 2 different family of std::shared_ptr (another one is ConnectionFactory::connections_) try to free `this` independently.
+  auto c = factory().FindFromUfrag(ufrag());
+  if (c == nullptr) {
+    ASSERT(false);
+    return;
+  }
+  // TODO: valiate cname before register to cname map
+  factory().Register(cname_, c);
 }
 std::shared_ptr<Stream> ConnectionFactory::Connection::NewStream(
   const Stream::Config &c, const StreamFactory &sf
@@ -1549,6 +1568,11 @@ int Listener::Accept(const std::string &client_req_body, std::string &server_sdp
       logger::error({{"ev","fail to allocate connection"}});
       return QRPC_EALLOC;
     }
+    auto cnit = client_req.find("cname");
+    if (cnit == client_req.end()) {
+      logger::error({{"ev","fail to find value for key 'cname'"},{"req",client_req}});
+      return QRPC_EINVAL;
+    }
     int r;
     std::string ufrag, pwd;
     if ((r = c->Init(ufrag, pwd)) < 0) {
@@ -1567,6 +1591,7 @@ int Listener::Accept(const std::string &client_req_body, std::string &server_sdp
       return QRPC_EINVAL;
     }
     connections_.emplace(std::move(ufrag), c);
+    c->SetCname(cnit->get<std::string>());
   } catch (const std::exception &e) {
     QRPC_LOGJ(error, {{"ev","malform request"},{"reason",e.what()},{"req",client_req_body}});
     return QRPC_EINVAL;

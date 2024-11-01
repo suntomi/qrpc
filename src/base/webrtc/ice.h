@@ -88,6 +88,7 @@ namespace webrtc {
 			return this->selectedSession;
 		}
 		void RestartIce(const std::string& usernameFragment, const std::string& password);
+		bool ValidatePacket(RTC::StunPacket &packet) const;
 		bool IsValidSession(const Session *session) const;
 		void RemoveSession(Session *session);
 		/**

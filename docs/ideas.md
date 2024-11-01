@@ -53,3 +53,16 @@ media label : $host/$path/@$id/$name?$k1=$v1&$k2=v2...
 GET $host/$path/@$id => should return all labels available, correspondint $path
 eg) GET $host/qrpc/@$id => ["app","filetx","chat"]
 eg) GET $host/qrpc/medias/@$id => ["webcam","webcam2","ingame"]
+
+
+### qrpc
+qrpcのレベルでは、onopen/oncloseはトランスポートレベルのopen/closeを表さない
+onopen => そのqrpc serviceの全てのprocedureを呼び出す準備が整った
+onclose => そのqrpc serviceの内部もしくは外部からclose()が呼ばれた
+例えば複数のconnectionを利用するqrpc serviceは一部のconnectionがcloseすることがあるが、これによってoncloseがemitされるわけではない。
+もちろんqrpc serviceの作者が利用している特定のconnectionのcloseを見て全体のcloseを呼ぶこともできる。
+あるいは再接続で問題が解決する場合、単純に接続が切断されている場合は何らかのエラーを返す、というようにして、qrpc service全体ではcloseしていないという状態にすることもできる。
+そのためにemitを用意している。各childのqrpc serviceについてemit(event, param)を呼び出すことでlabel/event, paramという形でイベントが来るようにする
+つまり、chatを配信するserviceへのconnectionがcloseした場合は、chat/closeみたいなイベントがemitされる
+
+もしかすると全体をemitで作る方がいいのか。でもonopen/oncloseだけは共通なのでこのままいく。onopen onclose onevent の組み合わせ

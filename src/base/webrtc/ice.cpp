@@ -8,6 +8,7 @@
 
 // need to put last for overriding MS_XXX macro (because Logger.hpp also undef MS_XXX macro)
 #define QRPC_DISABLE_MS_TRACK
+#define QRPC_DISABLE_MS_DEBUG
 #include "base/webrtc/mpatch.h"
 
 namespace base {
@@ -993,6 +994,19 @@ namespace webrtc {
 			// Notify the listener.
 			this->listener->OnIceServerDisconnected(this);
 		}
+	}
+
+	bool IceServer::ValidatePacket(RTC::StunPacket &packet) const {
+		if (packet.GetClass() != RTC::StunPacket::Class::REQUEST) {
+			ASSERT(false);
+			return false;
+		}
+		if (packet.GetMethod() != RTC::StunPacket::Method::BINDING) {
+			ASSERT(false);
+			return false;
+		}
+		return packet.CheckAuthentication(this->usernameFragment, this->password) 
+			== RTC::StunPacket::Authentication::OK;
 	}
 
 	// IceProber

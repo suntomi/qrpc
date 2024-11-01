@@ -34,9 +34,9 @@
       }
       setupUI = (c) => {
         // このconnectionのidを表示
-        let idElement = document.getElementById("conn_id");
+        let idElement = document.getElementById("cname");
         if (idElement) {
-          idElement.innerText = c.id;
+          idElement.innerText = c.cname;
         }
         // 編集ボックスのEnterキーイベントリスナーを追加
         document.getElementById('idedit').addEventListener('keydown', async (event) => {

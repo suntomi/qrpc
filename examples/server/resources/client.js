@@ -58,11 +58,11 @@ class QRPClient {
   static SYSCALL_STREAM = "$syscall";
   static DEFAULT_SCALABILITY_MODE = "L1T3";
   static MAX_MSGID = Number.MAX_SAFE_INTEGER;
-  constructor(url, id) {
+  constructor(url, cname) {
     this.url = url;
     const bytes = new Uint8Array(8);
-    this.id = id || this.#genId();
-    console.log("QRPClient", this.id, url);
+    this.cname = cname || this.#genCN();
+    console.log("QRPClient", this.cname, url);
     this.hdmap = {};
     this.mdmap = {};
     this.reconnect = 0;
@@ -128,10 +128,12 @@ class QRPClient {
       }
     });
   }
-  #genId() {
+  #genCN() {
     const bytes = new Uint8Array(8);
     crypto.getRandomValues(bytes);
-    return btoa(String.fromCharCode(...bytes));
+    return btoa(String.fromCharCode(...bytes))
+      // make result url safe
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
   #clear() {
     this.streams = {};
@@ -144,6 +146,8 @@ class QRPClient {
     this.rpcPromises = {};
     this.sdpGen = -1;
     this.msgidSeed = 1;
+    this.id = null;
+    this.mediaHandshaked = false;
   }
   initIce() {
     //Ice properties
@@ -200,6 +204,7 @@ class QRPClient {
       const stats = await receiver.getStats();
       let label = undefined;
       for (const report of stats.values()) {
+        console.log("report", report);
         if (report.type === 'inbound-rtp') {
           console.log(`track id: ${tid}, SSRC: ${report.ssrc}`);
           label = this.ssrcLabelMap[report.ssrc];
@@ -235,11 +240,11 @@ class QRPClient {
       }
       let m = this.medias[label];
       if (!m) {
-        m = new QRPCMedia(label, t.stream);
+        m = new QRPCMedia(label, track.stream);
         this.medias[label] = m;
       }
-      m.addTrack(t.kind, t);
-      const r = h.onopen(m, t);
+      m.addTrack(track.kind, track);
+      const r = h.onopen(m, track);
       if (r === false || r === null) {
         console.log(`close media by application ${label}`);
         this.closeMedia(label);
@@ -298,8 +303,7 @@ class QRPClient {
   async #handshake() {
     // Create new SDP offer
     const offer = await this.pc.createOffer();
-    // generate unique ice ufrag for each connect attempt, by using this.reconnect
-    offer.sdp.replace(/a=ice-ufrag:.*\r\n/, `a=ice-ufrag:${this.id}/${this.reconnect}`);
+    console.log("offer sdp", offer.sdp);
     const oldSdp = this.pc.localDescription;
     // (re)Set local description
     await this.pc.setLocalDescription(offer);
@@ -311,18 +315,16 @@ class QRPClient {
       m.getMidLabelMap(this);
     }
 
-    //store ice ufrag/pwd
-    this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)\r\n/)[1];
-    this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)\r\n/)[1];
-
-    console.log("offer sdp", offer.sdp);
+    //store local ice ufrag/pwd
+    this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
+    this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)[\r\n]+/)[1];
 
     let answer;
     if (this.sdpGen < 0) {
       //Do the post request to the WHIP endpoint with the SDP offer
       const fetched = await fetch(this.url, {
         method: "POST",
-        body: JSON.stringify({sdp:offer.sdp,rtp:this.#rtpPayload()}),
+        body: JSON.stringify({sdp:offer.sdp,cname:this.cname,rtp:this.#rtpPayload()}),
         headers: {
           "Content-Type": "application/json"
         }
@@ -340,7 +342,7 @@ class QRPClient {
       try {
         answer = await new Promise((resolve, reject) => {
           const msgid = this.#newMsgId();
-          this.syscall("nego", {sdp:offer.sdp,gen,rtp:this.#rtpPayload(),msgid});
+          this.syscall("nego", {sdp:offer.sdp,cname:this.cname,gen,rtp:this.#rtpPayload(),msgid});
           this.rpcPromises[msgid] = { resolve, reject };
         });
       } catch (e) {
@@ -358,7 +360,8 @@ class QRPClient {
       }
     }
 
-    console.log("answer sdp", answer)
+    this.id = answer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
+    console.log("id", this.id, "answer sdp", answer);
     
     //And set remote description
     await this.pc.setRemoteDescription({type:"answer",sdp:answer});
@@ -442,7 +445,11 @@ class QRPClient {
     const m = new QRPCMedia(label, stream, encodings);
     this.medias[label] = m;
     m.open(this);
-    await this.#handshake();
+    if (this.sdpGen >= 0 && !this.mediaHandshaked) {
+      // renegotiation
+      await this.#handshake();
+      this.mediaHandshaked = true;
+    }
     return m;
   }
   async consumeMedia(path, options) {

@@ -31,6 +31,7 @@ namespace rtp {
   static std::vector<std::string> supported_codecs = {
     "VP8", "VP9", "H264", "opus",
   };
+  static const std::string RED_PAYLOAD_PARAM = "red_payload_params";
 
   static uint64_t SelectRtpmap(std::map<uint64_t, RtpMap> &rtpmaps) {
     size_t candidate_index = -1;
@@ -327,7 +328,7 @@ namespace rtp {
                 if (kv.size() == 2) {
                   // seems to be special case for RED payload fmtp, like 111/111.
                   // TODO: but actually how to set value for c.parameters for the case?
-                  c.parameters.Add("red_payload_params", t);
+                  c.parameters.Add(RED_PAYLOAD_PARAM, t);
                   continue;
                 }
                 answer = str::Format("rtpmap: invalid fmtp format: %s", fmit->second.c_str());
@@ -359,33 +360,6 @@ namespace rtp {
           return false;
         }
       }
-    }
-    // TODO: select from this->codec
-    auto selected_pt = SelectRtpmap(rtpmaps);
-    if (selected_pt == 0) {
-      answer = "no suitable rtpmap";
-      ASSERT(false);
-      return false;
-    }
-    auto selected_codec = CodecByPayloadType(selected_pt);
-    if (selected_codec == nullptr) {
-        answer = str::Format("rtpmap: selected pt not found: %llu", selected_pt);
-        ASSERT(false);
-        return false;
-    } 
-    this->codecs.emplace_back(*selected_codec);
-    auto rtxit = rtxmap.find(selected_pt);
-    auto usedtx = dtxmap.find(selected_pt) != dtxmap.end();
-    auto rtx_pt = 0;
-    if (rtxit != rtxmap.end()) {
-      rtx_pt = rtxit->second;
-      auto rtx_codec = CodecByPayloadType(rtx_pt);
-      if (rtx_codec == nullptr) {
-        answer = str::Format("rtpmap: rtx pt not found: %llu", rtx_pt);
-        ASSERT(false);
-        return false;
-      }
-      this->codecs.emplace_back(*rtx_codec);
     }
     auto rtcpfbit = section.find("rtcpFb");
     if (rtcpfbit != section.end()) {
@@ -424,6 +398,33 @@ namespace rtp {
         c->rtcpFeedback.push_back(fb);
       }
     }
+    // TODO: select from this->codec
+    auto selected_pt = SelectRtpmap(rtpmaps);
+    if (selected_pt == 0) {
+      answer = "no suitable rtpmap";
+      ASSERT(false);
+      return false;
+    }
+    auto selected_codec = CodecByPayloadType(selected_pt);
+    if (selected_codec == nullptr) {
+        answer = str::Format("rtpmap: selected pt not found: %llu", selected_pt);
+        ASSERT(false);
+        return false;
+    } 
+    this->codecs.emplace_back(*selected_codec);
+    auto rtxit = rtxmap.find(selected_pt);
+    auto usedtx = dtxmap.find(selected_pt) != dtxmap.end();
+    auto rtx_pt = 0;
+    if (rtxit != rtxmap.end()) {
+      rtx_pt = rtxit->second;
+      auto rtx_codec = CodecByPayloadType(rtx_pt);
+      if (rtx_codec == nullptr) {
+        answer = str::Format("rtpmap: rtx pt not found: %llu", rtx_pt);
+        ASSERT(false);
+        return false;
+      }
+      this->codecs.emplace_back(*rtx_codec);
+    }    
     auto ssrcit = section.find("ssrcs");
     if (ssrcit != section.end()) {
       bool found = false;
@@ -564,21 +565,25 @@ namespace rtp {
           paramsline += ";";
         }
         if (e.second.type == RTC::Parameters::Value::Type::BOOLEAN) {
-          paramsline = str::Format(
+          paramsline += str::Format(
             "%s=%s", e.first.c_str(), e.second.booleanValue ? "true" : "false"
           );
         } else if (e.second.type == RTC::Parameters::Value::Type::DOUBLE) {
-          paramsline = str::Format(
+          paramsline += str::Format(
             "%s=%llf", e.first.c_str(), e.second.doubleValue
           );
         } else if (e.second.type == RTC::Parameters::Value::Type::INTEGER) {
-          paramsline = str::Format(
+          paramsline += str::Format(
             "%s=%d", e.first.c_str(), e.second.integerValue
           );
         } else if (e.second.type == RTC::Parameters::Value::Type::STRING) {
-          paramsline = str::Format(
-            "%s=%s", e.first.c_str(), e.second.stringValue.c_str()
-          );
+          if (e.first == RED_PAYLOAD_PARAM) {
+            paramsline += e.second.stringValue;
+          } else {
+            paramsline += str::Format(
+              "%s=%s", e.first.c_str(), e.second.stringValue.c_str()
+            );
+          }
         } else if (e.second.type == RTC::Parameters::Value::Type::ARRAY_OF_INTEGERS) {
           // TODO: how format string?
           ASSERT(false);
@@ -586,10 +591,17 @@ namespace rtp {
           ASSERT(false);
         }
       }
-      sdplines += str::Format(
-        "\na=fmtp:%llu %s\na=fmtp:%llu x-google-start-bitrate=10000",
-        c.payloadType, paramsline.c_str(), c.payloadType
-      );
+      if (paramsline.empty()) {
+        sdplines += str::Format(
+          "\na=fmtp:%llu x-google-start-bitrate=10000",
+          c.payloadType
+        );
+      } else {
+        sdplines += str::Format(
+          "\na=fmtp:%llu %s\na=fmtp:%llu x-google-start-bitrate=10000",
+          c.payloadType, paramsline.c_str(), c.payloadType
+        );
+      }
     }
     std::string scline = "\na=simulcast:";
     bool has_sc = false;

@@ -129,6 +129,7 @@ namespace webrtc {
       inline const ConnectionFactory &factory() const { return factory_; }
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
       inline const IceUFrag &ufrag() const { return ice_server().GetUsernameFragment(); }
+      inline const std::string &cname() const { return cname_; }
       inline RTC::DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
       inline rtp::Handler &rtp_handler() { return *rtp_handler_.get(); }
       // for now, qrpc server initiates dtls transport because safari does not initiate it
@@ -136,6 +137,7 @@ namespace webrtc {
       inline bool is_client() const { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
     public:
       int Init(std::string &ufrag, std::string &pwd);
+      void SetCname(const std::string &cname);
       void InitRTP();
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
@@ -252,6 +254,7 @@ namespace webrtc {
       std::shared_ptr<SyscallStream> syscall_;
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_, rtcp_alarm_id_;
+      std::string cname_;
       bool sctp_connected_, closed_;
     };
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
@@ -333,6 +336,9 @@ namespace webrtc {
       }
     }
   protected:
+    void Register(const std::string &cname, std::shared_ptr<Connection> &c) {
+      cnmap_.emplace(cname, c);
+    }
     void CloseConnection(Connection &c);
     void CloseConnection(const IceUFrag &ufrag) {
       auto it = connections_.find(ufrag);
@@ -362,6 +368,7 @@ namespace webrtc {
     FactoryMethod factory_method_;
     StreamFactory stream_factory_;
     std::map<IceUFrag, std::shared_ptr<Connection>> connections_;
+    std::map<std::string, std::shared_ptr<Connection>> cnmap_;
   private:
     static uint32_t g_ref_count_;
     static std::mutex g_ref_sync_mutex_;
