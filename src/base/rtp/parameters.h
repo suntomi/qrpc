@@ -51,7 +51,7 @@ namespace rtp {
       APP = static_cast<int>(FBS::RtpParameters::MediaKind::MAX) + 1,
     };
   public:
-    Parameters() : RTC::RtpParameters() {}
+    Parameters() : RTC::RtpParameters(), ssrc_seed(GenerateSsrc()) {}
     bool Parse(Handler &h, const json &section, std::string &answer);
     std::string Answer() const;
     static std::string FromMediaKind(MediaKind k);
@@ -67,6 +67,8 @@ namespace rtp {
     }
   public:
     const FBS::Transport::ProduceRequest* MakeProduceRequest(const std::string &id) const;
+    std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
+    PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb, std::vector<uint32_t> &generated_ssrcs) const;
     static std::optional<RTC::RtpHeaderExtensionUri::Type> FromUri(const std::string &uri);
     static void SetupHeaderExtensionMap();
   protected:
@@ -79,6 +81,7 @@ namespace rtp {
   public:
     MediaKind kind;
     NetworkParameters network;
+    uint32_t ssrc_seed;
     std::map<uint32_t, SsrcParameter> ssrcs;
     std::vector<RTC::RtpCodecParameters> codec_capabilities;
     SimulcastParameter simulcast;

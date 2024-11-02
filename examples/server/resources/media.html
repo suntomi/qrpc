@@ -4,7 +4,7 @@
     <title>WebRTC with QRPC media</title>
   </head>
   <body>
-    <div id="conn_id"></div>
+    <div id="cname"></div>
     <input type="text" id="idedit" placeholder="input connection id of other peer and press Enter"/>
 
     <script src="http://localhost:8888/client.js"></script>
@@ -43,7 +43,7 @@
         if (event.key === 'Enter') {
           const id = event.target.value;
           console.log(`input id = ${id}`);
-          await c.consumeMedia(`webcam?id=${id}`);
+          await c.consumeMedia(`${id}/webcam`);
         }
       });
          

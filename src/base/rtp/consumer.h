@@ -18,10 +18,11 @@ namespace rtp {
     ConsumerFactory(Handler &h) : handler_(h) {}
     virtual ~ConsumerFactory() {}
     std::map<std::string, std::shared_ptr<Consumer>> &consumers() { return consumers_; }
+    static std::string GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind);
   public:
     std::shared_ptr<Consumer> Create(
-      const Producer &consumed_producer, const std::string &label, Parameters::MediaKind kind,
-      RTC::RtpParameters::Type type, const RTC::RtpParameters &p, bool paused);
+      const Handler &peer, const Producer &local_producer, const std::string &label, Parameters::MediaKind kind,
+      bool paused, bool pipe, std::vector<uint32_t> &generated_ssrcs);
   protected:
     Handler &handler_;
     std::map<std::string, std::shared_ptr<Consumer>> consumers_;

@@ -295,7 +295,7 @@ a=setup:active
     if (FindMediaSection("audio", asec)) {
       rtp::Parameters params;
       if (AnswerMediaSection(asec, proto, c, section_answer, params)) {
-        if (c.rtp_handler().CreateProducer(c.rtp_id(), params) != QRPC_OK) {
+        if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
           answer = "fail to create audio producer";
           return false;
         }
@@ -310,7 +310,7 @@ a=setup:active
     if (FindMediaSection("video", vsec)) {
       rtp::Parameters params;
       if (AnswerMediaSection(vsec, proto, c, section_answer, params)) {
-        if (c.rtp_handler().CreateProducer(c.rtp_id(), params) != QRPC_OK) {
+        if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
           answer = "fail to create video producer";
           return false;
         }

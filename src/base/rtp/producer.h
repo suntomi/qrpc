@@ -11,6 +11,7 @@
 namespace base {
 namespace rtp {
   class Handler;
+  class Parameters;
   class Producer : public RTC::Producer {
     friend class ProducerFactory;
   public:
@@ -19,10 +20,8 @@ namespace rtp {
       const Parameters &p, std::shared_ptr<Media> m
     ) : RTC::Producer(s, id, l, p.MakeProduceRequest(id)), params_(p), media_(m) {}
     ~Producer() override {}
-    std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
-    PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const;
-    bool consume_params(const RTC::RtpParameters &consumed_producer_params, RTC::RtpParameters &p) const;
-    const RTC::RtpParameters &params() const { return params_; }
+    bool consumer_params(const RTC::RtpParameters &consumed_producer_params, RTC::RtpParameters &p) const;
+    const Parameters &params() const { return params_; }
   protected:
     Parameters params_;
     std::shared_ptr<Media> media_;
@@ -32,6 +31,7 @@ namespace rtp {
     ProducerFactory(Handler &h) : handler_(h) {}
     virtual ~ProducerFactory() {}
     std::map<std::string, std::shared_ptr<Producer>> &producers() { return producers_; }
+    const std::map<std::string, std::shared_ptr<Producer>> &producers() const { return producers_; }
     static std::string GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind);
   public:
     std::shared_ptr<Producer> Create(const std::string &id, const Parameters &p);

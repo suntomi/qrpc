@@ -93,7 +93,7 @@ namespace rtp {
   Parameters::PackEncodingMapping(::flatbuffers::FlatBufferBuilder &fbb) const {
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::EncodingMapping>> r;
     r.reserve(encodings.size());
-    auto seed = GenerateSsrc();
+    auto seed = ssrc_seed;
     for (auto &e : encodings) {
       r.emplace_back(FBS::RtpParameters::CreateEncodingMappingDirect(
         fbb, e.rid.empty() ? nullptr : e.rid.c_str(), 
@@ -101,6 +101,27 @@ namespace rtp {
         e.scalabilityMode.empty() ? nullptr : e.scalabilityMode.c_str(),
         seed++
       ));
+    }
+    return r;
+  }
+  std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
+  Parameters::PackConsumableEncodings(
+    ::flatbuffers::FlatBufferBuilder &fbb,
+    std::vector<uint32_t> &generated_ssrcs
+  ) const {
+    std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>> r;
+    r.reserve(encodings.size());
+    auto seed = ssrc_seed;
+    for (auto &e : encodings) {
+      auto ssrc = seed++;
+      r.emplace_back(FBS::RtpParameters::CreateRtpEncodingParametersDirect(
+        fbb, ssrc, e.rid.empty() ? nullptr : e.rid.c_str(),
+        e.hasCodecPayloadType ? std::optional(e.codecPayloadType) : std::nullopt,
+        e.rtx.FillBuffer(fbb), e.dtx,
+        e.scalabilityMode.empty() ? nullptr : e.scalabilityMode.c_str(),
+        e.maxBitrate != 0 ? std::optional(e.maxBitrate) : std::nullopt
+      ));
+      generated_ssrcs.emplace_back(ssrc);
     }
     return r;
   }
@@ -155,6 +176,7 @@ namespace rtp {
     const std::string &scalability_mode) {
     RTC::RtpEncodingParameters p;
     p.rid = rid;
+    ASSERT(!scalability_mode.empty());
     p.scalabilityMode = scalability_mode;
     p.dtx = dtx;
     p.codecPayloadType = pt;
@@ -593,12 +615,12 @@ namespace rtp {
       }
       if (paramsline.empty()) {
         sdplines += str::Format(
-          "\na=fmtp:%llu x-google-start-bitrate=10000",
+          "\na=fmtp:%llu x-google-start-bitrate=1000",
           c.payloadType
         );
       } else {
         sdplines += str::Format(
-          "\na=fmtp:%llu %s\na=fmtp:%llu x-google-start-bitrate=10000",
+          "\na=fmtp:%llu %s\na=fmtp:%llu x-google-start-bitrate=1000",
           c.payloadType, paramsline.c_str(), c.payloadType
         );
       }

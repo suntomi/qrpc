@@ -5,17 +5,7 @@
 
 namespace base {
 namespace rtp {
-	std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
-	Producer::PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const {
-		std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>> encodings;
-		encodings.reserve(this->GetRtpParameters().encodings.size());
-			// now, producer's encodings are already limited to the ones that are consumable
-		for (const auto &encoding : this->GetRtpParameters().encodings) {
-			encodings.emplace_back(encoding.FillBuffer(fbb));
-		}
-		return encodings;
-	}
-	bool Producer::consume_params(const RTC::RtpParameters &consumed_producer_params, RTC::RtpParameters &p) const {
+	bool Producer::consumer_params(const RTC::RtpParameters &consumed_producer_params, RTC::RtpParameters &p) const {
 		// just copy mid
 		p.mid = params_.mid;
 		// choose codecs from consumed_producer_params.codecs that matched params_.codec_capabilities
@@ -60,7 +50,7 @@ namespace rtp {
 		// after headerExtension fixed, remove unused rtcpfeedback of codec in p.codecs
 		if (transport_wide_cc) {
 			for (auto &codec : p.codecs) {
-				for (auto it = codec.rtcpFeedback.rbegin(); it != codec.rtcpFeedback.rend(); --it) {
+				for (auto it = codec.rtcpFeedback.rbegin(); it != codec.rtcpFeedback.rend(); ++it) {
 					if (it->type == "goog-remb") {
 						codec.rtcpFeedback.erase(std::next(it).base());
 					}
@@ -68,7 +58,7 @@ namespace rtp {
 			}
 		} else if (goog_remb) {
 			for (auto &codec : p.codecs) {
-				for (auto it = codec.rtcpFeedback.rbegin(); it != codec.rtcpFeedback.rend(); --it) {
+				for (auto it = codec.rtcpFeedback.rbegin(); it != codec.rtcpFeedback.rend(); ++it) {
 					if (it->type == "transport-cc") {
 						codec.rtcpFeedback.erase(std::next(it).base());
 					}
@@ -106,16 +96,27 @@ namespace rtp {
 				scalability_mode = e.scalabilityMode;
 			}
 		}
+		ASSERT(!scalability_mode.empty());
 		// If there is simulast, mangle spatial layers in scalabilityMode.
 		if (consumed_producer_params.encodings.size() > 1) {
 			int temporal_layers = 1;
 			try {
 				auto pos = scalability_mode.find("T");
-				temporal_layers = std::stoi(scalability_mode.substr(pos));
+				if (pos == std::string::npos) {
+					QRPC_LOGJ(error, {{"ev","invalid scalablity mode: no temporal layer spec"},{"scalability_mode",scalability_mode}});
+					ASSERT(false);
+					return false;					
+				}
+				temporal_layers = std::stoi(scalability_mode.substr(pos + 1));
 			} catch (std::exception &e) {
-				QRPC_LOGJ(error, {{"ev","invalid scalablity mode"},{"scalability_mode",scalability_mode}});
+				QRPC_LOGJ(error, {{"ev","invalid scalablity mode"},{"scalability_mode",scalability_mode},{"error",e.what()}});
 				return false;
 			}
+			QRPC_LOGJ(info, {
+				{"ev","replace scalability mode"},
+				{"from",scalability_mode},
+				{"to",str::Format("L%uT%d", consumed_producer_params.encodings.size(), temporal_layers)}
+			});
 			scalability_mode = str::Format("L%uT%d", consumed_producer_params.encodings.size(), temporal_layers);
 		}
 		if (!scalability_mode.empty()) {
@@ -128,7 +129,7 @@ namespace rtp {
 	}
 
 	std::string ProducerFactory::GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind) { 
-		return "/" + id + "/" + label + "/" + Parameters::FromMediaKind(kind);
+		return "/p/" + id + "/" + label + "/" + Parameters::FromMediaKind(kind);
 	}
   std::shared_ptr<Producer> ProducerFactory::Create(const std::string &id, const Parameters &p) {
     auto m = handler_.FindFrom(p);

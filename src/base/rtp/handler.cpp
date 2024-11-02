@@ -54,32 +54,17 @@ namespace rtp {
 		//	first, find correspoinding producer id with label, audio/video, from peer handler 
 		// 2. create consumer with the found producer, parameters, and label
 		// 3. add the created consumer to mapConsumers
-		auto consumed_producer = peer.FindProducer(label, kind);
-		if (consumed_producer == nullptr) {
-			return false;
-		}
 		auto producer = FindProducer(label, kind);
 		if (producer == nullptr) {
 			QRPC_LOGJ(error, {{"ev","producer not found"},{"label",label},{"kind",Parameters::FromMediaKind(kind)}});
 			return false;
 		}
-		RTC::RtpParameters consuming_params;
-		if (!producer->consume_params(consumed_producer->params(), consuming_params)) {
-			QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
-			ASSERT(false);
-			return false;
-		}
-		for (const auto &e : consuming_params.encodings) {
-			if (e.ssrc == 0) {
-				QRPC_LOGJ(error, {{"ev","invalid encoding for consumer: ssrc should not be 0"}});
+		auto consumer = consumer_factory_.Create(peer, *producer, label, kind, paused, false, generated_ssrcs);
+		if (consumer == nullptr) {
+				QRPC_LOGJ(error, {{"ev","fail to create consumer"}});
 				ASSERT(false);
 				return false;
-			}
-			generated_ssrcs.emplace_back(e.ssrc);
 		}
-		auto consumer = consumer_factory_.Create(
-			*consumed_producer, label, kind, RTC::RtpParameters::Type::SIMULCAST, consuming_params, paused
-		);
 		auto cit = this->mapProducerConsumers.find(producer.get());
 		if (cit == this->mapProducerConsumers.end()) {
 			QRPC_LOGJ(error, {{"ev","consumer list for producer not found"},{"producer_id",producer->id}});
@@ -89,7 +74,7 @@ namespace rtp {
 		cit->second.insert(consumer.get());
 		return true;
 	}
-	std::shared_ptr<Producer> Handler::FindProducer(const std::string &label, Parameters::MediaKind kind) {
+	std::shared_ptr<Producer> Handler::FindProducer(const std::string &label, Parameters::MediaKind kind) const {
 		auto gid = ProducerFactory::GenerateId(rtp_id(), label, kind);
 		auto it = producer_factory_.producers().find(gid);
 		if (it == producer_factory_.producers().end()) {
@@ -651,7 +636,7 @@ namespace rtp {
 		// otherwise, return empty shared_ptr
 		return nullptr;
 	}
-	int Handler::CreateProducer(const std::string &id, const Parameters &p) {
+	int Handler::Produce(const std::string &id, const Parameters &p) {
 		auto lit = mid_label_map_.find(p.mid);
 		if (lit == mid_label_map_.end()) {
 			QRPC_LOGJ(error, {{"ev","failed to find mid label"},{"mid",p.mid}});

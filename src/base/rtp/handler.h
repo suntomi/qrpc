@@ -65,7 +65,7 @@ namespace rtp {
     inline RTC::Shared &shared() { return shared_.get(); }
     inline std::string FindScalabilityMode(const std::string &rid) {
       auto it = rid_scalability_mode_map_.find(rid);
-      return it == rid_scalability_mode_map_.end() ? it->second : "";
+      return it != rid_scalability_mode_map_.end() ? it->second : "";
     }
     qrpc_time_t OnTimer(qrpc_time_t now);
     bool Consume(
@@ -80,8 +80,8 @@ namespace rtp {
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     std::shared_ptr<Media> FindFrom(const Parameters &p);
     std::shared_ptr<Media> FindFrom(const std::string &label);
-    int CreateProducer(const std::string &id, const Parameters &p);
-    std::shared_ptr<Producer> FindProducer(const std::string &label, Parameters::MediaKind kind);
+    int Produce(const std::string &id, const Parameters &p);
+    std::shared_ptr<Producer> FindProducer(const std::string &label, Parameters::MediaKind kind) const;
     void TransportConnected();
     void TransportDisconnected();
     static inline qrpc_time_t RtcpRandomInterval() { return qrpc_time_msec(random::gen(1000, 1500)); }
