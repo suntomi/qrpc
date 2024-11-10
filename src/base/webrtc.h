@@ -5,10 +5,10 @@
 #include "base/id_factory.h"
 #include "base/session.h"
 #include "base/media.h"
-#include "base/rtp/handler.h"
 #include "base/webrtc/ice.h"
-#include "base/webrtc/sctp.h"
+#include "base/rtp/handler.h"
 #include "base/webrtc/candidate.h"
+// this need to declare after ice.h to prevent from IceServer.hpp being used
 
 // TODO: if enabling srtp, this also need to be replaced with homebrew version
 #include "RTC/DtlsTransport.hpp"
@@ -76,7 +76,7 @@ namespace webrtc {
     class Connection : public base::Connection, 
                        public IceServer::Listener,
                        public RTC::DtlsTransport::Listener,
-                       public SctpAssociation::Listener,
+                       public RTC::SctpAssociation::Listener,
                        public rtp::Handler::Listener {
     public:
       friend class ConnectionFactory;
@@ -85,8 +85,7 @@ namespace webrtc {
         factory_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr), srtp_send_(nullptr), srtp_recv_(nullptr),
         rtp_handler_(nullptr), streams_(), syscall_(), stream_id_factory_(),
-        alarm_id_(AlarmProcessor::INVALID_ID), rtcp_alarm_id_(AlarmProcessor::INVALID_ID),
-        sctp_connected_(false), closed_(false) {
+        alarm_id_(AlarmProcessor::INVALID_ID), sctp_connected_(false), closed_(false) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case RTC::DtlsTransport::Role::CLIENT:
@@ -103,9 +102,6 @@ namespace webrtc {
       virtual ~Connection() {
         if (alarm_id_ != AlarmProcessor::INVALID_ID) {
           factory_.alarm_processor().Cancel(alarm_id_);
-        }
-        if (rtcp_alarm_id_ != AlarmProcessor::INVALID_ID) {
-          factory_.alarm_processor().Cancel(rtcp_alarm_id_);
         }
       }
     public:
@@ -208,27 +204,26 @@ namespace webrtc {
 			  const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) override;  
 
       // implements SctpAssociation::Listener
-			void OnSctpAssociationConnecting(SctpAssociation* sctpAssociation) override;
-			void OnSctpAssociationConnected(SctpAssociation* sctpAssociation)  override;
-			void OnSctpAssociationFailed(SctpAssociation* sctpAssociation)     override;
-			void OnSctpAssociationClosed(SctpAssociation* sctpAssociation)     override;
+			void OnSctpAssociationConnecting(RTC::SctpAssociation* sctpAssociation) override;
+			void OnSctpAssociationConnected(RTC::SctpAssociation* sctpAssociation)  override;
+			void OnSctpAssociationFailed(RTC::SctpAssociation* sctpAssociation)     override;
+			void OnSctpAssociationClosed(RTC::SctpAssociation* sctpAssociation)     override;
 			void OnSctpAssociationSendData(
-			  SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) override;
+			  RTC::SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) override;
 			void OnSctpStreamReset(
-			  SctpAssociation* sctpAssociation, uint16_t streamId) override;        
+			  RTC::SctpAssociation* sctpAssociation, uint16_t streamId) override;        
 			void OnSctpWebRtcDataChannelControlDataReceived(
-			  SctpAssociation* sctpAssociation,
+			  RTC::SctpAssociation* sctpAssociation,
 			  uint16_t streamId,
 			  const uint8_t* msg,
 			  size_t len) override;
 			void OnSctpAssociationMessageReceived(
-			  SctpAssociation* sctpAssociation,
+			  RTC::SctpAssociation* sctpAssociation,
 			  uint16_t streamId,
-			  uint32_t ppid,
 			  const uint8_t* msg,
-			  size_t len) override;
+			  size_t len, uint32_t ppid) override;
 			void OnSctpAssociationBufferedAmount(
-			  SctpAssociation* sctpAssociation, uint32_t len) override;   
+			  RTC::SctpAssociation* sctpAssociation, uint32_t len) override;   
 
       // implements rtp::Handler::Listener
       const std::string &rtp_id() const override { return ufrag(); }
@@ -239,6 +234,13 @@ namespace webrtc {
         RTC::Consumer* consumer, RTC::RtpPacket* packet, onSendCallback* cb = nullptr) override;
       void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
       void SendRtcpCompoundPacket(RTC::RTCP::CompoundPacket* packet) override;
+      void SendMessage(
+        RTC::DataConsumer* dataConsumer,
+        const uint8_t* msg,
+        size_t len,
+        uint32_t ppid,
+        rtp::Handler::QueueCB* = nullptr) override { ASSERT(false); }
+      void SendSctpData(const uint8_t* data, size_t len) override { ASSERT(false); }
       const rtp::Handler::Config &GetRtpConfig() const override { return factory().config().rtp; }
     protected:
       qrpc_time_t last_active_;
@@ -247,13 +249,13 @@ namespace webrtc {
       std::unique_ptr<IceProber> ice_prober_; // ICE(client)
       RTC::DtlsTransport::Role dtls_role_;
       std::unique_ptr<RTC::DtlsTransport> dtls_transport_; // DTLS
-      std::unique_ptr<SctpAssociation> sctp_association_; // SCTP
+      std::unique_ptr<RTC::SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
       std::shared_ptr<rtp::Handler> rtp_handler_; // RTP, RTCP
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       std::shared_ptr<SyscallStream> syscall_;
       IdFactory<Stream::Id> stream_id_factory_;
-      AlarmProcessor::Id alarm_id_, rtcp_alarm_id_;
+      AlarmProcessor::Id alarm_id_;
       std::string cname_;
       bool sctp_connected_, closed_;
     };

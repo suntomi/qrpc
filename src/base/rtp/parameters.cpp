@@ -131,15 +131,13 @@ namespace rtp {
     auto e = PackEncodingMapping(fbb);
     return FBS::RtpParameters::CreateRtpMappingDirect(fbb, &c, &e);
   }
-  const FBS::Transport::ProduceRequest* Parameters::MakeProduceRequest(const std::string &id) const {
-    static thread_local ::flatbuffers::FlatBufferBuilder fbb;
-    fbb.Clear();
-    fbb.Finish(FBS::Transport::CreateProduceRequestDirect(
+  ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
+  Parameters::MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id) const {
+    return FBS::Transport::CreateProduceRequestDirect(
       fbb, id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
       FillBuffer(fbb),
       PackRtpMapping(fbb)
-    ));
-    return flatbuffers::GetRoot<FBS::Transport::ProduceRequest>(fbb.GetBufferPointer());
+    );
   }
 
   static std::map<std::string, RTC::RtpHeaderExtensionUri::Type> g_map = {

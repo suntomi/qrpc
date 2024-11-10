@@ -12,6 +12,7 @@
 #include "DepLibSRTP.hpp"
 #include "DepLibUV.hpp"
 #include "DepLibWebRTC.hpp"
+#include "DepUsrSCTP.hpp"
 #include "DepOpenSSL.hpp"
 #include "Logger.hpp"
 #include "RTC/SrtpSession.hpp"
@@ -145,7 +146,7 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
       // Initialize static stuff.
       DepOpenSSL::ClassInit();
       DepLibSRTP::ClassInit();
-      DepUsrSCTP::ClassInit(a);
+      DepUsrSCTP::ClassInit();
       DepLibWebRTC::ClassInit();
       Utils::Crypto::ClassInit();
       RTC::DtlsTransport::ClassInit();
@@ -399,12 +400,6 @@ void ConnectionFactory::Connection::InitRTP() {
   if (rtp_handler_ == nullptr) {
     rtp_handler_ = std::make_shared<rtp::Handler>(*this);
   }
-  if (rtcp_alarm_id_ == AlarmProcessor::INVALID_ID) {
-    rtcp_alarm_id_ = factory_.alarm_processor().Set(
-      [this]() { return this->rtp_handler_->OnTimer(qrpc_time_now()); },
-      qrpc_time_now() + rtp::Handler::RtcpRandomInterval()
-    );
-  }
 }
 bool ConnectionFactory::Connection::Consume(
   const std::string &media_path, const ConsumeOptions &options,
@@ -449,7 +444,7 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   }
   // create SCTP association
   sctp_association_.reset(
-    new SctpAssociation(
+    new RTC::SctpAssociation(
       this, 
       factory().config().max_outgoing_stream_size,
       factory().config().initial_incoming_stream_size,
@@ -515,7 +510,7 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::OpenStream(
     return nullptr;
   }
   // allocate stream Id
-  sctp_association_->HandleDataConsumer(s.get());
+  sctp_association_->HandleDataConsumer(s->id());
   // TODO: send DCEP OPEN messsage to peer
   if ((r = s->Open()) < 0) {
     logger::info({{"ev","new stream creation blocked"},{"sid",s->id()},{"rc",r}});
@@ -533,7 +528,7 @@ void ConnectionFactory::Connection::Fin() {
     ice_prober_->Reset();
   }
   if (rtp_handler_ != nullptr) {
-    rtp_handler_->TransportDisconnected();
+    rtp_handler_->Disconnected();
   }
   for (auto s = streams_.begin(); s != streams_.end();) {
     auto cur = s++;
@@ -667,7 +662,7 @@ int ConnectionFactory::Connection::RunDtlsTransport() {
 void ConnectionFactory::Connection::OnDtlsEstablished() {
   sctp_association_->TransportConnected();
   if (rtp_handler_ != nullptr) {
-    rtp_handler_->TransportConnected();
+    rtp_handler_->Connected();
   }
   int r;
   if ((r = OnConnect()) < 0) {
@@ -797,7 +792,7 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
       {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
     });
   } else {
-    rtp_handler_->ReceiveRtpPacket(ice_server_->GetUsernameFragment(), *packet);
+    rtp_handler_->ReceiveRtpPacket(packet);
   }
   delete packet;
 }
@@ -831,7 +826,7 @@ int ConnectionFactory::Connection::Send(Stream &s, const char *p, size_t sz, boo
   PPID ppid = binary ? 
     (sz > 0 ? PPID::BINARY : PPID::BINARY_EMPTY) : 
     (sz > 0 ? PPID::STRING : PPID::STRING_EMPTY);
-  sctp_association_->SendSctpMessage(&s, ppid, reinterpret_cast<const uint8_t *>(p), sz);
+  sctp_association_->SendSctpMessage(s.config().params, reinterpret_cast<const uint8_t *>(p), sz, ppid);
   return QRPC_OK;
 }
 int ConnectionFactory::Connection::Send(const char *p, size_t sz) {
@@ -848,7 +843,7 @@ void ConnectionFactory::Connection::Close(Stream &s) {
     // client: even is outgoing, odd is incoming
     // server: even is incoming, odd is outgoing
     // bool isOutgoing = (dtls_role_ == RTC::DtlsTransport::Role::CLIENT) == ((s.id() % 2) == 0);
-    sctp_association_->DataConsumerClosed(&s);
+    sctp_association_->DataConsumerClosed(s.id());
     s.SetReset();
   } else {
     QRPC_LOGJ(debug, {{"ev","do not send reset because already reset"},{"stream",s.id()}});
@@ -861,7 +856,7 @@ int ConnectionFactory::Connection::Open(Stream &s) {
   DcepRequest req(c);
   uint8_t buff[req.PayloadSize()];
   if ((r = sctp_association_->SendSctpMessage(
-      &s, PPID::WEBRTC_DCEP, req.ToPaylod(buff, sizeof(buff)), req.PayloadSize()
+      s.config().params, req.ToPaylod(buff, sizeof(buff)), req.PayloadSize(), PPID::WEBRTC_DCEP
   )) < 0) {
     logger::error({{"proto","sctp"},{"ev","fail to send DCEP OPEN"},{"stream_id",s.id()}});
     return QRPC_EALLOC;
@@ -1016,27 +1011,27 @@ void ConnectionFactory::Connection::OnDtlsTransportApplicationDataReceived(
   sctp_association_->ProcessSctpData(data, len);
 }
 
-// implements SctpAssociation::Listener
-void ConnectionFactory::Connection::OnSctpAssociationConnecting(SctpAssociation* sctpAssociation) {
+// implements RTC::SctpAssociation::Listener
+void ConnectionFactory::Connection::OnSctpAssociationConnecting(RTC::SctpAssociation* sctpAssociation) {
   TRACK();
   // only notify
 }
-void ConnectionFactory::Connection::OnSctpAssociationConnected(SctpAssociation* sctpAssociation) {
+void ConnectionFactory::Connection::OnSctpAssociationConnected(RTC::SctpAssociation* sctpAssociation) {
   TRACK();
   sctp_connected_ = true;
 }
-void ConnectionFactory::Connection::OnSctpAssociationFailed(SctpAssociation* sctpAssociation) {
+void ConnectionFactory::Connection::OnSctpAssociationFailed(RTC::SctpAssociation* sctpAssociation) {
   TRACK();
   sctp_connected_ = false;
   // TODO: notify app
 }
-void ConnectionFactory::Connection::OnSctpAssociationClosed(SctpAssociation* sctpAssociation) {
+void ConnectionFactory::Connection::OnSctpAssociationClosed(RTC::SctpAssociation* sctpAssociation) {
   TRACK();
   sctp_connected_ = false;
   // TODO: notify app
 }
 void ConnectionFactory::Connection::OnSctpStreamReset(
-  SctpAssociation* sctpAssociation, uint16_t streamId) {
+  RTC::SctpAssociation* sctpAssociation, uint16_t streamId) {
   auto s = streams_.find(streamId);
   if (s == streams_.end()) {
     logger::error({{"proto","sctp"},{"ev","reset stream not found"},{"sid",streamId}});
@@ -1046,7 +1041,7 @@ void ConnectionFactory::Connection::OnSctpStreamReset(
   streams_.erase(s);
 }
 void ConnectionFactory::Connection::OnSctpAssociationSendData(
-  SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) {
+  RTC::SctpAssociation* sctpAssociation, const uint8_t* data, size_t len) {
   TRACK();
   if (!connected()) {
 		logger::warn({{"proto","sctp"},{"ev","DTLS not connected, cannot send SCTP data"},
@@ -1057,7 +1052,7 @@ void ConnectionFactory::Connection::OnSctpAssociationSendData(
   dtls_transport_->SendApplicationData(data, len);
 }
 void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
-  SctpAssociation* sctpAssociation,
+  RTC::SctpAssociation* sctpAssociation,
   uint16_t streamId,
   const uint8_t* msg,
   size_t len) {
@@ -1101,7 +1096,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
     DcepResponse ack;
     uint8_t buff[ack.PayloadSize()];
     if ((r = sctpAssociation->SendSctpMessage(
-        s.get(), PPID::WEBRTC_DCEP, ack.ToPaylod(buff, sizeof(buff)), ack.PayloadSize()
+        s->config().params, ack.ToPaylod(buff, sizeof(buff)), ack.PayloadSize(), PPID::WEBRTC_DCEP
     )) < 0) {
       logger::error({{"proto","sctp"},{"ev","fail to send DCEP ACK"},{"stream_id",streamId},{"rc",r}});
       s->Close(QRPC_CLOSE_REASON_LOCAL, r, "fail to send DCEP ACK");
@@ -1119,11 +1114,10 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
   }
 }
 void ConnectionFactory::Connection::OnSctpAssociationMessageReceived(
-  SctpAssociation* sctpAssociation,
+  RTC::SctpAssociation* sctpAssociation,
   uint16_t streamId,
-  uint32_t ppid,
   const uint8_t* msg,
-  size_t len) {
+  size_t len, uint32_t ppid) {
   TRACK();
   // TODO: callback app
   auto it = streams_.find(streamId);
@@ -1138,7 +1132,7 @@ void ConnectionFactory::Connection::OnSctpAssociationMessageReceived(
   }
 }
 void ConnectionFactory::Connection::OnSctpAssociationBufferedAmount(
-  SctpAssociation* sctpAssociation, uint32_t len) {
+  RTC::SctpAssociation* sctpAssociation, uint32_t len) {
   TRACK();
 }
 

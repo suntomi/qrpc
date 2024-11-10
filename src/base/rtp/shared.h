@@ -12,6 +12,7 @@ namespace rtp {
     ) {}
     ~Shared() {}
     RTC::Shared &get() { return shared_; }
+    Channel::ChannelSocket &socket() { return cs_; }
   protected:
     Channel::ChannelSocket cs_;
     RTC::Shared shared_;

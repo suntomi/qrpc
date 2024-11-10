@@ -23,7 +23,7 @@ namespace rtp {
 	std::string ConsumerFactory::GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind) { 
 		return "/c/" + id + "/" + label + "/" + Parameters::FromMediaKind(kind);
 	}
-  std::shared_ptr<Consumer> ConsumerFactory::Create(
+  Consumer *ConsumerFactory::Create(
     const Handler &peer, const Producer &local_producer, const std::string &label, Parameters::MediaKind kind,
     bool paused, bool pipe, std::vector<uint32_t> &generated_ssrcs
   ) {
@@ -48,29 +48,32 @@ namespace rtp {
     auto encodings = consumed_producer->params().PackConsumableEncodings(fbb, generated_ssrcs);
     auto id = GenerateId(peer.rtp_id(), label, kind);
     auto &producer_id = consumed_producer->id;
-    fbb.Finish(FBS::Transport::CreateConsumeRequestDirect(
-      fbb, id.c_str(), producer_id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
-      consumer_params.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings, 0, paused
-    ));
-		auto data = flatbuffers::GetRoot<FBS::Transport::ConsumeRequest>(fbb.GetBufferPointer());
-		try {
-      std::shared_ptr<Consumer> c;
+    Handler::SetConsumerFactory([m](
+			RTC::RtpParameters::Type type,
+			RTC::Shared* shared,
+			const std::string& id,
+			const std::string& producer_id,
+			RTC::Consumer::Listener* listener,
+			const FBS::Transport::ConsumeRequest* data
+    ) mutable -> RTC::Consumer * {
       switch (type) {
         case RTC::RtpParameters::Type::SIMPLE:
-          c = std::make_shared<Wrap<RTC::SimpleConsumer>>(&handler_.shared(), id, producer_id, &handler_, data, m);
-          break;
+          return new Wrap<RTC::SimpleConsumer>(shared, id, producer_id, listener, data, m);
         case RTC::RtpParameters::Type::SIMULCAST:
-          c = std::make_shared<Wrap<RTC::SimulcastConsumer>>(&handler_.shared(), id, producer_id, &handler_, data, m);
-          break;
+          return new Wrap<RTC::SimulcastConsumer>(shared, id, producer_id, listener, data, m);
         case RTC::RtpParameters::Type::PIPE:
-          c = std::make_shared<Wrap<RTC::PipeConsumer>>(&handler_.shared(), id, producer_id, &handler_, data, m);
-          break;
+          return new Wrap<RTC::PipeConsumer>(shared, id, producer_id, listener, data, m);
         default:
           QRPC_LOG(error, "invalid type: %d", type);
           return nullptr;
       }
-      consumers_[id] = c;
-      return c;
+    });
+		try {
+      handler_.HandleRequest(FBS::Request::Method::TRANSPORT_CONSUME, FBS::Transport::CreateConsumeRequestDirect(
+        fbb, id.c_str(), producer_id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
+        consumer_params.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings, 0, paused
+      ));
+      return handler_.FindConsumer(id);
     } catch (std::exception &e) {
       QRPC_LOG(error, "failed to create consumer: %s", e.what());
       return nullptr;

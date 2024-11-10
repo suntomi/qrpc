@@ -66,7 +66,8 @@ namespace rtp {
       return random::gen(100000000, 900000000);
     }
   public:
-    const FBS::Transport::ProduceRequest* MakeProduceRequest(const std::string &id) const;
+    ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
+    MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id) const;
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
     PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb, std::vector<uint32_t> &generated_ssrcs) const;
     static std::optional<RTC::RtpHeaderExtensionUri::Type> FromUri(const std::string &uri);
