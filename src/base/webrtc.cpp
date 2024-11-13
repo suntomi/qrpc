@@ -173,6 +173,7 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
           QRPC_LOGJ(info,{{"ev","from rtp"},{"plen",sz}});
         }
       );
+      DepUsrSCTP::CreateChecker();
     }
     g_ref_count_++;
 		return QRPC_OK;
