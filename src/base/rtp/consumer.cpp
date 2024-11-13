@@ -69,7 +69,7 @@ namespace rtp {
       }
     });
 		try {
-      handler_.HandleRequest(FBS::Request::Method::TRANSPORT_CONSUME, FBS::Transport::CreateConsumeRequestDirect(
+      handler_.HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CONSUME, FBS::Transport::CreateConsumeRequestDirect(
         fbb, id.c_str(), producer_id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
         consumer_params.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings, 0, paused
       ));

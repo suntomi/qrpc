@@ -152,7 +152,7 @@ namespace base {
       it = handlers_.erase(it);
       qrpc_time_t next = e.handler();
       if (next < now) {
-        logger::debug({{"ev","timer: stopped by rv"},{"tid",e.id},{"next",next}});
+        // logger::debug({{"ev","timer: stopped by rv"},{"tid",e.id},{"next",next}});
         schedule_times_.erase(e.id);
         continue;
       }

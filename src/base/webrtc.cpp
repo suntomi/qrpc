@@ -795,7 +795,6 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
   } else {
     rtp_handler_->ReceiveRtpPacket(packet);
   }
-  delete packet;
 }
 int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();

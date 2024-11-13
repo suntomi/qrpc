@@ -29,6 +29,7 @@ namespace rtp {
   class Handler : public RTC::Transport {
   public:
     typedef RTC::RtpHeaderExtensionIds ExtensionIds;
+    typedef ::flatbuffers::FlatBufferBuilder FBB;
     struct Config {
       size_t initial_outgoing_bitrate;
       size_t max_outgoing_bitrate, max_incoming_bitrate;
@@ -73,7 +74,7 @@ namespace rtp {
     static inline RTC::Shared &shared() { return shared_.get(); }
     static inline RTC::Router &router() { return router_; }
     static inline Channel::ChannelSocket &socket() { return shared_.socket(); }
-    static ::flatbuffers::FlatBufferBuilder &GetFBB() {
+    static FBB &GetFBB() {
       static thread_local ::flatbuffers::FlatBufferBuilder fbb;
       fbb.Clear();
       return fbb;
@@ -84,15 +85,14 @@ namespace rtp {
       return it != rid_scalability_mode_map_.end() ? it->second : "";
     }
     qrpc_time_t OnTimer(qrpc_time_t now);
-    template <typename BodyOffset> void HandleRequest(FBS::Request::Method m, BodyOffset ofs) {
+    template <typename BodyOffset> void HandleRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) {
       auto btit = payload_map_.find(m);
       if (btit == payload_map_.end()) {
         ASSERT(false);
         return;
       }
-      auto &fbb = GetFBB();
       fbb.Finish(FBS::Request::CreateRequestDirect(
-        fbb, 0, m, nullptr, btit->second, flatbuffers::Offset<void>(ofs.o)
+        fbb, 0, m, "dummy", btit->second, flatbuffers::Offset<void>(ofs.o)
       ));
       RTC::Transport::HandleRequest(
         &Channel::ChannelRequest(&socket(), flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()))
