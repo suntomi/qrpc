@@ -42,6 +42,13 @@ namespace rtp {
 		// more to come if needed
 	};
 	
+	const FBS::Transport::Options* Handler::TransportOptions() {
+		auto &fbb = GetFBB();
+		fbb.Finish(FBS::Transport::CreateOptions(
+			fbb, false, std::nullopt, std::nullopt, false)
+		);
+		return ::flatbuffers::GetRoot<FBS::Transport::Options>(fbb.GetBufferPointer());
+	}
 	bool Handler::Consume(
 		Handler &peer, const std::string &label, const ConsumeOptions &options,
 		std::vector<uint32_t> &generated_ssrcs

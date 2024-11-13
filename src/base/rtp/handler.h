@@ -65,7 +65,7 @@ namespace rtp {
     };
     typedef Listener::onSendCallback onSendCallback;
   public:
-    Handler(Listener &l) : RTC::Transport(&shared(), l.rtp_id(), &router(), nullptr),
+    Handler(Listener &l) : RTC::Transport(&shared(), l.rtp_id(), &router(), TransportOptions()),
       listener_(l), producer_factory_(*this), consumer_factory_(*this), medias_(),
       rid_label_map_(), trackid_label_map_(), ssrc_trackid_map_(), rid_scalability_mode_map_() {}
     inline Listener &listener() { return listener_; }
@@ -73,6 +73,12 @@ namespace rtp {
     static inline RTC::Shared &shared() { return shared_.get(); }
     static inline RTC::Router &router() { return router_; }
     static inline Channel::ChannelSocket &socket() { return shared_.socket(); }
+    static ::flatbuffers::FlatBufferBuilder &GetFBB() {
+      static thread_local ::flatbuffers::FlatBufferBuilder fbb;
+      fbb.Clear();
+      return fbb;
+    }
+    static const FBS::Transport::Options* TransportOptions();
     inline std::string FindScalabilityMode(const std::string &rid) {
       auto it = rid_scalability_mode_map_.find(rid);
       return it != rid_scalability_mode_map_.end() ? it->second : "";
@@ -84,8 +90,7 @@ namespace rtp {
         ASSERT(false);
         return;
       }
-      static thread_local ::flatbuffers::FlatBufferBuilder fbb;
-      fbb.Clear();
+      auto &fbb = GetFBB();
       fbb.Finish(FBS::Request::CreateRequestDirect(
         fbb, 0, m, nullptr, btit->second, flatbuffers::Offset<void>(ofs.o)
       ));

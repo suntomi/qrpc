@@ -132,8 +132,7 @@ namespace rtp {
 		return "/p/" + id + "/" + label + "/" + Parameters::FromMediaKind(kind);
 	}
   Producer *ProducerFactory::Create(const std::string &id, const Parameters &p) {
-    static thread_local ::flatbuffers::FlatBufferBuilder fbb;
-    fbb.Clear();
+		auto &fbb = Handler::GetFBB();
     auto m = handler_.FindFrom(p);
 		try {
 			Handler::SetProducerFactory([m, op = p](
