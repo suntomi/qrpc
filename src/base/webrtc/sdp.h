@@ -28,12 +28,19 @@ namespace webrtc {
     std::vector<Candidate> Candidates() const;
     bool FindMediaSection(const std::string &type, json &j) const;
   protected:
-    std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c) const;
     bool GetRemoteFingerPrint(const json &section, std::string &answer, RTC::DtlsTransport::Fingerprint &ret) const;
-    bool AnswerMediaSection(
+    rtp::Parameters *AnswerMediaSection(
       const json &section, const std::string &proto, ConnectionFactory::Connection &c,
-      std::string &answer, rtp::Parameters &param) const;
-    uint32_t AssignPriority(uint32_t component_id) const;
+      std::map<std::string, rtp::Parameters> &section_answer_map, std::string &errmsg) const;
+  public:
+    static std::string GenerateAnswer(
+      ConnectionFactory::Connection &c, const std::string &proto,
+      const std::map<std::string, rtp::Parameters> &paramsMap
+    );
+    static std::string GenerateSectionAnswer(ConnectionFactory::Connection &c,
+      const std::string &proto, const rtp::Parameters &p);
+    static std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c);
+    static uint32_t AssignPriority(uint32_t component_id);
   };
 } // namespace webrtc
 } // namespace base

@@ -117,7 +117,7 @@ class QRPClient {
             promise.reject(new Error(data.args.error));
             return;
           } else {
-            if (data.args.ssrc_label_map) {
+            if (!data.args.ssrc_label_map) {
               promise.reject(new Error(`invalid response: no ssrc_label_map: ${JSON.stringify(data.args)}`));
               return;
             }
@@ -148,6 +148,7 @@ class QRPClient {
     this.msgidSeed = 1;
     this.id = null;
     this.mediaHandshaked = false;
+    this.syscallStream = null;
   }
   initIce() {
     //Ice properties
@@ -175,13 +176,16 @@ class QRPClient {
       console.log("Already connected");
       return;
     }
-
+    // create dummy peer connection to generate sdp
     const pc = new RTCPeerConnection(); 
-    //Store pc object and token
+    // Store pc object and token
     this.pc = pc;
     this.initIce();
-
-    //Listen for data channels
+    this.#setupCallbacks(pc);
+    await this.#handshake();
+  }
+  #setupCallbacks(pc) {
+    // Listen for data channels
     pc.ondatachannel = (event) => {            
       const s = event.channel;
       console.log(`accept stream ${s.label}`);
@@ -194,7 +198,7 @@ class QRPClient {
       this.#setupStream(s, h);
     };
 
-    //Listen addition of media tracks
+    // Listen addition of media tracks
     pc.ontrack = async (event) => {
       console.log("ontrack", event);
       const track = event.track;
@@ -223,7 +227,14 @@ class QRPClient {
         if (!label) {
           // if local track, event.transceiver.sender.track may be registered
           if (event.transceiver) {
-            label = this.trackIdLabelMap[event.transceiver.sender.track.id];
+            if (event.transceiver.mid == "probator") {
+              console.log("ignore probator");
+              return;
+            }
+            console.log("event.transceiver.sender.track", event.transceiver.sender.track);
+            if (event.transceiver.sender.track != null) {
+              label = this.trackIdLabelMap[event.transceiver.sender.track.id];
+            }
           }
           if (!label) {
             console.log(`No label is defined for tid = ${tid}`);
@@ -252,7 +263,7 @@ class QRPClient {
       }
     }
     
-    //Listen for state change events
+    // Listen for state change events
     pc.oniceconnectionstatechange = (event) => {
       console.log("ICE connection state change", pc.iceConnectionState);
     };
@@ -273,7 +284,7 @@ class QRPClient {
       }
     }
 
-    //Listen for candidates
+    // Listen for candidates
     pc.onicecandidate = (event)=>{
       if (event.candidate) 
       {
@@ -290,17 +301,14 @@ class QRPClient {
         this.endOfcandidates = true;
       }
     }
-
+  }
+  async #handshake() {
     // generate syscall stream (it also ensures that SDP for data channel is generated)
     this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM);
-
+    // dummy onopen call to generate correct offer of dummy PeerConnection
     if (this.onopen) {
       this.context = await this.onopen();
     }
-
-    await this.#handshake();
-  }
-  async #handshake() {
     // Create new SDP offer
     const offer = await this.pc.createOffer();
     console.log("offer sdp", offer.sdp);
@@ -362,9 +370,29 @@ class QRPClient {
 
     this.id = answer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
     console.log("id", this.id, "answer sdp", answer);
-    
+
     //And set remote description
     await this.pc.setRemoteDescription({type:"answer",sdp:answer});
+
+    // // re-create RTCPeerConnection
+    // this.#clear();
+    // this.pc = new RTCPeerConnection();
+    // this.pc.setConfiguration({ iceTransportPolicy: 'all' });
+
+    // this.#setupCallbacks(this.pc);
+    // this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM);
+    // if (this.onopen) {
+    //   this.context = await this.onopen();
+    // }
+    // // And set remote description
+    // await this.pc.setRemoteDescription({type:"offer",sdp:answer});
+
+    // // (re)Set local description
+    // const localAnswer = await this.pc.createAnswer();
+    // localAnswer.sdp = localAnswer.sdp.replace(/a=ice-options:trickle/, "a=ice-options:trickle ice-lite")
+    //   .replace(/a=setup:passive/, `a=setup:active`);
+    // console.log("localAnswer", localAnswer);
+    // await this.pc.setLocalDescription(localAnswer);
   }
   close() {
     if (!this.pc) {

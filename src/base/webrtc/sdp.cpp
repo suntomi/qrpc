@@ -4,6 +4,8 @@
 
 #include "base/rtp/parameters.h"
 
+#include "RTC/RtpProbationGenerator.hpp"
+
 namespace base {
 namespace webrtc {
   int SDP::Offer(const ConnectionFactory::Connection &c,
@@ -133,13 +135,13 @@ a=max-message-size:%u
     }
     return v;
   }
-  uint32_t SDP::AssignPriority(uint32_t component_id) const {
+  uint32_t SDP::AssignPriority(uint32_t component_id) {
     // borrow from
     // https://github.com/IIlllII/bitbreeds-webrtc/blob/master/webrtc-signaling/src/main/java/com/bitbreeds/webrtc/signaling/SDPUtil.java#L191
     return 2113929216 + 16776960 + (256 - component_id);
   }
 
-  std::string SDP::CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c) const {
+  std::string SDP::CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c) {
     std::string sdplines;
     auto &l = c.factory().to<Listener>();
     ASSERT(proto == "UDP" || proto == "TCP");
@@ -180,54 +182,9 @@ a=max-message-size:%u)cands",
     return false;
   }
 
-  bool SDP::AnswerMediaSection(
-    const json &section, const std::string &proto,
-    ConnectionFactory::Connection &c,
-    std::string &answer, rtp::Parameters &params
-  ) const {
-    auto tit = section.find("type");
-    if (tit == section.end()) {
-      answer = "section: no value for key 'type'";
-      ASSERT(false);
-      return false;
-    }
-    auto media_type = tit->get<std::string>();
-    std::string payloads, sdplines;
-    if (media_type == "application") {
-      auto midit = section.find("mid");
-      if (midit == section.end()) {
-        answer = "section: no value for key 'mid'";
-        ASSERT(false);
-        return false;
-      }
-      auto portit = section.find("port");
-      if (portit == section.end()) {
-        answer = "rtpmap: no value for key 'port'";
-        ASSERT(false);
-        return false;
-      }
-      params.mid = midit->get<std::string>();
-      params.kind = rtp::Parameters::MediaKind::APP;
-      // network.port is mandatory
-      params.network.port = portit->get<uint16_t>();
-      payloads = " webrtc-datachannel";
-    } else {
-      c.InitRTP();
-      if (!params.Parse(c.rtp_handler(), section, answer)) {
-        return false;
-      }
-      for (auto &c : params.codecs) {
-        payloads += str::Format(" %llu", c.payloadType);
-      }
-    }
-    auto protoit = section.find("protocol");
-    if (protoit == section.end()) {
-      answer = "section: no value for key 'protocol'";
-      ASSERT(false);
-      return false;
-    }
-    auto rtp_proto = protoit->get<std::string>();
-    answer = str::Format(16384, R"sdp_section(m=%s %llu %s%s
+  std::string SDP::GenerateSectionAnswer(
+    ConnectionFactory::Connection &c, const std::string &proto, const rtp::Parameters &p) {
+    return str::Format(16 * 1024, R"sdp_section(m=%s %llu %s%s
 c=IN IP4 0.0.0.0
 a=mid:%s
 a=sendrecv
@@ -238,23 +195,99 @@ a=fingerprint:%s %s
 a=setup:active
 %s%s
 )sdp_section",
-      media_type.c_str(), params.network.port, rtp_proto.c_str(), payloads.c_str(),
-      params.mid.c_str(),
+      p.MediaKindName().c_str(), p.network.port, p.RtpProtocol().c_str(), p.Payloads().c_str(),
+      p.mid.c_str(),
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      params.Answer().c_str(),
+      p.Answer().c_str(),
       CandidatesSDP(proto, c).c_str()
     );
-    return true;
+  }
+
+  rtp::Parameters *SDP::AnswerMediaSection(
+    const json &section, const std::string &proto,
+    ConnectionFactory::Connection &c,
+    std::map<std::string, rtp::Parameters> &section_answer_map,
+    std::string &errmsg
+  ) const {
+    auto tit = section.find("type");
+    if (tit == section.end()) {
+      errmsg = "section: no value for key 'type'";
+      ASSERT(false);
+      return nullptr;
+    }
+    auto media_type = tit->get<std::string>();
+    rtp::Parameters params;
+    std::string sdplines;
+    if (media_type == "application") {
+      auto midit = section.find("mid");
+      if (midit == section.end()) {
+        errmsg = "section: no value for key 'mid'";
+        ASSERT(false);
+        return nullptr;
+      }
+      auto portit = section.find("port");
+      if (portit == section.end()) {
+        errmsg = "rtpmap: no value for key 'port'";
+        ASSERT(false);
+        return nullptr;
+      }
+      auto protoit = section.find("protocol");
+      if (protoit == section.end()) {
+        errmsg = "section: no value for key 'protocol'";
+        ASSERT(false);
+        return nullptr;
+      }
+      params.mid = midit->get<std::string>();
+      params.kind = rtp::Parameters::MediaKind::APP;
+      // network.port is mandatory
+      params.network.port = portit->get<uint16_t>();
+      params.rtp_proto = protoit->get<std::string>();
+    } else {
+      c.InitRTP();
+      if (!params.Parse(c.rtp_handler(), section, errmsg)) {
+        return nullptr;
+      }
+    }
+    auto kv = section_answer_map.emplace(params.mid, params);
+    // if (media_type == "video") {
+    //   auto probatorParam = params.ToProbator();
+    //   section_answer_map.emplace(probatorParam.mid, probatorParam);
+    // }
+    return &(kv.first->second);
+  }
+
+  std::string SDP::GenerateAnswer(
+    ConnectionFactory::Connection &c, const std::string &proto,
+    const std::map<std::string, rtp::Parameters> &paramsMap
+  ) {
+    auto now = qrpc_time_now();
+    auto bundle = std::string("a=group:BUNDLE");
+    std::string media_sections;
+    for (auto &kv : paramsMap) {
+      bundle += (" " + kv.first);
+      media_sections += GenerateSectionAnswer(c, proto, kv.second);
+    }
+    // string value to the str::Format should be converted to c string like str.c_str()
+    return str::Format(16 * 1024, R"sdp(v=0
+o=- %llu %llu IN IP4 0.0.0.0
+s=-
+t=0 0
+%s
+a=msid-semantic: WMS
+%s)sdp",
+      now, now,
+      bundle.c_str(),
+      media_sections.c_str()
+    );    
   }
 
   bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
-    auto now = qrpc_time_now();
-    auto bundle = std::string("a=group:BUNDLE");
     json dsec, asec, vsec;
-    std::map<std::string, std::string> section_answer_map;
-    std::string mid, media_sections, section_answer, proto;
+    std::map<std::string, rtp::Parameters> section_answer_map;
+    std::string media_sections, proto;
+    rtp::Parameters *params;
     if (FindMediaSection("application", dsec)) {
       // find protocol from SCTP backed transport
       auto protoit = dsec.find("protocol");
@@ -281,63 +314,38 @@ a=setup:active
         return false;
       }
       c.dtls_transport().SetRemoteFingerprint(fp);
-      rtp::Parameters params;
-      if (AnswerMediaSection(dsec, proto, c, section_answer, params)) {
-        section_answer_map[params.mid] = section_answer;
-      } else {
+      if ((params = AnswerMediaSection(dsec, proto, c, section_answer_map, answer)) == nullptr) {
         QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
-        answer = section_answer;
         ASSERT(false);
         return false;
       }
     }
     // TODO: should support multiple audio/video streams from same webrtc connection?
     if (FindMediaSection("audio", asec)) {
-      rtp::Parameters params;
-      if (AnswerMediaSection(asec, proto, c, section_answer, params)) {
-        if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
+      if ((params = AnswerMediaSection(asec, proto, c, section_answer_map, answer)) != nullptr) {
+        if (c.rtp_handler().Produce(c.rtp_id(), *params) != QRPC_OK) {
           answer = "fail to create audio producer";
           return false;
         }
-        section_answer_map[params.mid] = section_answer;
       } else {
-        answer = section_answer;
         QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
         ASSERT(false);
         return false;
       }
     }
     if (FindMediaSection("video", vsec)) {
-      rtp::Parameters params;
-      if (AnswerMediaSection(vsec, proto, c, section_answer, params)) {
-        if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
+      if ((params = AnswerMediaSection(vsec, proto, c, section_answer_map, answer)) != nullptr) {
+        if (c.rtp_handler().Produce(c.rtp_id(), *params) != QRPC_OK) {
           answer = "fail to create video producer";
           return false;
         }
-        section_answer_map[params.mid] = section_answer;
       } else {
-        answer = section_answer;
         QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
         ASSERT(false);
         return false;
       }
     }
-    for (auto &kv : section_answer_map) {
-      bundle += (" " + kv.first);
-      media_sections += kv.second;
-    }
-    // string value to the str::Format should be converted to c string like str.c_str()
-    answer = str::Format(16 * 1024, R"sdp(v=0
-o=- %llu %llu IN IP4 0.0.0.0
-s=-
-t=0 0
-%s
-a=msid-semantic: WMS
-%s)sdp",
-      now, now,
-      bundle.c_str(),
-      media_sections.c_str()
-    );
+    answer = GenerateAnswer(c, proto, section_answer_map);
     return true;
   }
 } // namespace webrtc

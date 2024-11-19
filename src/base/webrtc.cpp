@@ -138,6 +138,19 @@ ConnectionFactory::FindFromUfrag(const IceUFrag &ufrag) {
 uint32_t ConnectionFactory::g_ref_count_ = 0;
 std::mutex ConnectionFactory::g_ref_sync_mutex_;
 static Channel::ChannelSocket g_channel_socket_(INVALID_FD, INVALID_FD);
+std::string byteArrayToString(const uint8_t *p, size_t sz) {
+    std::ostringstream oss;
+    for (auto i = 0; i < sz; i++) {
+      auto byte = p[i];
+      if (byte >= 32 && byte <= 126) {
+        // ASCII範囲内の文字はそのまま追加
+        oss << static_cast<char>(byte);
+      } else {
+        oss << "\\x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+      }
+    }
+    return oss.str();
+}
 int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 	try
 	{
@@ -170,7 +183,7 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
       );
       UnixStreamSocketHandle::SetWriter(
         [](const uint8_t *p, size_t sz) {
-          QRPC_LOGJ(info,{{"ev","from rtp"},{"plen",sz}});
+          QRPC_LOGJ(info,{{"ev","from rtp"},{"msg",byteArrayToString(p, sz)}});
         }
       );
       DepUsrSCTP::CreateChecker();
@@ -366,10 +379,10 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       std::map<uint32_t,std::string> ssrc_label_map;
       if (!c.Consume(path, options, ssrc_label_map)) {
         QRPC_LOGJ(error, {{"ev","fail to consume"},{"path",path}});
-        Call("nego_ack",{{"msgid",msgid},{"error","fail to consume"}});
+        Call("consume_ack",{{"msgid",msgid},{"error","fail to consume"}});
         return QRPC_OK;
       }
-      Call("nego_ack",{{"msgid",msgid},{"ssrc_label_map",ssrc_label_map}});
+      Call("consume_ack",{{"msgid",msgid},{"ssrc_label_map",ssrc_label_map}});
     } else {
       QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
       ASSERT(false);

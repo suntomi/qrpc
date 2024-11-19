@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/crypto.h"
+#include "base/string.h"
 
 #include <FBS/transport.h>
 #include "RTC/RtpDictionaries.hpp"
@@ -10,29 +11,6 @@
 namespace base {
 namespace rtp {
   class Handler;
-  class Capability {
-  public:
-    enum MediaKind {
-      AUDIO,
-      VIDEO,
-    };
-    struct RtcpFeedback {
-
-    };
-    struct Codec {
-      MediaKind kind;
-      std::string mime_type;
-      uint64_t preferred_payload_type;
-      uint32_t clock_rate;
-      uint32_t channels;
-      std::map<std::string, std::string> parameters;
-      std::vector<RtcpFeedback> rtcp_fb;
-    };
-  public:
-    Capability() {}
-  public:
-    std::vector<Codec> codecs;
-  };
   class Parameters : public RTC::RtpParameters {
   public:
     struct NetworkParameters {
@@ -54,7 +32,19 @@ namespace rtp {
     Parameters() : RTC::RtpParameters(), ssrc_seed(GenerateSsrc()) {}
     bool Parse(Handler &h, const json &section, std::string &answer);
     std::string Answer() const;
+    std::string Payloads() const {
+      if (kind == rtp::Parameters::MediaKind::APP) {
+        return " webrtc-datachannel";
+      }
+      std::string payloads;
+      for (auto &c : codecs) {
+        payloads += str::Format(" %llu", c.payloadType);
+      }
+      return payloads;
+    }
+    const Parameters ToProbator() const;
     static std::string FromMediaKind(MediaKind k);
+    inline const std::string &RtpProtocol() const { return rtp_proto; }
     inline std::string MediaKindName() const { return FromMediaKind(kind); }
     RTC::RtpCodecParameters *CodecByPayloadType(uint64_t pt);
     void AddEncoding(
@@ -82,6 +72,7 @@ namespace rtp {
   public:
     MediaKind kind;
     NetworkParameters network;
+    std::string rtp_proto;
     uint32_t ssrc_seed;
     std::map<uint32_t, SsrcParameter> ssrcs;
     std::vector<RTC::RtpCodecParameters> codec_capabilities;

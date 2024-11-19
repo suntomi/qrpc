@@ -2,10 +2,39 @@
 
 #include "base/string.h"
 #include "base/rtp/handler.h"
+#include "base/webrtc/sdp.h"
 
 #include "FBS/transport.h"
 
 namespace base {
+namespace webrtc {
+  static inline uint32_t AssignPriority(uint32_t component_id) {
+    // borrow from
+    // https://github.com/IIlllII/bitbreeds-webrtc/blob/master/webrtc-signaling/src/main/java/com/bitbreeds/webrtc/signaling/SDPUtil.java#L191
+    return 2113929216 + 16776960 + (256 - component_id);
+  }
+
+  static inline std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c) {
+    std::string sdplines;
+    auto &l = c.factory().to<Listener>();
+    ASSERT(proto == "UDP" || proto == "TCP");
+    auto nwport = proto == "UDP" ? l.udp_port() : l.tcp_port();
+    size_t idx = 0;
+    for (auto &a : c.factory().config().ifaddrs) {
+      sdplines += str::Format(
+        "a=candidate:0 %u %s %u %s %u typ host\n",
+        idx + 1, proto.c_str(), AssignPriority(idx), a.c_str(), nwport
+      );
+      idx++;
+    }
+    sdplines += str::Format(R"cands(a=end-of-candidates
+a=sctp-port:5000
+a=max-message-size:%u)cands",
+      c.factory().config().send_buffer_size
+    );
+    return sdplines;
+  }    
+}
 namespace rtp {
   #define FIND_OR_RAISE(__name, __it, __key) \
     auto __name = __it->find(__key); \
@@ -191,6 +220,33 @@ namespace rtp {
     p.hasRtx = rtxpt != 0; // here, rtx ssrc is unknown
     encodings.push_back(p);
   }
+  const Parameters Parameters::ToProbator() const {
+    Parameters p;
+    p.mid = RTC::RtpProbationGenerator::GetMidValue();
+    p.kind = kind;
+    p.rtp_proto = rtp_proto;
+    p.network = network;
+    // ssrc_seed is unnecessary
+    // p.ssrc_seed = ssrc_seed;
+    // keep ssrcs empty
+    // p.ssrcs = ssrcs;
+    // codec_capabilities is unnecessary
+    // p.codec_capabilities = codec_capabilities;
+    p.headerExtensions = headerExtensions;
+    // remove rtx if exists and change payload type to 127
+    for (auto &c : codecs) {
+      if (!c.mimeType.IsMediaCodec()) {
+        continue;
+      }
+      auto cc = c;
+      cc.payloadType = RTC::RtpProbationCodecPayloadType;
+      p.codecs.push_back(cc);
+    }
+    // encoding is unnecessary
+    // p.encodings = encodings;
+    return p;
+  }
+
   bool Parameters::Parse(Handler &h, const json &section, std::string &answer)  {
     auto midit = section.find("mid");
     if (midit == section.end()) {
@@ -198,6 +254,13 @@ namespace rtp {
       ASSERT(false);
       return false;
     }
+    auto rpit = section.find("protocol");
+    if (rpit == section.end()) {
+      answer = "section: no value for key 'rtp'";
+      ASSERT(false);
+      return false;
+    }
+    this->rtp_proto = rpit->get<std::string>();
     auto tyit = section.find("type");
     if (tyit == section.end()) {
       answer = "section: no value for key 'type'";

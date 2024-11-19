@@ -128,6 +128,7 @@ namespace webrtc {
       inline const std::string &cname() const { return cname_; }
       inline RTC::DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
       inline rtp::Handler &rtp_handler() { return *rtp_handler_.get(); }
+      inline bool rtp_enabled() const { return rtp_handler_ != nullptr; }
       // for now, qrpc server initiates dtls transport because safari does not initiate it
       // even if we specify "setup: passive" in SDP of whip response
       inline bool is_client() const { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
@@ -355,7 +356,7 @@ namespace webrtc {
             qrpc_time_t next_check;
             auto cur = s++;
             if (cur->second->Timeout(now, config_.connection_timeout, next_check)) {
-                // inside Close, the entry will be erased
+                // inside CloseConnection, the entry will be erased
                 CloseConnection(*cur->second);
             } else {
                 nearest_check = std::min(nearest_check, next_check);
