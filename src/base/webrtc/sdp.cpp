@@ -186,6 +186,7 @@ a=max-message-size:%u)cands",
     ConnectionFactory::Connection &c, const std::string &proto, 
     const rtp::Parameters &p, bool for_consumer
   ) {
+    ASSERT(!for_consumer || !c.producer_cname().empty());
     return str::Format(16 * 1024, R"sdp_section(m=%s %llu %s%s
 c=IN IP4 0.0.0.0
 a=mid:%s
@@ -202,7 +203,7 @@ a=setup:active
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      for_consumer ? p.Answer(c.cname()).c_str() : p.Answer().c_str(),
+      for_consumer ? p.Answer(c.producer_cname()).c_str() : p.Answer().c_str(),
       CandidatesSDP(proto, c).c_str()
     );
   }
@@ -215,6 +216,7 @@ a=setup:active
     auto bundle = std::string("a=group:BUNDLE");
     std::string media_sections;
     for (auto &kv : params_map) {
+      QRPC_LOGJ(info, {{"ev","params_map"},{"mid", kv.first}});
       bundle += (" " + kv.first);
       media_sections += GenerateSectionAnswer(c, proto, *kv.second, for_consumer);
     }

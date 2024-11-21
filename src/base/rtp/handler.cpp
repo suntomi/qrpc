@@ -60,7 +60,7 @@ namespace rtp {
 	bool Handler::PrepareConsume(
       Handler &peer, const std::string &label, 
 			const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
-			std::map<std::string, rtp::Handler::ConsumeConfig> consume_config_map,
+			std::map<std::string, rtp::Handler::ConsumeConfig> &consume_config_map,
 			std::vector<uint32_t> &generated_ssrcs
 	) {
 		static const std::vector<Parameters::MediaKind> kinds = {
@@ -69,12 +69,14 @@ namespace rtp {
 		for (const auto k : kinds) {
 			auto media_path = ProducerFactory::GenerateId(peer.rtp_id(), label, k);
 			if (consume_config_map.find(media_path) != consume_config_map.end()) {
-				// already prepared
+				QRPC_LOGJ(info, {
+					{"ev","ignore media because already prepared"},
+					{"label",label},{"kind",Parameters::FromMediaKind(k)}
+				});
 				continue;
 			}
 			auto local_producer = FindProducer(label, k);
 			if (local_producer == nullptr) {
-				// cannot consume this kind of media because no capability sent from client
 				QRPC_LOGJ(info, {
 					{"ev","ignore media because corresponding producer not found"},
 					{"label",label},{"kind",Parameters::FromMediaKind(k)}
@@ -83,7 +85,6 @@ namespace rtp {
 			}
 			auto consumed_producer = peer.FindProducer(label, k);
 			if (local_producer == nullptr) {
-				// cannot consume this kind of media because no capability sent from client
 				QRPC_LOGJ(info, {
 					{"ev","ignore media because corresponding producer of peer not found"},
 					{"label",label},{"kind",Parameters::FromMediaKind(k)},{"peer",peer.rtp_id()}
@@ -108,7 +109,18 @@ namespace rtp {
 			config.rtp_proto = consumed_producer->params().rtp_proto;
 			config.ssrc_seed = consumed_producer->params().ssrc_seed;
 			consumed_producer->params().GetGeneratedSsrc(generated_ssrcs);
+			// if video consumer and there is no probator mid, generate probator mid => param pair
+			auto probator_mid = RTC::RtpProbationGenerator::GetMidValue();
+			if (k == Parameters::MediaKind::VIDEO && consume_config_map.find(probator_mid) == consume_config_map.end()) {
+				auto probator_entry = consume_config_map.emplace(probator_mid, ConsumeConfig(config.ToProbator()));
+				auto &probator_config = probator_entry.first->second;
+				probator_config.kind = config.kind;
+				probator_config.network = config.network;
+				probator_config.rtp_proto = config.rtp_proto;
+				probator_config.ssrc_seed = config.ssrc_seed;
+			}
 		}
+		QRPC_LOGJ(info, {{"ev","set consume configs"},{"configs",consume_config_map.size()}});
 		return true;
 	}
 

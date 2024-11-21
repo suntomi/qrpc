@@ -42,6 +42,7 @@ namespace rtp {
     };
     struct ConsumeConfig : public Parameters {
       ConsumeConfig() : Parameters() {}
+      ConsumeConfig(const Parameters &p) : Parameters(p) {}
       std::string media_path;
       ConsumeOptions options;
     };
@@ -108,7 +109,7 @@ namespace rtp {
     bool PrepareConsume(
       Handler &peer, const std::string &label, 
       const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
-      std::map<std::string, rtp::Handler::ConsumeConfig> consume_config_map, std::vector<uint32_t> &generated_ssrcs);
+      std::map<std::string, rtp::Handler::ConsumeConfig> &consume_config_map, std::vector<uint32_t> &generated_ssrcs);
     bool Consume(Handler &peer, const std::string &label, const ConsumeConfig &config);
     bool SetExtensionId(uint8_t id, const std::string &uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);

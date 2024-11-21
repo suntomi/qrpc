@@ -126,6 +126,7 @@ namespace webrtc {
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
       inline const IceUFrag &ufrag() const { return ice_server().GetUsernameFragment(); }
       inline const std::string &cname() const { return cname_; }
+      inline const std::string &producer_cname() const { return producer_cname_; }
       inline RTC::DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
       inline rtp::Handler &rtp_handler() { return *rtp_handler_.get(); }
       inline bool rtp_enabled() const { return rtp_handler_ != nullptr; }
@@ -137,6 +138,7 @@ namespace webrtc {
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void SetCname(const std::string &cname);
+      void SetProducerCname(const std::string &cname) { producer_cname_ = cname; }
       void InitRTP();
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
@@ -265,7 +267,7 @@ namespace webrtc {
       std::shared_ptr<SyscallStream> syscall_;
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_;
-      std::string cname_;
+      std::string cname_, producer_cname_;
       std::shared_ptr<Connection> consumer_connection_;
       std::map<std::string, rtp::Handler::ConsumeConfig> consume_config_map_; // media_path => consume config
       bool sctp_connected_, closed_;
@@ -353,7 +355,7 @@ namespace webrtc {
       cnmap_.emplace(cname, c);
     }
     std::shared_ptr<Connection> Create(
-      RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd);
+      RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd, bool do_entry = false);
     void CloseConnection(Connection &c);
     void CloseConnection(const IceUFrag &ufrag) {
       auto it = connections_.find(ufrag);

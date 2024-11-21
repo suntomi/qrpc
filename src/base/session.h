@@ -263,7 +263,7 @@ namespace base {
             }
             inline bool migrated() const { return fd_ == INVALID_FD; }
             // implements Session
-            const char *proto() const { return "tcp"; }
+            const char *proto() const { return "TCP"; }
             // implements IoProcessor
             void OnEvent(Fd fd, const Event &e) override {
                 ASSERT(fd == fd_);
@@ -495,7 +495,7 @@ namespace base {
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
             int Flush(); 
             // implements Session
-            const char *proto() const { return "udp"; }
+            const char *proto() const { return "UDP"; }
             int Send(const char *data, size_t sz) override {
                 return Write(data, sz);
             }

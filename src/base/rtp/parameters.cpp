@@ -698,6 +698,7 @@ namespace rtp {
         has_ssrc = true;
       }
     } else {
+      QRPC_LOGJ(info, {{"ev","cname is not empty"},{"encodings_size",encodings.size()}});
       auto seed = ssrc_seed;
       for (auto &e : encodings) {
         auto ssrc = seed++;
@@ -706,6 +707,7 @@ namespace rtp {
       }
     }
     if (has_ssrc) {
+      QRPC_LOGJ(info, {{"ev","add ssrcline"},{"ssrcline",ssrcline}});
       sdplines += ssrcline;
     }
     std::string scline = "\na=simulcast:";

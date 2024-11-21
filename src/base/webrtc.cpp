@@ -100,6 +100,7 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
       {"ev","ignoring received STUN packet with unknown remote ICE usernameFragment"},
       {"ufrag",key}
     });
+    ASSERT(false);
     return nullptr;
     // validate packet is properly authorized    
   } else if (!it->second->ice_server().ValidatePacket(*packet)) {
@@ -216,7 +217,9 @@ void ConnectionFactory::GlobalFin() {
 	}
 }
 std::shared_ptr<Connection> ConnectionFactory::Create(
-  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd) {
+  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd,
+  bool do_entry
+) {
   auto c = std::shared_ptr<Connection>(factory_method_(*this, dtls_role));
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
@@ -226,6 +229,9 @@ std::shared_ptr<Connection> ConnectionFactory::Create(
   if ((r = c->Init(ufrag, pwd)) < 0) {
     logger::error({{"ev","fail to init connection"},{"rc",r}});
     return nullptr;
+  }
+  if (do_entry) {
+    connections_[ufrag] = c;
   }
   return c;
 }
@@ -443,12 +449,13 @@ bool ConnectionFactory::Connection::PrepareConsume(
   }
   if (consumer_connection_ == nullptr) {
     std::string ufrag, pwd;
-    consumer_connection_ = factory().Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd);
+    consumer_connection_ = factory().Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd, true);
     if (consumer_connection_ == nullptr) {
       QRPC_LOGJ(error, {{"ev","fail to create connection"}});
       ASSERT(false);
       return false;
     }
+    consumer_connection_->SetProducerCname(cname());
   }
   auto h = factory().FindHandler(parsed[0]);
   std::vector<uint32_t> generated_ssrcs;
@@ -463,6 +470,7 @@ bool ConnectionFactory::Connection::PrepareConsume(
     sdp = SDP::GenerateAnswer(*consumer_connection_, proto, params_map_ref, true);
     return true;
   } else {
+    ASSERT(false);
     return false;
   }
 }
