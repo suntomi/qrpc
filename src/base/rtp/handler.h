@@ -36,8 +36,14 @@ namespace rtp {
       size_t min_outgoing_bitrate;
     };
     struct ConsumeOptions {
-      bool pause_video{false};
-      bool pause_audio{false};
+      ConsumeOptions(const json &j);
+      ConsumeOptions() : pause(false) {}
+      bool pause;
+    };
+    struct ConsumeConfig : public Parameters {
+      ConsumeConfig() : Parameters() {}
+      std::string media_path;
+      ConsumeOptions options;
     };
     struct RouterListener : RTC::Router::Listener {
       RTC::WebRtcServer* OnRouterNeedWebRtcServer(
@@ -99,14 +105,11 @@ namespace rtp {
       );
     }
     int Produce(const std::string &id, const Parameters &p);
-    bool Consume(
-      Handler &peer, const std::string &media_id, const ConsumeOptions &options,
-      std::vector<uint32_t> &generated_ssrcs
-    );
-    bool ConsumeMedia(
-      Parameters::MediaKind kind, Handler &peer, const std::string &label, bool paused,
-      std::vector<uint32_t> &generated_ssrcs
-    );
+    bool PrepareConsume(
+      Handler &peer, const std::string &label, 
+      const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
+      std::map<std::string, rtp::Handler::ConsumeConfig> consume_config_map, std::vector<uint32_t> &generated_ssrcs);
+    bool Consume(Handler &peer, const std::string &label, const ConsumeConfig &config);
     bool SetExtensionId(uint8_t id, const std::string &uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     std::shared_ptr<Media> FindFrom(const Parameters &p);

@@ -133,11 +133,15 @@ namespace rtp {
     }
     return r;
   }
+  void Parameters::GetGeneratedSsrc(std::vector<uint32_t> &generated_ssrcs) const {
+    auto seed = ssrc_seed;
+    for (auto &e : encodings) {
+      auto ssrc = seed++;
+      generated_ssrcs.emplace_back(ssrc);
+    }
+  }
   std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
-  Parameters::PackConsumableEncodings(
-    ::flatbuffers::FlatBufferBuilder &fbb,
-    std::vector<uint32_t> &generated_ssrcs
-  ) const {
+  Parameters::PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const {
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>> r;
     r.reserve(encodings.size());
     auto seed = ssrc_seed;
@@ -150,7 +154,6 @@ namespace rtp {
         e.scalabilityMode.empty() ? nullptr : e.scalabilityMode.c_str(),
         e.maxBitrate != 0 ? std::optional(e.maxBitrate) : std::nullopt
       ));
-      generated_ssrcs.emplace_back(ssrc);
     }
     return r;
   }
@@ -580,7 +583,8 @@ namespace rtp {
     }
     return true;
   }
-  std::string Parameters::Answer() const {
+  std::string Parameters::Answer(const std::string &cname) const {
+    // if cname is not empty, answer is for consuming peer connection
 		// std::string mid;
 		// std::vector<RtpCodecParameters> codecs;
 		// std::vector<RtpEncodingParameters> encodings;
@@ -685,6 +689,24 @@ namespace rtp {
           c.payloadType, paramsline.c_str(), c.payloadType
         );
       }
+    }
+    std::string ssrcline;
+    bool has_ssrc = false;
+    if (cname.empty()) {
+      for (auto &kv : ssrcs) {
+        ssrcline += str::Format("\na=ssrc:%u cname:%s", kv.first, kv.second.cname.c_str());
+        has_ssrc = true;
+      }
+    } else {
+      auto seed = ssrc_seed;
+      for (auto &e : encodings) {
+        auto ssrc = seed++;
+        ssrcline += str::Format("\na=ssrc:%u cname:%s", ssrc, cname.c_str());
+        has_ssrc = true;
+      }
+    }
+    if (has_ssrc) {
+      sdplines += ssrcline;
     }
     std::string scline = "\na=simulcast:";
     bool has_sc = false;

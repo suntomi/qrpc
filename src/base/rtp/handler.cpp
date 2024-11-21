@@ -41,6 +41,14 @@ namespace rtp {
 		{ FBS::Request::Method::TRANSPORT_PRODUCE, FBS::Request::Body::Transport_ProduceRequest },
 		// more to come if needed
 	};
+
+	Handler::ConsumeOptions::ConsumeOptions(const json &j) {
+		if (j.is_object()) {
+			if (j.contains("pause")) {
+				pause = j["pause"].get<bool>();
+			}
+		}
+	}
 	
 	const FBS::Transport::Options* Handler::TransportOptions() {
 		auto &fbb = GetFBB();
@@ -49,24 +57,61 @@ namespace rtp {
 		);
 		return ::flatbuffers::GetRoot<FBS::Transport::Options>(fbb.GetBufferPointer());
 	}
-	bool Handler::Consume(
-		Handler &peer, const std::string &label, const ConsumeOptions &options,
-		std::vector<uint32_t> &generated_ssrcs
+	bool Handler::PrepareConsume(
+      Handler &peer, const std::string &label, 
+			const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
+			std::map<std::string, rtp::Handler::ConsumeConfig> consume_config_map,
+			std::vector<uint32_t> &generated_ssrcs
 	) {
 		static const std::vector<Parameters::MediaKind> kinds = {
 			Parameters::MediaKind::AUDIO, Parameters::MediaKind::VIDEO
 		};
 		for (const auto k : kinds) {
-			if (!ConsumeMedia(k, peer, label, options.pause_audio, generated_ssrcs)) {
-				return false;
+			auto local_producer = FindProducer(label, k);
+			if (local_producer == nullptr) {
+				// cannot consume this kind of media because no capability sent from client
+				QRPC_LOGJ(info, {
+					{"ev","ignore media because corresponding producer not found"},
+					{"label",label},{"kind",Parameters::FromMediaKind(k)}
+				});
+				continue;
 			}
+			auto consumed_producer = peer.FindProducer(label, k);
+			if (local_producer == nullptr) {
+				// cannot consume this kind of media because no capability sent from client
+				QRPC_LOGJ(info, {
+					{"ev","ignore media because corresponding producer of peer not found"},
+					{"label",label},{"kind",Parameters::FromMediaKind(k)},{"peer",peer.rtp_id()}
+				});
+				continue;
+			}
+			auto mid = consumer_factory_.GenerateMid();
+			auto entry = consume_config_map.emplace(mid, ConsumeConfig());
+			auto &config = entry.first->second;
+			config.mid = mid;
+			config.media_path = ProducerFactory::GenerateId(peer.rtp_id(), label, k);
+			config.options = options_map.find(k) == options_map.end() ? ConsumeOptions() : options_map.find(k)->second;
+			// generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
+			if (!local_producer->consumer_params(consumed_producer->params(), config)) {
+				QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
+				ASSERT(false);
+				continue;
+			}
+			// copy additional parameter from producer that affects sdp generation
+			config.kind = k;
+			config.network = consumed_producer->params().network;
+			config.rtp_proto = consumed_producer->params().rtp_proto;
+			config.ssrc_seed = consumed_producer->params().ssrc_seed;
+			consumed_producer->params().GetGeneratedSsrc(generated_ssrcs);
 		}
 		return true;
 	}
-	bool Handler::ConsumeMedia(
-		Parameters::MediaKind kind, Handler &peer, const std::string &label, bool paused,
-		std::vector<uint32_t> &generated_ssrcs
+
+	bool Handler::Consume(
+		Handler &peer, const std::string &label, const ConsumeConfig &config
 	) {
+		const auto &options = config.options;
+		const auto &kind = config.kind;
 		// 1. get corresponding producer from peer handler
 		//	first, find correspoinding producer id with label, audio/video, from peer handler 
 		// 2. create consumer with the found producer, parameters, and label
@@ -76,7 +121,8 @@ namespace rtp {
 			QRPC_LOGJ(error, {{"ev","producer not found"},{"label",label},{"kind",Parameters::FromMediaKind(kind)}});
 			return false;
 		}
-		auto consumer = consumer_factory_.Create(peer, *producer, label, kind, paused, false, generated_ssrcs);
+		// false for creating pipe consumer: TODO: support pipe consumer
+		auto consumer = consumer_factory_.Create(peer, label, kind, config, options.pause, false);
 		if (consumer == nullptr) {
 				QRPC_LOGJ(error, {{"ev","fail to create consumer"}});
 				ASSERT(false);

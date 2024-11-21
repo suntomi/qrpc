@@ -215,6 +215,20 @@ void ConnectionFactory::GlobalFin() {
     logger::error({{"ev","mediasoup cleanup failure"},{"reason",error.what()}});
 	}
 }
+std::shared_ptr<Connection> ConnectionFactory::Create(
+  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd) {
+  auto c = std::shared_ptr<Connection>(factory_method_(*this, dtls_role));
+  if (c == nullptr) {
+    logger::error({{"ev","fail to allocate connection"}});
+    return nullptr;
+  }
+  int r;
+  if ((r = c->Init(ufrag, pwd)) < 0) {
+    logger::error({{"ev","fail to init connection"},{"rc",r}});
+    return nullptr;
+  }
+  return c;
+}
 
 // ConnectionFactory::Config
 int ConnectionFactory::Config::Derive() {
@@ -362,27 +376,28 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         return QRPC_OK;
       }
       const auto msgid = mit->second.get<uint64_t>();
-      ConsumeOptions options;
+      std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map;
       const auto oit = args.find("options");
       if (oit != args.end()) {
         const auto &opts = oit->second.get<std::map<std::string,json>>();
-        const auto v = opts.find("pause_video");
+        const auto v = opts.find("video");
         if (v != opts.end()) {
-          options.pause_video = v->second;
+          options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
         }
-        const auto a = opts.find("pause_audio");
+        const auto a = opts.find("audio");
         if (a != opts.end()) {
-          options.pause_video = a->second;
+          options_map.emplace(rtp::Parameters::MediaKind::AUDIO, v->second);
         }
       }
       auto path = pathit->second.get<std::string>();
+      std::string sdp;
       std::map<uint32_t,std::string> ssrc_label_map;
-      if (!c.Consume(path, options, ssrc_label_map)) {
+      if (!c.PrepareConsume(path, options_map, sdp, ssrc_label_map)) {
         QRPC_LOGJ(error, {{"ev","fail to consume"},{"path",path}});
         Call("consume_ack",{{"msgid",msgid},{"error","fail to consume"}});
         return QRPC_OK;
       }
-      Call("consume_ack",{{"msgid",msgid},{"ssrc_label_map",ssrc_label_map}});
+      Call("consume_ack",{{"msgid",msgid},{"ssrc_label_map",ssrc_label_map},{"sdp",sdp}});
     } else {
       QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
       ASSERT(false);
@@ -415,9 +430,10 @@ void ConnectionFactory::Connection::InitRTP() {
     rtp_handler_ = std::make_shared<rtp::Handler>(*this);
   }
 }
-bool ConnectionFactory::Connection::Consume(
-  const std::string &media_path, const ConsumeOptions &options,
-  std::map<uint32_t,std::string> &ssrc_label_map
+bool ConnectionFactory::Connection::PrepareConsume(
+  const std::string &media_path, 
+  const std::map<rtp::Parameters::MediaKind, ConsumeOptions> &options_map,
+  std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map
 ) {
   auto parsed = str::Split(media_path, "/");
   if (parsed.size() < 2) {
@@ -425,12 +441,58 @@ bool ConnectionFactory::Connection::Consume(
     ASSERT(false);
     return false;
   }
+  if (consumer_connection_ == nullptr) {
+    std::string ufrag, pwd;
+    consumer_connection_ = factory().Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd);
+    if (consumer_connection_ == nullptr) {
+      QRPC_LOGJ(error, {{"ev","fail to create connection"}});
+      ASSERT(false);
+      return false;
+    }
+  }
   auto h = factory().FindHandler(parsed[0]);
   std::vector<uint32_t> generated_ssrcs;
-  if (rtp_handler().Consume(*h, parsed[1], options, generated_ssrcs)) {
+  if (rtp_handler().PrepareConsume(
+    *h, parsed[1], options_map, consumer_connection_->consume_config_map(), generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = parsed[1];
     }
+    auto proto = ice_server().GetSelectedSession()->proto();
+    std::map<std::string, const rtp::Parameters *> params_map_ref;
+    for (const auto &kv : consumer_connection_->consume_config_map()) { params_map_ref[kv.first] = &kv.second; }
+    sdp = SDP::GenerateAnswer(*consumer_connection_, proto, params_map_ref, true);
+    return true;
+  } else {
+    return false;
+  }
+}
+bool ConnectionFactory::Connection::Consume() {
+  if (consumer_connection_ != nullptr || !is_consumer()) {
+    QRPC_LOGJ(error, {{"ev","this should be consumer connection"}});
+    ASSERT(false);
+    return false;
+  }
+  // force initiate rtp
+  InitRTP();
+  for (const auto &entry : consumer_connection_->consume_config_map()) {
+    if (!ConsumeMedia(entry.second)) {
+      return false;
+    }
+  }
+  return true;
+}
+bool ConnectionFactory::Connection::ConsumeMedia(
+  const rtp::Handler::ConsumeConfig &config
+) {
+  auto parsed = str::Split(config.media_path, "/");
+  if (parsed.size() < 2) {
+    QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",config.media_path}});
+    ASSERT(false);
+    return false;
+  }
+  auto h = factory().FindHandler(parsed[0]);
+  std::vector<uint32_t> generated_ssrcs;
+  if (rtp_handler().Consume(*h, parsed[1], config)) {
     return true;
   } else {
     return false;
@@ -675,6 +737,9 @@ int ConnectionFactory::Connection::RunDtlsTransport() {
 }
 void ConnectionFactory::Connection::OnDtlsEstablished() {
   sctp_association_->TransportConnected();
+  if (is_consumer()) {
+    Consume();
+  }
   if (rtp_handler_ != nullptr) {
     rtp_handler_->Connected();
   }
@@ -1441,17 +1506,13 @@ int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
   logger::info({{"ev","new client connection"}});
   // client connection's dtls role is server, workaround fo osx safari (16.4) does not initiate DTLS handshake
   // even if sdp anwser ask to do it.
-  auto c = std::shared_ptr<Connection>(factory_method_(*this, RTC::DtlsTransport::Role::SERVER));
+  std::string pwd;
+  auto c = Create(RTC::DtlsTransport::Role::SERVER, ufrag, pwd);
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return QRPC_EALLOC;
   }
   int r;
-  std::string pwd;
-  if ((r = c->Init(ufrag, pwd)) < 0) {
-    logger::error({{"ev","fail to init connection"},{"rc",r}});
-    return QRPC_EINVAL;
-  }
   if ((r = SDP::Offer(*c, ufrag, pwd, sdp)) < 0) {
     logger::error({{"ev","fail to create offer"},{"rc",r}});
     return QRPC_EINVAL;
@@ -1568,30 +1629,24 @@ int Listener::Accept(const std::string &client_req_body, std::string &server_sdp
       return QRPC_EINVAL;
     }
     auto client_sdp = client_sdp_it->get<std::string>();
-    // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
-    // even if sdp anwser ask to do it.
-    auto c = std::shared_ptr<Connection>(factory_method_(*this, RTC::DtlsTransport::Role::CLIENT));
-    if (c == nullptr) {
-      logger::error({{"ev","fail to allocate connection"}});
-      return QRPC_EALLOC;
-    }
     auto cnit = client_req.find("cname");
     if (cnit == client_req.end()) {
       logger::error({{"ev","fail to find value for key 'cname'"},{"req",client_req}});
       return QRPC_EINVAL;
     }
-    int r;
+    // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
+    // even if sdp anwser ask to do it.
     std::string ufrag, pwd;
-    if ((r = c->Init(ufrag, pwd)) < 0) {
-      logger::error({{"ev","fail to init connection"},{"rc",r}});
-      return QRPC_EINVAL;
+    auto c = Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd);
+    if (c == nullptr) {
+      logger::error({{"ev","fail to allocate connection"}});
+      return QRPC_EALLOC;
     }
     const auto rtpit = client_req.find("rtp");
     if (rtpit != client_req.end()) {
       c->InitRTP();
       c->rtp_handler().SetNegotiationArgs(rtpit->get<std::map<std::string,json>>());
     }
-
     SDP sdp(client_sdp);
     if (!sdp.Answer(*c, server_sdp)) {
       logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});

@@ -35,12 +35,21 @@ namespace webrtc {
   public:
     static std::string GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,
-      const std::map<std::string, rtp::Parameters> &paramsMap
+      const std::map<std::string, rtp::Parameters> &params_map, bool for_consumer
+    ) {
+      std::map<std::string, const rtp::Parameters*> params_map_ref;
+      for (const auto &kv : params_map) { params_map_ref[kv.first] = &kv.second; }
+      return GenerateAnswer(c, proto, params_map_ref, for_consumer);
+    }
+    static std::string GenerateAnswer(
+      ConnectionFactory::Connection &c, const std::string &proto,
+      const std::map<std::string, const rtp::Parameters*> &params_map, bool for_consumer
     );
-    static std::string GenerateSectionAnswer(ConnectionFactory::Connection &c,
-      const std::string &proto, const rtp::Parameters &p);
+    static inline std::string GenerateSectionAnswer(ConnectionFactory::Connection &c,
+      const std::string &proto, const rtp::Parameters &p, bool for_consumer);
     static std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c);
     static uint32_t AssignPriority(uint32_t component_id);
+  public:
   };
 } // namespace webrtc
 } // namespace base

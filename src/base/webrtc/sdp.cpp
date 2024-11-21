@@ -183,7 +183,9 @@ a=max-message-size:%u)cands",
   }
 
   std::string SDP::GenerateSectionAnswer(
-    ConnectionFactory::Connection &c, const std::string &proto, const rtp::Parameters &p) {
+    ConnectionFactory::Connection &c, const std::string &proto, 
+    const rtp::Parameters &p, bool for_consumer
+  ) {
     return str::Format(16 * 1024, R"sdp_section(m=%s %llu %s%s
 c=IN IP4 0.0.0.0
 a=mid:%s
@@ -200,10 +202,35 @@ a=setup:active
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      p.Answer().c_str(),
+      for_consumer ? p.Answer(c.cname()).c_str() : p.Answer().c_str(),
       CandidatesSDP(proto, c).c_str()
     );
   }
+
+  std::string SDP::GenerateAnswer(
+    ConnectionFactory::Connection &c, const std::string &proto,
+    const std::map<std::string, const rtp::Parameters *> &params_map, bool for_consumer
+  ) {
+    auto now = qrpc_time_now();
+    auto bundle = std::string("a=group:BUNDLE");
+    std::string media_sections;
+    for (auto &kv : params_map) {
+      bundle += (" " + kv.first);
+      media_sections += GenerateSectionAnswer(c, proto, *kv.second, for_consumer);
+    }
+    // string value to the str::Format should be converted to c string like str.c_str()
+    return str::Format(16 * 1024, R"sdp(v=0
+o=- %llu %llu IN IP4 0.0.0.0
+s=-
+t=0 0
+%s
+a=msid-semantic: WMS
+%s)sdp",
+      now, now,
+      bundle.c_str(),
+      media_sections.c_str()
+    );    
+  }  
 
   rtp::Parameters *SDP::AnswerMediaSection(
     const json &section, const std::string &proto,
@@ -256,31 +283,6 @@ a=setup:active
     //   section_answer_map.emplace(probatorParam.mid, probatorParam);
     // }
     return &(kv.first->second);
-  }
-
-  std::string SDP::GenerateAnswer(
-    ConnectionFactory::Connection &c, const std::string &proto,
-    const std::map<std::string, rtp::Parameters> &paramsMap
-  ) {
-    auto now = qrpc_time_now();
-    auto bundle = std::string("a=group:BUNDLE");
-    std::string media_sections;
-    for (auto &kv : paramsMap) {
-      bundle += (" " + kv.first);
-      media_sections += GenerateSectionAnswer(c, proto, kv.second);
-    }
-    // string value to the str::Format should be converted to c string like str.c_str()
-    return str::Format(16 * 1024, R"sdp(v=0
-o=- %llu %llu IN IP4 0.0.0.0
-s=-
-t=0 0
-%s
-a=msid-semantic: WMS
-%s)sdp",
-      now, now,
-      bundle.c_str(),
-      media_sections.c_str()
-    );    
   }
 
   bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
@@ -345,7 +347,8 @@ a=msid-semantic: WMS
         return false;
       }
     }
-    answer = GenerateAnswer(c, proto, section_answer_map);
+    // false for geneating answer for prodducer
+    answer = GenerateAnswer(c, proto, section_answer_map, false);
     return true;
   }
 } // namespace webrtc

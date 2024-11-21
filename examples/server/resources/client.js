@@ -117,12 +117,16 @@ class QRPClient {
             promise.reject(new Error(data.args.error));
             return;
           } else {
+            if (!data.args.sdp) {
+              promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
+              return;
+            }
             if (!data.args.ssrc_label_map) {
               promise.reject(new Error(`invalid response: no ssrc_label_map: ${JSON.stringify(data.args)}`));
               return;
             }
             Object.assign(this.ssrcLabelMap,data.args.ssrc_label_map);
-            promise.resolve();
+            promise.resolve(data.args.sdp);
           }
         }
       }
@@ -481,11 +485,18 @@ class QRPClient {
     return m;
   }
   async consumeMedia(path, options) {
-    await new Promise((resolve, reject) => {
+    const sdp = await new Promise((resolve, reject) => {
       const msgid = this.#newMsgId();
       this.syscall("consume", { path, options, msgid });
       this.rpcPromises[msgid] = { resolve, reject };
     });
+    console.log("consumeMedia remote offer", sdp);
+    this.cpc = new RTCPeerConnection();
+    this.#setupCallbacks(this.cpc);    
+    this.cpc.setRemoteDescription({type:"offer",sdp});
+    const answer = await this.cpc.createAnswer();
+    console.log("consumeMedia local answer", answer.sdp);
+    this.cpc.setLocalDescription(answer);
   }
   closeMedia(label) {
     const m = this.medias[label];

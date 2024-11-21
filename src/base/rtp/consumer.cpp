@@ -24,8 +24,8 @@ namespace rtp {
 		return "/c/" + id + "/" + label + "/" + Parameters::FromMediaKind(kind);
 	}
   Consumer *ConsumerFactory::Create(
-    const Handler &peer, const Producer &local_producer, const std::string &label, Parameters::MediaKind kind,
-    bool paused, bool pipe, std::vector<uint32_t> &generated_ssrcs
+    const Handler &peer, const std::string &label, Parameters::MediaKind kind,
+    const RTC::RtpParameters &consumer_params, bool paused, bool pipe
   ) {
 		auto consumed_producer = peer.FindProducer(label, kind);
 		if (consumed_producer == nullptr) {
@@ -36,16 +36,9 @@ namespace rtp {
     auto type = pipe ?
       RTC::RtpParameters::Type::PIPE :
       (consumed_producer->params().encodings.size() > 1 ? RTC::RtpParameters::Type::SIMULCAST : RTC::RtpParameters::Type::SIMPLE);
-    RTC::RtpParameters consumer_params;
-    // generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
-		if (!local_producer.consumer_params(consumed_producer->params(), consumer_params)) {
-			QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
-			ASSERT(false);
-			return nullptr;
-		}
     auto m = handler_.FindFrom(label);
 		::flatbuffers::FlatBufferBuilder fbb;
-    auto encodings = consumed_producer->params().PackConsumableEncodings(fbb, generated_ssrcs);
+    auto encodings = consumed_producer->params().PackConsumableEncodings(fbb);
     auto id = GenerateId(peer.rtp_id(), label, kind);
     auto &producer_id = consumed_producer->id;
     Handler::SetConsumerFactory([m](

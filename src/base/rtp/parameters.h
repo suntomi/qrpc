@@ -31,7 +31,7 @@ namespace rtp {
   public:
     Parameters() : RTC::RtpParameters(), ssrc_seed(GenerateSsrc()) {}
     bool Parse(Handler &h, const json &section, std::string &answer);
-    std::string Answer() const;
+    std::string Answer(const std::string &cname = "") const;
     std::string Payloads() const {
       if (kind == rtp::Parameters::MediaKind::APP) {
         return " webrtc-datachannel";
@@ -59,7 +59,8 @@ namespace rtp {
     ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
     MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id) const;
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
-    PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb, std::vector<uint32_t> &generated_ssrcs) const;
+    PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const;
+    void GetGeneratedSsrc(std::vector<uint32_t> &generated_ssrcs) const;
     static std::optional<RTC::RtpHeaderExtensionUri::Type> FromUri(const std::string &uri);
     static void SetupHeaderExtensionMap();
   protected:
@@ -70,13 +71,13 @@ namespace rtp {
     ::flatbuffers::Offset<FBS::RtpParameters::RtpMapping>
     PackRtpMapping(::flatbuffers::FlatBufferBuilder &fbb) const;  
   public:
-    MediaKind kind;
-    NetworkParameters network;
-    std::string rtp_proto;
-    uint32_t ssrc_seed;
-    std::map<uint32_t, SsrcParameter> ssrcs;
-    std::vector<RTC::RtpCodecParameters> codec_capabilities;
-    SimulcastParameter simulcast;
+    MediaKind kind;             // affect sdp geeneration
+    NetworkParameters network;  // affect sdp generation
+    std::string rtp_proto;      // affect sdp generation
+    uint32_t ssrc_seed;         // affect consumer sdp generation only
+    std::map<uint32_t, SsrcParameter> ssrcs;                  // affect producer sdp generation only
+    SimulcastParameter simulcast;                             // affect producer sdp generation only
+    std::vector<RTC::RtpCodecParameters> codec_capabilities;  // affect nothing for sdp generation
   };
 }
 }

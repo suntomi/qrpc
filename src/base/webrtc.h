@@ -132,13 +132,21 @@ namespace webrtc {
       // for now, qrpc server initiates dtls transport because safari does not initiate it
       // even if we specify "setup: passive" in SDP of whip response
       inline bool is_client() const { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
+      inline bool is_consumer() const { return consume_config_map_.size() > 0; }
+      inline std::map<std::string, rtp::Handler::ConsumeConfig> &consume_config_map() { return consume_config_map_; }
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void SetCname(const std::string &cname);
       void InitRTP();
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
-      bool Consume(const std::string &media_path, const ConsumeOptions &options, std::map<uint32_t,std::string> &ssrc_label_map);
+      // first calling prepare consume to setup connection for consumer, then client connect to the connection, Consume starts actual rtp packet transfer
+      bool PrepareConsume(
+        const std::string &media_path, 
+        const std::map<rtp::Parameters::MediaKind, ConsumeOptions> &options_map,
+        std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map);
+      bool ConsumeMedia(const rtp::Handler::ConsumeConfig &config);
+      bool Consume();
       inline void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();
       IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority);
@@ -258,6 +266,8 @@ namespace webrtc {
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_;
       std::string cname_;
+      std::shared_ptr<Connection> consumer_connection_;
+      std::map<std::string, rtp::Handler::ConsumeConfig> consume_config_map_; // media_path => consume config
       bool sctp_connected_, closed_;
     };
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
@@ -342,6 +352,8 @@ namespace webrtc {
     void Register(const std::string &cname, std::shared_ptr<Connection> &c) {
       cnmap_.emplace(cname, c);
     }
+    std::shared_ptr<Connection> Create(
+      RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd);
     void CloseConnection(Connection &c);
     void CloseConnection(const IceUFrag &ufrag) {
       auto it = connections_.find(ufrag);
