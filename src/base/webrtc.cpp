@@ -400,7 +400,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       std::map<uint32_t,std::string> ssrc_label_map;
       if (!c.PrepareConsume(path, options_map, sdp, ssrc_label_map)) {
         QRPC_LOGJ(error, {{"ev","fail to consume"},{"path",path}});
-        Call("consume_ack",{{"msgid",msgid},{"error","fail to consume"}});
+        Call("consume_ack",{{"msgid",msgid},{"error","fail to prepare consume"}});
         return QRPC_OK;
       }
       Call("consume_ack",{{"msgid",msgid},{"ssrc_label_map",ssrc_label_map},{"sdp",sdp}});

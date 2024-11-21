@@ -5,7 +5,7 @@
 
 namespace base {
 namespace rtp {
-	bool Producer::consumer_params(const RTC::RtpParameters &consumed_producer_params, RTC::RtpParameters &p) const {
+	bool Producer::consumer_params(const RTC::RtpParameters &consumed_producer_params, Parameters &p) const {
 		// just copy mid
 		p.mid = params_.mid;
 		// choose codecs from consumed_producer_params.codecs that matched params_.codec_capabilities
@@ -76,7 +76,7 @@ namespace rtp {
 		// reduce encoding to just one. if target_producer_params.encodings seems simulcast, set scalabilityMode properly
 		// bit rate is maximum one in the encodings
 		auto &encoding = p.encodings.emplace_back();
-		encoding.ssrc = Parameters::GenerateSsrc();
+		encoding.ssrc = p.ssrc_seed;
 
 		if (has_rtx) {
 			encoding.rtx.ssrc = encoding.ssrc + 1;

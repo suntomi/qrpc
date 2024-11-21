@@ -125,7 +125,10 @@ class QRPClient {
               promise.reject(new Error(`invalid response: no ssrc_label_map: ${JSON.stringify(data.args)}`));
               return;
             }
-            Object.assign(this.ssrcLabelMap,data.args.ssrc_label_map);
+            for (const pair of data.args.ssrc_label_map) {
+              this.ssrcLabelMap[pair[0]] = pair[1];
+            }
+            console.log("ssrc_label_map => ", this.ssrcLabelMap);
             promise.resolve(data.args.sdp);
           }
         }
@@ -217,7 +220,7 @@ class QRPClient {
           console.log(`track id: ${tid}, SSRC: ${report.ssrc}`);
           label = this.ssrcLabelMap[report.ssrc];
           if (!label) {
-            console.log(`No label is defined for ssrc = ${report.ssrc}`);
+            console.log(`No label is defined for ssrc = ${report.ssrc}`, this.ssrcLabelMap);
             event.track.stop();
             return;
           }

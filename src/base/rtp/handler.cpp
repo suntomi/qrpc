@@ -91,24 +91,25 @@ namespace rtp {
 				});
 				continue;
 			}
-			auto mid = consumer_factory_.GenerateMid();
 			auto entry = consume_config_map.emplace(media_path, ConsumeConfig());
 			auto &config = entry.first->second;
-			config.mid = mid;
 			config.media_path = ProducerFactory::GenerateId(peer.rtp_id(), label, k);
 			config.options = options_map.find(k) == options_map.end() ? ConsumeOptions() : options_map.find(k)->second;
+			// generate unique mid from own consumer factory
+			auto mid = consumer_factory_.GenerateMid();
+			config.mid = mid;
+			// copy additional parameter from producer that affects sdp generation
+			config.kind = k;
+			config.network = consumed_producer->params().network;
+			config.rtp_proto = consumed_producer->params().rtp_proto;
+			config.ssrc_seed = consumed_producer->params().ssrc_seed;
 			// generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
 			if (!local_producer->consumer_params(consumed_producer->params(), config)) {
 				QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
 				ASSERT(false);
 				continue;
 			}
-			// copy additional parameter from producer that affects sdp generation
-			config.kind = k;
-			config.network = consumed_producer->params().network;
-			config.rtp_proto = consumed_producer->params().rtp_proto;
-			config.ssrc_seed = consumed_producer->params().ssrc_seed;
-			consumed_producer->params().GetGeneratedSsrc(generated_ssrcs);
+			config.GetGeneratedSsrc(generated_ssrcs);
 			// if video consumer and there is no probator mid, generate probator mid => param pair
 			auto probator_mid = RTC::RtpProbationGenerator::GetMidValue();
 			if (k == Parameters::MediaKind::VIDEO && consume_config_map.find(probator_mid) == consume_config_map.end()) {
