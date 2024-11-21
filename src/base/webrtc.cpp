@@ -459,7 +459,7 @@ bool ConnectionFactory::Connection::PrepareConsume(
     }
     auto proto = ice_server().GetSelectedSession()->proto();
     std::map<std::string, const rtp::Parameters *> params_map_ref;
-    for (const auto &kv : consumer_connection_->consume_config_map()) { params_map_ref[kv.first] = &kv.second; }
+    for (const auto &kv : consumer_connection_->consume_config_map()) { params_map_ref[kv.second.mid] = &kv.second; }
     sdp = SDP::GenerateAnswer(*consumer_connection_, proto, params_map_ref, true);
     return true;
   } else {
@@ -484,6 +484,7 @@ bool ConnectionFactory::Connection::Consume() {
 bool ConnectionFactory::Connection::ConsumeMedia(
   const rtp::Handler::ConsumeConfig &config
 ) {
+  ASSERT(consumer_connection_ == nullptr && is_consumer());
   auto parsed = str::Split(config.media_path, "/");
   if (parsed.size() < 2) {
     QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",config.media_path}});

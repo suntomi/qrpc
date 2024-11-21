@@ -35,7 +35,7 @@ namespace webrtc {
   public:
     static std::string GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,
-      const std::map<std::string, rtp::Parameters> &params_map, bool for_consumer
+      const std::map<Media::Mid, rtp::Parameters> &params_map, bool for_consumer
     ) {
       std::map<std::string, const rtp::Parameters*> params_map_ref;
       for (const auto &kv : params_map) { params_map_ref[kv.first] = &kv.second; }
@@ -43,7 +43,7 @@ namespace webrtc {
     }
     static std::string GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,
-      const std::map<std::string, const rtp::Parameters*> &params_map, bool for_consumer
+      const std::map<Media::Mid, const rtp::Parameters*> &params_map, bool for_consumer
     );
     static inline std::string GenerateSectionAnswer(ConnectionFactory::Connection &c,
       const std::string &proto, const rtp::Parameters &p, bool for_consumer);

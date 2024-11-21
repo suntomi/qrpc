@@ -209,7 +209,7 @@ a=setup:active
 
   std::string SDP::GenerateAnswer(
     ConnectionFactory::Connection &c, const std::string &proto,
-    const std::map<std::string, const rtp::Parameters *> &params_map, bool for_consumer
+    const std::map<Media::Mid, const rtp::Parameters *> &params_map, bool for_consumer
   ) {
     auto now = qrpc_time_now();
     auto bundle = std::string("a=group:BUNDLE");

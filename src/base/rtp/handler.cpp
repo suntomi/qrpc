@@ -67,6 +67,11 @@ namespace rtp {
 			Parameters::MediaKind::AUDIO, Parameters::MediaKind::VIDEO
 		};
 		for (const auto k : kinds) {
+			auto media_path = ProducerFactory::GenerateId(peer.rtp_id(), label, k);
+			if (consume_config_map.find(media_path) != consume_config_map.end()) {
+				// already prepared
+				continue;
+			}
 			auto local_producer = FindProducer(label, k);
 			if (local_producer == nullptr) {
 				// cannot consume this kind of media because no capability sent from client
@@ -86,7 +91,7 @@ namespace rtp {
 				continue;
 			}
 			auto mid = consumer_factory_.GenerateMid();
-			auto entry = consume_config_map.emplace(mid, ConsumeConfig());
+			auto entry = consume_config_map.emplace(media_path, ConsumeConfig());
 			auto &config = entry.first->second;
 			config.mid = mid;
 			config.media_path = ProducerFactory::GenerateId(peer.rtp_id(), label, k);
@@ -110,6 +115,11 @@ namespace rtp {
 	bool Handler::Consume(
 		Handler &peer, const std::string &label, const ConsumeConfig &config
 	) {
+		auto cid = ConsumerFactory::GenerateId(peer.rtp_id(), label, config.kind);
+		if (GetConsumerById(cid) != nullptr) {
+			QRPC_LOGJ(info, {{"ev","consume already created"},{"cid",cid}});
+			return true;
+		}
 		const auto &options = config.options;
 		const auto &kind = config.kind;
 		// 1. get corresponding producer from peer handler
