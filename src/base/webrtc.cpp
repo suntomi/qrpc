@@ -371,9 +371,9 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         return QRPC_OK;
       }
       const auto &args = ait->get<std::map<std::string,json>>();
-      const auto pathit = args.find("path");
-      if (pathit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'path'"}});
+      const auto lit = args.find("label");
+      if (lit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
         return QRPC_OK;
       }
       const auto mit = args.find("msgid");
@@ -395,11 +395,11 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           options_map.emplace(rtp::Parameters::MediaKind::AUDIO, v->second);
         }
       }
-      auto path = pathit->second.get<std::string>();
+      auto label = lit->second.get<std::string>();
       std::string sdp;
       std::map<uint32_t,std::string> ssrc_label_map;
-      if (!c.PrepareConsume(path, options_map, sdp, ssrc_label_map)) {
-        QRPC_LOGJ(error, {{"ev","fail to consume"},{"path",path}});
+      if (!c.PrepareConsume(label, options_map, sdp, ssrc_label_map)) {
+        QRPC_LOGJ(error, {{"ev","fail to consume"},{"label",label}});
         Call("consume_ack",{{"msgid",msgid},{"error","fail to prepare consume"}});
         return QRPC_OK;
       }
@@ -441,9 +441,10 @@ bool ConnectionFactory::Connection::PrepareConsume(
   const std::map<rtp::Parameters::MediaKind, ConsumeOptions> &options_map,
   std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map
 ) {
+  // TODO: support fullpath like $url/@cname/name. first should remove part before /@
   auto parsed = str::Split(media_path, "/");
   if (parsed.size() < 2) {
-    QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",media_path}});
+    QRPC_LOGJ(error, {{"ev","invalid media_path"},{"media_path",media_path}});
     ASSERT(false);
     return false;
   }
@@ -462,7 +463,7 @@ bool ConnectionFactory::Connection::PrepareConsume(
   if (rtp_handler().PrepareConsume(
     *h, parsed[1], options_map, consumer_connection_->consume_config_map(), generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
-      ssrc_label_map[ssrc] = parsed[1];
+      ssrc_label_map[ssrc] = media_path;
     }
     auto proto = ice_server().GetSelectedSession()->proto();
     std::map<std::string, const rtp::Parameters *> params_map_ref;
@@ -493,6 +494,7 @@ bool ConnectionFactory::Connection::ConsumeMedia(
   const rtp::Handler::ConsumeConfig &config
 ) {
   ASSERT(consumer_connection_ == nullptr && is_consumer());
+  // TODO: support fullpath like $url/@cname/name. first should remove part before /@
   auto parsed = str::Split(config.media_path, "/");
   if (parsed.size() < 2) {
     QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",config.media_path}});
@@ -596,7 +598,7 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::OpenStream(
   }
   // allocate stream Id
   sctp_association_->HandleDataConsumer(s->id());
-  // TODO: send DCEP OPEN messsage to peer
+  // send DCEP OPEN messsage to peer
   if ((r = s->Open()) < 0) {
     logger::info({{"ev","new stream creation blocked"},{"sid",s->id()},{"rc",r}});
     s->Close(QRPC_CLOSE_REASON_LOCAL, r, "DCEP OPEN failed");

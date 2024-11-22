@@ -298,8 +298,6 @@ QRPC_DECL_CLOSURE(void, qrpc_on_stream_retransmit_t, void *, int);
 //called as 2nd argument qrpc_stream_valid, when actually given stream is valid.
 QRPC_DECL_CLOSURE(void, qrpc_on_stream_validate_t, void *, qrpc_stream_t, const char *);
 
-QRPC_DECL_CLOSURE(void*, qrpc_stream_factory_t, void *, qrpc_conn_t);
-
 
 /* rpc */
 //rpc opened. return false to reject rpc
@@ -450,7 +448,7 @@ QAPI_BOOTSTRAP qrpc_server_t qrpc_server_create(int n_worker);
 QAPI_BOOTSTRAP qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_addr_t *addr, const qrpc_svconf_t *config);
 //if block is true, qrpc_server_start blocks until some other thread calls qrpc_server_join. 
 QAPI_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block);
-//request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API
+//request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API anymore
 QAPI_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv);
 
 
@@ -482,18 +480,26 @@ typedef struct {
   qrpc_on_media_close_t on_media_close;
 } qrpc_media_handler_t;
 
-//setup original stream protocol (client), with 3 pattern
-QAPI_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *name, qrpc_stream_handler_t handler);
+//decide handler for each incoming stream on demand
+QRPC_DECL_CLOSURE(qrpc_stream_handler_t *, qrpc_stream_director_t, void *, const char *, qrpc_conn_t);
+//decide handler for each incoming maeia on demand
+QRPC_DECL_CLOSURE(qrpc_media_handler_t *, qrpc_media_director_t, void *, const char *, qrpc_conn_t);
+//setup original stream protocol (client) based on its label, with 3 pattern.
+QAPI_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *label, qrpc_stream_handler_t handler);
 
-QAPI_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *name, qrpc_rpc_handler_t handler);
+QAPI_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *label, qrpc_rpc_handler_t handler);
 //media handler
-QAPI_BOOTSTRAP bool qrpc_hdmap_media_handler(qrpc_hdmap_t h, const char *name, qrpc_media_handler_t handler);
-
-QAPI_BOOTSTRAP bool qrpc_hdmap_stream_factory(qrpc_hdmap_t h, const char *name, qrpc_stream_factory_t factory);
+QAPI_BOOTSTRAP bool qrpc_hdmap_media_handler(qrpc_hdmap_t h, const char *label, qrpc_media_handler_t handler);
+// set stream director. unlike qrpc_hdmap_raw_handler, the director is used as "fallback". that is, if label is matched
+// above qrpc_hdmap_XXX_handler entry, director will not be called.
+QAPI_BOOTSTRAP bool qrpc_hdmap_stream_director(qrpc_hdmap_t h, qrpc_stream_director_t director);
+// set media director. unlike qrpc_hdmap_raw_handler, the director is used as "fallback". that is, if label is matched
+// above qrpc_hdmap_XXX_handler entry, director will not be called.
+QAPI_BOOTSTRAP bool qrpc_hdmap_media_director(qrpc_hdmap_t h, qrpc_media_director_t director);
 //if you call this API, qrpc_hdmap_t become "raw mode". any other hdmap settings are ignored, 
 //and all incoming/outgoing streams are handled with the handler which is given to this API.
 //even media stream packet is handled by handler.on_stream_record.
-QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t handler);
+QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t sh, qrpc_media_handler_t mh);
 
 
 // --------------------------

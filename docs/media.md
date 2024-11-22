@@ -131,4 +131,27 @@ GET https://host/qrpc/consume/:peer_id => :peer_idのpeerがproduceしているl
 
 
 producerのid定義
-/:id/:label{/(video|audio)} 
+/:id/:label
+
+これでどんなtrackもconsumeできる(video/audioは問答無用でconsumeして、pauseするようにする)
+
+
+
+
+リモートでconsumeしたtrackが論理的にどのストリームに当たるか
+consume対象のpeerはtrackId label mapやrid label mapを持ってはいる
+しかしridはかぶる(peer同士が同じようなプログラムで動いているとして)
+ssrcは指定できる(rtpMappingで)が、
+
+
+openMedia(id)で開く。video/audioのどちらかをpauseするならjsonでオプションをわたす
+ssrcをconsumeの戻り値として渡す。そのssrcが来たら、onopenを呼ぶ
+
+クライアントはconsumeしたトラックについてはonopen/oncloseしか呼ばない(onread的なものは呼べるのか？)。produceしているトラックについては、プロセッサを追加できる
+サーバーはonreadも呼ばれる
+
+
+consumerはrtpCapabilityとproducerの送信するencodingの組み合わせから、どのencodingとpayload typeを受信するかを判定し、rtpParameterを作成する
+
+
+msがサポートしてないcodecは完全にフィルターされるが、その際に対応するrtxもフィルターしないといけない

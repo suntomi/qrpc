@@ -19,7 +19,7 @@
             videoElement.autoplay = true;
             document.body.appendChild(videoElement);
           }
-          videoElement.srcObject = m.stream;
+          videoElement.srcObject = t.stream;
         } else if (t.kind == "audio") {
           console.log("play audio", m.label);
           let audioElement = document.getElementById(`audio-${t.id}`);
@@ -29,7 +29,7 @@
             audioElement.autoplay = true;
             document.body.appendChild(audioElement);
           }
-          audioElement.srcObject = m.stream;          
+          audioElement.srcObject = t.stream;          
         }
       }
       setupUI = (c) => {
@@ -40,13 +40,12 @@
         }
         // 編集ボックスのEnterキーイベントリスナーを追加
         document.getElementById('idedit').addEventListener('keydown', async (event) => {
-        if (event.key === 'Enter') {
-          const id = event.target.value;
-          console.log(`input id = ${id}`);
-          await c.consumeMedia(`${id}/webcam`);
-        }
-      });
-         
+          if (event.key === 'Enter') {
+            const id = event.target.value;
+            console.log(`input id = ${id}`);
+            await c.openMedia(`${id}/webcam`, webcamMediaHandler);
+          }
+        });         
       }
       //Create whip client
       const url = "http://localhost:8888/qrpc";
@@ -54,20 +53,34 @@
       const context = {};
       const MAX_RECONNECT = 0;
       let closed = 0;
+      const webcamMediaHandler = {
+        onopen: (m, track)=>{
+          console.log("media open", m.stream.id, track.id);
+          showMedia(m, track);
+        },
+        onclose: (m)=>{
+          console.log("media close", m.stream.id);
+          document.getElementById(`video-${m.stream.id}`).remove();
+          document.getElementById(`audio-${m.stream.id}`).remove();
+        },
+      };
       c.onopen = async () => {
         console.log("client onopen called");
         setupUI(c);
-        await c.openMedia("webcam", await navigator.mediaDevices.getUserMedia({
-          video: {width: {ideal: 1280}, height: {ideal: 720}},
-          audio: true
-        }), [
-          // 1500kbps ?
-          {rid: 'h1', maxBitrate: 5000000, active: true, scaleResolutionDownBy: 1.0},
-          // 500kbps ?
-          {rid: 'm1', maxBitrate: 1000000, active: true, scaleResolutionDownBy: 2.0},
-          // 100kbps ?
-          {rid: 'l1', maxBitrate: 500000, active: true, scaleResolutionDownBy: 4.0}
-        ]);
+        await c.createMedia("webcam", Object.assign({}, webcamMediaHandler, {
+          stream: await navigator.mediaDevices.getUserMedia({
+            video: {width: {ideal: 1280}, height: {ideal: 720}},
+            audio: true
+          }), 
+          encoding: [
+            // 1500kbps ?
+            {rid: 'h1', maxBitrate: 5000000, active: true, scaleResolutionDownBy: 1.0},
+            // 500kbps ?
+            {rid: 'm1', maxBitrate: 1000000, active: true, scaleResolutionDownBy: 2.0},
+            // 100kbps ?
+            {rid: 'l1', maxBitrate: 500000, active: true, scaleResolutionDownBy: 4.0}
+          ],
+        }));
         console.log("open media");
         return context;
       };
@@ -80,17 +93,6 @@
           return;
         }
       };
-      c.handleMedia("webcam", {
-        onopen: (m, track)=>{
-          console.log("media open", m.stream.id, track.id);
-          showMedia(m, track);
-        },
-        onclose: (m)=>{
-          console.log("media close", m.stream.id);
-          document.getElementById(`video-${m.stream.id}`).remove();
-          document.getElementById(`audio-${m.stream.id}`).remove();
-        },
-      });
       c.connect();
     </script>
   </body>

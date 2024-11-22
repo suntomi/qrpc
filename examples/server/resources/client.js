@@ -1,7 +1,23 @@
+class QRPCTrack {
+  constructor(label, kind, stream, rawTrack, onopen, onclose) {
+    this.label = label;
+    this.kind = kind;
+    this.stream = stream;
+    this.onopen = onopen;
+    this.onclose = onclose;
+    this.rawTrack = rawTrack
+  }
+  key() { this.label + "/" + this.kind; }
+  stop() {
+    this.track.stop();
+  }
+};
 class QRPCMedia {
-  constructor(label, stream, encodings) {
+  constructor(label, stream, encodings, onopen, onclose) {
     this.label = label;
     this.stream = stream;
+    this.onopen = onopen;
+    this.onclose = onclose;
     this.tracks = {};
     this.receivers = {}
     if (encodings) {
@@ -63,77 +79,69 @@ class QRPClient {
     const bytes = new Uint8Array(8);
     this.cname = cname || this.#genCN();
     console.log("QRPClient", this.cname, url);
-    this.hdmap = {};
-    this.mdmap = {};
     this.reconnect = 0;
     this.#clear();
-    this.handlerResolver = (c, label, isMedia) => {
-      const handler_id = label.indexOf("?") > 0 ? label.split("?")[0] : label;
-      return isMedia ? c.mdmap[handler_id] : c.hdmap[handler_id];
-    }
-    this.handle(QRPClient.SYSCALL_STREAM, {
-      onmessage: async (s, event) => {
-        const data = JSON.parse(event.data);
-        if (data.fn === "close") {
-          console.log("shutdown by server");
-          this.close();
-        } else if (data.fn === "nego") {
-          // our library basically exchange media stream via QRPC server
-          // at least, we will have to implement WHIP endpoint of QRPC server for first exchanging SDP between peers.
-          this.ridLabelMap = data.args.ridLabelMap;
-          console.log("should not receive nego from server or other peer");
-          await this.pc.setRemoteDescription({type:"offer",sdp:data.args.sdp});
-          const answer = await this.pc.createAnswer();
-          await this.pc.setLocalDescription(answer);
-          this.syscall("nego_ack",{sdp:answer.sdp,gen:this.sdpGen,msgid:data.args.msgid});
-        } else if (data.fn === "nego_ack") {
-          const promise = this.#fetchPromise(data.args.msgid);
-          if (!promise) {
-            console.log(`promises for gen:${data.args.gen} does not exist`);
-            return;
-          }
-          if (this.sdpGen > data.args.gen) {
-            promise.reject(new Error(`old sdp anwser for gen:${data.args.gen} ignored`));
-            return;
-          } else if (this.sdpGen < data.args.gen) {
-            promise.reject(new Error(`future sdp anwser for gen:${data.args.gen} ignored`));
-            return;
-          }
-          if (data.args.error) {
-            promise.reject(new Error(`invalid sdp ${offer.sdp}: ${data.args.error}`));
-            return;
-          } else {
-            promise.resolve(data.args.sdp);
-          }
-        } else if (data.fn == "consume") {
-          throw new Error("does not suported");
-        } else if (data.fn == "consume_ack") {
-          const promise = this.#fetchPromise(data.args.msgid);
-          if (!promise) {
-            console.log(`promises for gen:${data.args.gen} does not exist`);
-            return;
-          }
-          if (data.args.error) {
-            promise.reject(new Error(data.args.error));
-            return;
-          } else {
-            if (!data.args.sdp) {
-              promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
-              return;
-            }
-            if (!data.args.ssrc_label_map) {
-              promise.reject(new Error(`invalid response: no ssrc_label_map: ${JSON.stringify(data.args)}`));
-              return;
-            }
-            for (const pair of data.args.ssrc_label_map) {
-              this.ssrcLabelMap[pair[0]] = pair[1];
-            }
-            console.log("ssrc_label_map => ", this.ssrcLabelMap);
-            promise.resolve(data.args.sdp);
-          }
-        }
+  }
+  async #syscallMessageHandler(s, event) {
+    const data = JSON.parse(event.data);
+    if (data.fn === "close") {
+      console.log("shutdown by server");
+      this.close();
+    } else if (data.fn === "nego") {
+      // our library basically exchange media stream via QRPC server
+      // at least, we will have to implement WHIP endpoint of QRPC server for first exchanging SDP between peers.
+      this.ridLabelMap = data.args.ridLabelMap;
+      console.log("should not receive nego from server or other peer");
+      await this.pc.setRemoteDescription({type:"offer",sdp:data.args.sdp});
+      const answer = await this.pc.createAnswer();
+      await this.pc.setLocalDescription(answer);
+      this.syscall("nego_ack",{sdp:answer.sdp,gen:this.sdpGen,msgid:data.args.msgid});
+    } else if (data.fn === "nego_ack") {
+      const promise = this.#fetchPromise(data.args.msgid);
+      if (!promise) {
+        console.log(`promises for gen:${data.args.gen} does not exist`);
+        return;
       }
-    });
+      if (this.sdpGen > data.args.gen) {
+        promise.reject(new Error(`old sdp anwser for gen:${data.args.gen} ignored`));
+        return;
+      } else if (this.sdpGen < data.args.gen) {
+        promise.reject(new Error(`future sdp anwser for gen:${data.args.gen} ignored`));
+        return;
+      }
+      if (data.args.error) {
+        promise.reject(new Error(`invalid sdp ${offer.sdp}: ${data.args.error}`));
+        return;
+      } else {
+        promise.resolve(data.args.sdp);
+      }
+    } else if (data.fn == "consume") {
+      throw new Error("does not suported");
+    } else if (data.fn == "consume_ack") {
+      const promise = this.#fetchPromise(data.args.msgid);
+      if (!promise) {
+        console.log(`promises for gen:${data.args.gen} does not exist`);
+        return;
+      }
+      if (data.args.error) {
+        promise.reject(new Error(data.args.error));
+        return;
+      } else {
+        if (!data.args.sdp) {
+          promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
+          return;
+        }
+        if (!data.args.ssrc_label_map) {
+          promise.reject(new Error(`invalid response: no ssrc_label_map: ${JSON.stringify(data.args)}`));
+          return;
+        }
+        for (const pair of data.args.ssrc_label_map) {
+          this.ssrcLabelMap[pair[0]] = pair[1];
+        }
+        console.log("ssrc_label_map => ", this.ssrcLabelMap);
+        promise.resolve(data.args.sdp);
+      }
+    }
   }
   #genCN() {
     const bytes = new Uint8Array(8);
@@ -196,7 +204,11 @@ class QRPClient {
     pc.ondatachannel = (event) => {            
       const s = event.channel;
       console.log(`accept stream ${s.label}`);
-      const h = this.hdmap[s.label];
+      if (!this.onstream) {
+        s.close();
+        throw new Error("QRPClient.onstream is mandatory");
+      }
+      const h = this.onstream(s);
       if (!h) {
         console.log(`No stream callbacks for label [${s.label}]`);
         s.close();
@@ -221,12 +233,8 @@ class QRPClient {
           label = this.ssrcLabelMap[report.ssrc];
           if (!label) {
             console.log(`No label is defined for ssrc = ${report.ssrc}`, this.ssrcLabelMap);
-            event.track.stop();
-            return;
           }
           break;
-        } else {
-          console.log(`track id: ${event.track.id}, no video track ${report}`);
         }
       }
       if (!label) {
@@ -250,19 +258,17 @@ class QRPClient {
           }
         }
       }
-      const h = this.handlerResolver(this, label, true);
-      if (!h) {
-        console.log(`No handler is defined for label = ${label} (${tid})`);
+      let m = this.medias[label];
+      if (!m) {
+        console.log(`No media for label ${label}`);
         track.stop();
         return;
       }
-      let m = this.medias[label];
-      if (!m) {
-        m = new QRPCMedia(label, track.stream);
-        this.medias[label] = m;
+      if (!m.stream) {
+        m.stream = event.streams[0];
       }
       m.addTrack(track.kind, track);
-      const r = h.onopen(m, track);
+      const r = m.onopen(m, track);
       if (r === false || r === null) {
         console.log(`close media by application ${label}`);
         this.closeMedia(label);
@@ -311,7 +317,9 @@ class QRPClient {
   }
   async #handshake() {
     // generate syscall stream (it also ensures that SDP for data channel is generated)
-    this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM);
+    this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM, {
+      onmessage: this.#syscallMessageHandler.bind(this)
+    });
     // dummy onopen call to generate correct offer of dummy PeerConnection
     if (this.onopen) {
       this.context = await this.onopen();
@@ -461,14 +469,17 @@ class QRPClient {
     }
     this.mdmap[handler_name] = callbacks;
   }
-  async openMedia(label, stream, encodings) {
+  async createMedia(label, {stream, encodings, onopen, onclose}) {
+    console.log("createMedia", label, stream, encodings);
     if (this.medias[label]) {
       return this.medias[label];
     }
     if (!encodings) {
       throw new Error("encoding is mandatory");
     }
-    stream.getTracks().forEach(t => this.trackIdLabelMap[t.id] = label);
+    stream.getTracks().forEach(t => {
+      this.trackIdLabelMap[t.id] = label
+    });
     encodings.forEach(e => {
       if (!e.rid) {
         throw new Error("for each encodings, rid is mandatory");
@@ -477,7 +488,7 @@ class QRPClient {
       this.ridLabelMap[e.rid] = label;
       this.ridScalabilityModeMap[e.rid] = e.scalabilityMode;
     });
-    const m = new QRPCMedia(label, stream, encodings);
+    const m = new QRPCMedia(label, stream, encodings, onopen, onclose);
     this.medias[label] = m;
     m.open(this);
     if (this.sdpGen >= 0 && !this.mediaHandshaked) {
@@ -487,18 +498,23 @@ class QRPClient {
     }
     return m;
   }
-  async consumeMedia(path, options) {
+  async openMedia(label, options) {
+    if (this.medias[label]) {
+      return this.medias[label];
+    }
     const sdp = await new Promise((resolve, reject) => {
       const msgid = this.#newMsgId();
-      this.syscall("consume", { path, options, msgid });
+      this.syscall("consume", { label, options, msgid });
       this.rpcPromises[msgid] = { resolve, reject };
     });
-    console.log("consumeMedia remote offer", sdp);
+    console.log("openMedia remote offer", sdp);
+    const m = new QRPCMedia(label, null, null, options.onopen, options.onclose);
+    this.medias[label] = m;
     this.cpc = new RTCPeerConnection();
     this.#setupCallbacks(this.cpc);    
     this.cpc.setRemoteDescription({type:"offer",sdp});
     const answer = await this.cpc.createAnswer();
-    console.log("consumeMedia local answer", answer.sdp);
+    console.log("openMedia local answer", answer.sdp);
     this.cpc.setLocalDescription(answer);
   }
   closeMedia(label) {
@@ -507,9 +523,8 @@ class QRPClient {
       console.log("No media for label " + label);
       return;
     }
-    const h = this.handlerResolver(this, label, true);
-    if (h && h.onclose) {
-      h.onclose(m);
+    if (m.onclose) {
+      m.onclose(m);
     }
     m.close();
     this.medias[label] = null;
@@ -524,17 +539,13 @@ class QRPClient {
     }
     this.hdmap[handler_name] = callbacks;
   }
-  openStream(label) {
+  // options combines createDataChannel's option and RTCDataChannel event handler (onopen, onclose, onmessage)
+  openStream(label, options) {
     if (this.streams[label]) {
       return this.streams[label];
     }
-    const h = this.handlerResolver(this, label);
-    if (!h) {
-      console.log(`No stream callbacks for id ${label}`);
-      return null;
-    }
-    const s = this.pc.createDataChannel(label);
-    this.#setupStream(s, h);
+    const s = this.pc.createDataChannel(label, options);
+    this.#setupStream(s, options);
     return s;
   }
   closeStream(label) {
@@ -544,7 +555,7 @@ class QRPClient {
       return;
     }
     s.close();
-    this.streams[label] = null;
+    this.streams[label] = undefined;
   }
   syscall(fn, args) {
     this.syscallStream.send(JSON.stringify({fn, args}));

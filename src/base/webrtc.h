@@ -144,7 +144,7 @@ namespace webrtc {
       void Touch(qrpc_time_t now) { last_active_ = now; }
       // first calling prepare consume to setup connection for consumer, then client connect to the connection, Consume starts actual rtp packet transfer
       bool PrepareConsume(
-        const std::string &media_path, 
+        const std::string &label, 
         const std::map<rtp::Parameters::MediaKind, ConsumeOptions> &options_map,
         std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map);
       bool ConsumeMedia(const rtp::Handler::ConsumeConfig &config);

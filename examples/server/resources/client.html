@@ -25,23 +25,8 @@
       const context = { texts: ["aaaa", "bbbb", "cccc"] };
       const MAX_RECONNECT = 2;
       let closed = 0;
-      c.onopen = () => {
-        console.log("client onopen called");
-        c.openStream("test");
-        c.openStream("test3");
-      };
-      c.onclose = () => {
-        console.log("client onclose called", closed);
-        if (closed < MAX_RECONNECT) {
-          closed++;
-          return 2000 * 1000 * 1000;
-        } else {
-          // stop reconnection
-          showResult("success");
-          return;
-        }
-      };
-      c.handle("test", {
+      // stream options
+      const testStreamOptions = {
         onopen: (s, event)=>{
           console.log("Data channel open", event);
           s.send(JSON.stringify({hello: context.texts[closed], count: closed, ts: Date.now()}));
@@ -49,7 +34,7 @@
         },
         onclose: (s, event)=>{
           console.log("Data channel close", event);
-          c.openStream("test2");
+          c.openStream("test2", test2StreamOptions);
         },
         onmessage: (s, event)=>{
           const now = Date.now();
@@ -66,8 +51,8 @@
             s.close();
           }
         }
-      });
-      c.handle("test2", {
+      };
+      const test2StreamOptions = {
         onopen: (s, event)=>{
           console.log("Data channel2 open", s.label, s.readyState);
           s.send(JSON.stringify({streamName: "recv"})); //will create stream which name is "recv"
@@ -76,8 +61,8 @@
         onmessage: (s, event)=>{
           showError("test2.onmessage should not be called");
         }
-      });
-      c.handle("test3", {
+      }
+      const test3StreamOptions = {
         onopen: (s, event)=>{
           console.log("Data channel4 open", s.label, s.readyState);
           s.send(JSON.stringify({count: 0}));
@@ -95,8 +80,8 @@
           s.context.count = resp.count + 1;
           s.send(JSON.stringify({count: s.context.count}));
         }
-      });
-      c.handle("recv", {
+      };
+      const recvStreamOptions = {
         onopen: (s, event)=>{
           console.log("Data channel3 open", s.label, closed, closed < MAX_RECONNECT);
           // die is true, server close connection.
@@ -111,7 +96,33 @@
           console.log("Data channel3 message", resp);
           c.close();
         }
-      });
+      };
+      c.onopen = () => {
+        console.log("client onopen called");
+        c.openStream("test", testStreamOptions);
+        c.openStream("test3", test3StreamOptions);
+      };
+      c.onclose = () => {
+        console.log("client onclose called", closed);
+        if (closed < MAX_RECONNECT) {
+          closed++;
+          return 2000 * 1000 * 1000;
+        } else {
+          // stop reconnection
+          showResult("success");
+          return;
+        }
+      };
+      c.onstream = (s) => {
+        console.log("onstream", s.label);
+        if (s.label == "recv") {
+          return recvStreamOptions;
+        } else if (s.label == "test2") {
+          return test2StreamOptions;
+        } else {
+          showError("unknown stream label: " + s.label);
+        }
+      };
       c.connect();
     </script>
   </body>
