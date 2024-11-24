@@ -9,28 +9,16 @@
 
     <script src="http://localhost:8888/client.js"></script>
     <script>
-      showMedia = (m, t) => {
-        if (t.kind == "video") {
-          console.log("play video", m.label);
-          let videoElement = document.getElementById(`video-${t.id}`);
-          if (!videoElement) {
-            videoElement = document.createElement('video');
-            videoElement.id = `video-${t.id}`;
-            videoElement.autoplay = true;
-            document.body.appendChild(videoElement);
-          }
-          videoElement.srcObject = t.stream;
-        } else if (t.kind == "audio") {
-          console.log("play audio", m.label);
-          let audioElement = document.getElementById(`audio-${t.id}`);
-          if (!audioElement) {
-            audioElement = document.createElement('audio');
-            audioElement.id = `audio-${t.id}`;
-            audioElement.autoplay = true;
-            document.body.appendChild(audioElement);
-          }
-          audioElement.srcObject = t.stream;          
+      showMedia = (t) => {
+        console.log(`play ${t.kind}`, t.label);
+        let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
+        if (!mediaElement) {
+          mediaElement = document.createElement(t.kind);
+          mediaElement.id = `${t.kind}-${t.id}`;
+          mediaElement.autoplay = true;
+          document.body.appendChild(mediaElement);
         }
+        mediaElement.srcObject = t.stream;
       }
       setupUI = (c) => {
         // このconnectionのidを表示
@@ -54,14 +42,13 @@
       const MAX_RECONNECT = 0;
       let closed = 0;
       const webcamMediaHandler = {
-        onopen: (m, track)=>{
-          console.log("media open", m.stream.id, track.id);
-          showMedia(m, track);
+        onopen: (track)=>{
+          console.log("media open", track.stream.id, track.id);
+          showMedia(track);
         },
-        onclose: (m)=>{
-          console.log("media close", m.stream.id);
-          document.getElementById(`video-${m.stream.id}`).remove();
-          document.getElementById(`audio-${m.stream.id}`).remove();
+        onclose: (track)=>{
+          console.log("media close", track.id, track.kind);
+          document.getElementById(`${track.kind}-${track.id}`).remove();
         },
       };
       c.onopen = async () => {
@@ -72,7 +59,7 @@
             video: {width: {ideal: 1280}, height: {ideal: 720}},
             audio: true
           }), 
-          encoding: [
+          encodings: [
             // 1500kbps ?
             {rid: 'h1', maxBitrate: 5000000, active: true, scaleResolutionDownBy: 1.0},
             // 500kbps ?
