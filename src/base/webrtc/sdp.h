@@ -33,20 +33,26 @@ namespace webrtc {
       const json &section, const std::string &proto, ConnectionFactory::Connection &c,
       std::map<std::string, rtp::Parameters> &section_answer_map, std::string &errmsg) const;
   public:
+    struct AnswerParams {
+      const rtp::Parameters *params;
+      const std::string cname;
+      AnswerParams(const rtp::Parameters &p) : params(&p), cname("") {}
+      AnswerParams(const rtp::Parameters &p, const std::string &cname) : params(&p), cname(cname) {}
+    };
     static std::string GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,
-      const std::map<Media::Mid, rtp::Parameters> &params_map, bool for_consumer
+      const std::map<Media::Mid, rtp::Parameters> &params_map
     ) {
-      std::map<std::string, const rtp::Parameters*> params_map_ref;
-      for (const auto &kv : params_map) { params_map_ref[kv.first] = &kv.second; }
-      return GenerateAnswer(c, proto, params_map_ref, for_consumer);
+      std::map<Media::Mid, AnswerParams> anwser_params;
+      for (const auto &kv : params_map) { anwser_params.emplace(kv.first, kv.second); }
+      return GenerateAnswer(c, proto, anwser_params);
     }
     static std::string GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,
-      const std::map<Media::Mid, const rtp::Parameters*> &params_map, bool for_consumer
+      const std::map<Media::Mid, AnswerParams> anwser_params
     );
-    static inline std::string GenerateSectionAnswer(ConnectionFactory::Connection &c,
-      const std::string &proto, const rtp::Parameters &p, bool for_consumer);
+    static inline std::string GenerateSectionAnswer(ConnectionFactory::Connection &c, 
+      const std::string &proto, const AnswerParams &p);
     static std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c);
     static uint32_t AssignPriority(uint32_t component_id);
   public:

@@ -20,6 +20,13 @@
         }
         mediaElement.srcObject = t.stream;
       }
+      onIDEdit = async (event) => {
+        if (event.key === 'Enter') {
+          const id = event.target.value;
+          console.log(`input id = ${id}`);
+          await c.openMedia(`${id}/webcam`, webcamMediaHandler);
+        }
+      }
       setupUI = (c) => {
         // このconnectionのidを表示
         let idElement = document.getElementById("cname");
@@ -27,19 +34,16 @@
           idElement.innerText = c.cname;
         }
         // 編集ボックスのEnterキーイベントリスナーを追加
-        document.getElementById('idedit').addEventListener('keydown', async (event) => {
-          if (event.key === 'Enter') {
-            const id = event.target.value;
-            console.log(`input id = ${id}`);
-            await c.openMedia(`${id}/webcam`, webcamMediaHandler);
-          }
-        });         
+        document.getElementById('idedit').addEventListener('keydown', onIDEdit);         
+      }
+      cleanupUI = (c) => {
+        document.getElementById('idedit').removeEventListener('keydown', onIDEdit);
       }
       //Create whip client
       const url = "http://localhost:8888/qrpc";
       const c = new QRPClient(url);
       const context = {};
-      const MAX_RECONNECT = 0;
+      const MAX_RECONNECT = 1;
       let closed = 0;
       const webcamMediaHandler = {
         onopen: (track)=>{
@@ -73,6 +77,7 @@
       };
       c.onclose = () => {
         console.log("client onclose called", closed);
+        cleanupUI(c);
         if (closed < MAX_RECONNECT) {
           closed++;
           return 2000 * 1000 * 1000;

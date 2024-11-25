@@ -58,7 +58,7 @@ namespace rtp {
 		return ::flatbuffers::GetRoot<FBS::Transport::Options>(fbb.GetBufferPointer());
 	}
 	bool Handler::PrepareConsume(
-      Handler &peer, const std::string &label, 
+      Handler &peer, const std::vector<std::string> &parsed_media_path,
 			const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
 			std::map<std::string, rtp::Handler::ConsumeConfig> &consume_config_map,
 			std::vector<uint32_t> &generated_ssrcs
@@ -66,8 +66,9 @@ namespace rtp {
 		static const std::vector<Parameters::MediaKind> kinds = {
 			Parameters::MediaKind::AUDIO, Parameters::MediaKind::VIDEO
 		};
+		const auto &label = parsed_media_path[1];
 		for (const auto k : kinds) {
-			auto media_path = ProducerFactory::GenerateId(peer.rtp_id(), label, k);
+			auto media_path = parsed_media_path[0] + "/" + label + "/" + Parameters::FromMediaKind(k);
 			if (consume_config_map.find(media_path) != consume_config_map.end()) {
 				QRPC_LOGJ(info, {
 					{"ev","ignore media because already prepared"},
@@ -93,7 +94,7 @@ namespace rtp {
 			}
 			auto entry = consume_config_map.emplace(media_path, ConsumeConfig());
 			auto &config = entry.first->second;
-			config.media_path = ProducerFactory::GenerateId(peer.rtp_id(), label, k);
+			config.media_path = media_path;
 			config.options = options_map.find(k) == options_map.end() ? ConsumeOptions() : options_map.find(k)->second;
 			// generate unique mid from own consumer factory
 			auto mid = consumer_factory_.GenerateMid();

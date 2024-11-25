@@ -183,10 +183,9 @@ a=max-message-size:%u)cands",
   }
 
   std::string SDP::GenerateSectionAnswer(
-    ConnectionFactory::Connection &c, const std::string &proto, 
-    const rtp::Parameters &p, bool for_consumer
+    ConnectionFactory::Connection &c, const std::string &proto, const AnswerParams &ap
   ) {
-    ASSERT(!for_consumer || !c.producer_cname().empty());
+    auto &p = *ap.params;
     return str::Format(16 * 1024, R"sdp_section(m=%s %llu %s%s
 c=IN IP4 0.0.0.0
 a=mid:%s
@@ -203,22 +202,22 @@ a=setup:active
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      for_consumer ? p.Answer(c.producer_cname()).c_str() : p.Answer().c_str(),
+      p.Answer(ap.cname).c_str(),
       CandidatesSDP(proto, c).c_str()
     );
   }
 
   std::string SDP::GenerateAnswer(
     ConnectionFactory::Connection &c, const std::string &proto,
-    const std::map<Media::Mid, const rtp::Parameters *> &params_map, bool for_consumer
+    const std::map<Media::Mid, AnswerParams> anwser_params
   ) {
     auto now = qrpc_time_now();
     auto bundle = std::string("a=group:BUNDLE");
     std::string media_sections;
-    for (auto &kv : params_map) {
+    for (auto &kv : anwser_params) {
       QRPC_LOGJ(info, {{"ev","params_map"},{"mid", kv.first}});
       bundle += (" " + kv.first);
-      media_sections += GenerateSectionAnswer(c, proto, *kv.second, for_consumer);
+      media_sections += GenerateSectionAnswer(c, proto, kv.second);
     }
     // string value to the str::Format should be converted to c string like str.c_str()
     return str::Format(16 * 1024, R"sdp(v=0
@@ -350,7 +349,7 @@ a=msid-semantic: WMS
       }
     }
     // false for geneating answer for prodducer
-    answer = GenerateAnswer(c, proto, section_answer_map, false);
+    answer = GenerateAnswer(c, proto, section_answer_map);
     return true;
   }
 } // namespace webrtc

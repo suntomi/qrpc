@@ -55,10 +55,14 @@ void ConnectionFactory::Fin() {
 }
 void ConnectionFactory::CloseConnection(Connection &c) {
   logger::info({{"ev","close webrtc connection"},{"ufrag",c.ufrag()},{"cname",c.cname()}});
+  bool is_consumer = c.is_consumer();
   c.Fin(); // cleanup resources if not yet
   connections_.erase(c.ufrag());
-  cnmap_.erase(c.cname());
-  // c might be freed here
+  // if consumer, c might be freed here
+  if (!is_consumer) {
+    cnmap_.erase(c.cname());
+  }
+  // if producer, c might be freed here
 }
 static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket& packet) {
   TRACK();
@@ -444,6 +448,8 @@ bool ConnectionFactory::Connection::PrepareConsume(
   // TODO: support fullpath like $url/@cname/name. first should remove part before /@
   auto parsed = str::Split(media_path, "/");
   if (parsed.size() < 2) {
+    // TODO: support self consume. this is useful for syhncronized audio/video in server side
+    // but using $my_cnam/$label for self consume might be enough
     QRPC_LOGJ(error, {{"ev","invalid media_path"},{"media_path",media_path}});
     ASSERT(false);
     return false;
@@ -456,19 +462,35 @@ bool ConnectionFactory::Connection::PrepareConsume(
       ASSERT(false);
       return false;
     }
-    consumer_connection_->SetProducerCname(cname());
   }
   auto h = factory().FindHandler(parsed[0]);
   std::vector<uint32_t> generated_ssrcs;
   if (rtp_handler().PrepareConsume(
-    *h, parsed[1], options_map, consumer_connection_->consume_config_map(), generated_ssrcs)) {
+    *h, parsed, options_map, consumer_connection_->consume_config_map(), generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = media_path;
     }
     auto proto = ice_server().GetSelectedSession()->proto();
-    std::map<std::string, const rtp::Parameters *> params_map_ref;
-    for (const auto &kv : consumer_connection_->consume_config_map()) { params_map_ref[kv.second.mid] = &kv.second; }
-    sdp = SDP::GenerateAnswer(*consumer_connection_, proto, params_map_ref, true);
+    std::map<std::string, SDP::AnswerParams> answer_params;
+    for (const auto &kv : consumer_connection_->consume_config_map()) {
+      std::string cname;
+      if (kv.second.mid != "probator") {
+        auto parsed = str::Split(kv.second.media_path, "/");
+        if (parsed.size() < 3) {
+          QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",kv.second.media_path}});
+          ASSERT(false);
+          return false;
+        }
+        cname = parsed[0];
+        ASSERT(!cname.empty());
+        QRPC_LOGJ(error, {{"ev","cname detected"},{"cname",cname}});
+      }
+      answer_params.emplace(std::piecewise_construct,
+        std::forward_as_tuple(kv.second.mid),
+        std::forward_as_tuple(kv.second, cname)
+      );
+    }
+    sdp = SDP::GenerateAnswer(*consumer_connection_, proto, answer_params);
     return true;
   } else {
     ASSERT(false);

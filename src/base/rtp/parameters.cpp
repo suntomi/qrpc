@@ -698,7 +698,8 @@ namespace rtp {
         has_ssrc = true;
       }
     } else {
-      QRPC_LOGJ(info, {{"ev","cname is not empty"},{"encodings_size",encodings.size()}});
+      QRPC_LOGJ(info, {{"ev","cname is not empty"},{"encodings_size",encodings.size()},{"cname",cname}});
+      ASSERT(encodings.size() > 0);
       auto seed = ssrc_seed;
       for (auto &e : encodings) {
         auto ssrc = seed++;

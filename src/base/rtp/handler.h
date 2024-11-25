@@ -107,7 +107,7 @@ namespace rtp {
     }
     int Produce(const std::string &id, const Parameters &p);
     bool PrepareConsume(
-      Handler &peer, const std::string &label, 
+      Handler &peer, const std::vector<std::string> &parsed_media_path, 
       const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
       std::map<std::string, rtp::Handler::ConsumeConfig> &consume_config_map, std::vector<uint32_t> &generated_ssrcs);
     bool Consume(Handler &peer, const std::string &label, const ConsumeConfig &config);

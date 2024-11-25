@@ -407,6 +407,12 @@ class QRPClient {
     if (this.pc.connectionState != "failed") {
       this.pc.close();
     }
+    if (this.cpc) {
+      if (this.cpc.connectionState != "failed") {
+        this.cpc.close();
+      }
+      this.cpc = null;
+    }
     this.pc = null;
     this.#clear();
     if (reconnectionWaitMS > 0) {
@@ -478,12 +484,13 @@ class QRPClient {
       this.tracks[key] = t;
       tracks[kind] = t;
     }
+    console.log("cpc", this.cpc);
     this.cpc = new RTCPeerConnection();
-    this.#setupCallbacks(this.cpc);    
-    this.cpc.setRemoteDescription({type:"offer",sdp});
+    this.#setupCallbacks(this.cpc);
+    await this.cpc.setRemoteDescription({type:"offer",sdp});
     const answer = await this.cpc.createAnswer();
     console.log("openMedia local answer", answer.sdp);
-    this.cpc.setLocalDescription(answer);
+    await this.cpc.setLocalDescription(answer);
     return tracks;
   }
   closeMedia(label, kind) {
