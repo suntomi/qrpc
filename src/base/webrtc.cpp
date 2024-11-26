@@ -474,7 +474,9 @@ bool ConnectionFactory::Connection::PrepareConsume(
     std::map<std::string, SDP::AnswerParams> answer_params;
     for (const auto &kv : consumer_connection_->consume_config_map()) {
       std::string cname;
-      if (kv.second.mid != "probator") {
+      if (kv.second.mid == RTC::RtpProbationGenerator::GetMidValue()) {
+        cname = kv.second.mid;
+      } else {
         auto parsed = str::Split(kv.second.media_path, "/");
         if (parsed.size() < 3) {
           QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",kv.second.media_path}});
@@ -483,7 +485,6 @@ bool ConnectionFactory::Connection::PrepareConsume(
         }
         cname = parsed[0];
         ASSERT(!cname.empty());
-        QRPC_LOGJ(error, {{"ev","cname detected"},{"cname",cname}});
       }
       answer_params.emplace(std::piecewise_construct,
         std::forward_as_tuple(kv.second.mid),

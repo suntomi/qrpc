@@ -114,12 +114,7 @@ namespace rtp {
 			// if video consumer and there is no probator mid, generate probator mid => param pair
 			auto probator_mid = RTC::RtpProbationGenerator::GetMidValue();
 			if (k == Parameters::MediaKind::VIDEO && consume_config_map.find(probator_mid) == consume_config_map.end()) {
-				auto probator_entry = consume_config_map.emplace(probator_mid, ConsumeConfig(config.ToProbator()));
-				auto &probator_config = probator_entry.first->second;
-				probator_config.kind = config.kind;
-				probator_config.network = config.network;
-				probator_config.rtp_proto = config.rtp_proto;
-				probator_config.ssrc_seed = config.ssrc_seed;
+				consume_config_map.emplace(probator_mid, ConsumeConfig(config.ToProbator()));
 			}
 		}
 		QRPC_LOGJ(info, {{"ev","set consume configs"},{"configs",consume_config_map.size()}});

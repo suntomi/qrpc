@@ -229,9 +229,9 @@ namespace rtp {
     p.kind = kind;
     p.rtp_proto = rtp_proto;
     p.network = network;
-    // ssrc_seed is unnecessary
-    // p.ssrc_seed = ssrc_seed;
-    // keep ssrcs empty
+    // ssrc_seed is fixed
+    p.ssrc_seed = RTC::RtpProbationSsrc;
+    // keep ssrc empty
     // p.ssrcs = ssrcs;
     // codec_capabilities is unnecessary
     // p.codec_capabilities = codec_capabilities;
@@ -245,8 +245,9 @@ namespace rtp {
       cc.payloadType = RTC::RtpProbationCodecPayloadType;
       p.codecs.push_back(cc);
     }
-    // encoding is unnecessary
-    // p.encodings = encodings;
+    // create encoding for probation stream
+    auto &e = p.encodings.emplace_back();
+    e.ssrc = RTC::RtpProbationSsrc;
     return p;
   }
 
@@ -700,14 +701,20 @@ namespace rtp {
     } else {
       QRPC_LOGJ(info, {{"ev","cname is not empty"},{"encodings_size",encodings.size()},{"cname",cname}});
       ASSERT(encodings.size() > 0);
-      auto seed = ssrc_seed;
       for (auto &e : encodings) {
-        auto ssrc = seed++;
-        ssrcline += str::Format("\na=ssrc:%u cname:%s", ssrc, cname.c_str());
+        ssrcline += str::Format("\na=ssrc:%u cname:%s", e.ssrc, cname.c_str());
         has_ssrc = true;
+        if (e.hasRtx) {
+          ssrcline += str::Format("\na=ssrc:%u cname:%s", e.rtx.ssrc, cname.c_str());
+        }
       }
     }
     if (has_ssrc) {
+      for (auto &e : encodings) {
+        if (e.hasRtx) {
+          ssrcline += str::Format("\na=ssrc-group:FID %u %u", e.ssrc, e.rtx.ssrc);
+        }
+      }
       QRPC_LOGJ(info, {{"ev","add ssrcline"},{"ssrcline",ssrcline}});
       sdplines += ssrcline;
     }

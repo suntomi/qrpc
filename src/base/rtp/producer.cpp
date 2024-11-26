@@ -80,6 +80,7 @@ namespace rtp {
 
 		if (has_rtx) {
 			encoding.rtx.ssrc = encoding.ssrc + 1;
+			encoding.hasRtx = true;
 		}
 
 		// If any of the consumableRtpParameters.encodings has scalabilityMode,

@@ -190,9 +190,9 @@ a=max-message-size:%u)cands",
 c=IN IP4 0.0.0.0
 a=mid:%s
 a=sendrecv
-a=ice-lite
 a=ice-ufrag:%s
 a=ice-pwd:%s
+a=ice-options:%s
 a=fingerprint:%s %s
 a=setup:active
 %s%s
@@ -201,6 +201,7 @@ a=setup:active
       p.mid.c_str(),
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
+      ap.cname.empty() ? "trickle" : "renomination",
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
       p.Answer(ap.cname).c_str(),
       CandidatesSDP(proto, c).c_str()
@@ -220,10 +221,12 @@ a=setup:active
       media_sections += GenerateSectionAnswer(c, proto, kv.second);
     }
     // string value to the str::Format should be converted to c string like str.c_str()
+    // a=ice-lite attribute is important for indicating to peer that we are ice-lite mode
     return str::Format(16 * 1024, R"sdp(v=0
 o=- %llu %llu IN IP4 0.0.0.0
 s=-
 t=0 0
+a=ice-lite
 %s
 a=msid-semantic: WMS
 %s)sdp",
