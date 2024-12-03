@@ -125,21 +125,12 @@ namespace rtp {
 		Handler &peer, const std::string &label, const ConsumeConfig &config
 	) {
 		auto cid = ConsumerFactory::GenerateId(peer.rtp_id(), label, config.kind);
-		if (GetConsumerById(cid) != nullptr) {
+		if (HasConsumer(cid)) {
 			QRPC_LOGJ(info, {{"ev","consume already created"},{"cid",cid}});
 			return true;
 		}
 		const auto &options = config.options;
 		const auto &kind = config.kind;
-		// 1. get corresponding producer from peer handler
-		//	first, find correspoinding producer id with label, audio/video, from peer handler 
-		// 2. create consumer with the found producer, parameters, and label
-		// 3. add the created consumer to mapConsumers
-		auto producer = FindProducer(label, kind);
-		if (producer == nullptr) {
-			QRPC_LOGJ(error, {{"ev","producer not found"},{"label",label},{"kind",Parameters::FromMediaKind(kind)}});
-			return false;
-		}
 		// false for creating pipe consumer: TODO: support pipe consumer
 		auto consumer = consumer_factory_.Create(peer, label, kind, config, options.pause, false);
 		if (consumer == nullptr) {

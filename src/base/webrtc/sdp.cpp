@@ -216,7 +216,6 @@ a=setup:active
     auto bundle = std::string("a=group:BUNDLE");
     std::string media_sections;
     for (auto &kv : anwser_params) {
-      QRPC_LOGJ(info, {{"ev","params_map"},{"mid", kv.first}});
       bundle += (" " + kv.first);
       media_sections += GenerateSectionAnswer(c, proto, kv.second);
     }

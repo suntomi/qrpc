@@ -455,6 +455,12 @@ bool ConnectionFactory::Connection::PrepareConsume(
     return false;
   }
   if (consumer_connection_ == nullptr) {
+    const auto &fp = dtls_transport().GetRemoteFingerprint();
+    if (!fp.has_value()) {
+      QRPC_LOGJ(error, {{"ev","parent connect does not established"}});
+      ASSERT(false);
+      return false;
+    }
     std::string ufrag, pwd;
     consumer_connection_ = factory().Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd, true);
     if (consumer_connection_ == nullptr) {
@@ -462,6 +468,8 @@ bool ConnectionFactory::Connection::PrepareConsume(
       ASSERT(false);
       return false;
     }
+    // copy fingerprint because client has not generated it yet
+    consumer_connection_->dtls_transport().SetRemoteFingerprint(fp.value());
   }
   auto h = factory().FindHandler(parsed[0]);
   std::vector<uint32_t> generated_ssrcs;
@@ -506,7 +514,7 @@ bool ConnectionFactory::Connection::Consume() {
   }
   // force initiate rtp
   InitRTP();
-  for (const auto &entry : consumer_connection_->consume_config_map()) {
+  for (const auto &entry : consume_config_map()) {
     if (!ConsumeMedia(entry.second)) {
       return false;
     }
@@ -516,6 +524,10 @@ bool ConnectionFactory::Connection::Consume() {
 bool ConnectionFactory::Connection::ConsumeMedia(
   const rtp::Handler::ConsumeConfig &config
 ) {
+  if (config.mid == RTC::RtpProbationGenerator::GetMidValue()) {
+    QRPC_LOGJ(debug, {{"ev","ignore probator"}});
+    return true;
+  }
   ASSERT(consumer_connection_ == nullptr && is_consumer());
   // TODO: support fullpath like $url/@cname/name. first should remove part before /@
   auto parsed = str::Split(config.media_path, "/");
@@ -904,8 +916,9 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
       {"proto","srtp"},{"ssrc",packet->GetSsrc()},
       {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
     });
+    delete packet;
   } else {
-    rtp_handler_->ReceiveRtpPacket(packet);
+    rtp_handler_->ReceiveRtpPacket(packet); // deletes packet
   }
 }
 int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz) {
@@ -1000,19 +1013,19 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
 void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
   // used for synching server's session/address map. 
-  // use OnIceServerSessionAdded to search mediasoup's example
+  // use OnIceServerTupleAdded to search mediasoup's example
 }
 void ConnectionFactory::Connection::OnIceServerSessionRemoved(
   const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionRemoved"},{"ss",str::dptr(session)}});
   // used for synching server's session/address map. 
-  // use OnIceServerSessionRemoved to search mediasoup's example
+  // use OnIceServerTupleRemoved to search mediasoup's example
 }
 void ConnectionFactory::Connection::OnIceServerSelectedSession(
   const IceServer *iceServer, Session *session) {
   TRACK();
   // just notify the app
-  // use OnIceServerSelectedSession to search mediasoup's example
+  // use OnIceServerSelectedTuple to search mediasoup's example
 }
 void ConnectionFactory::Connection::OnIceServerConnected(const IceServer *iceServer) {
   TRACK();
@@ -1299,6 +1312,7 @@ void ConnectionFactory::Connection::SendRtpPacket(
     }
     return;
   }
+  // QRPC_LOGJ(info, {{"ev","sendrtp"},{"ssrc",packet->GetSsrc()},{"pt",packet->GetPayloadType()},{"sz",sz}});
   // Increase send transmission.
   rtp_handler_->DataSent(sz);
 }

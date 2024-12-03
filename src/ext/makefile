@@ -3,7 +3,7 @@ SAN=address
 ifeq ($(MODE),debug)
 	MS_PROFILE=Debug
 	ifneq ($(SAN),)
-		MESON_ARGS="-Db_sanitize=$(SAN)"
+		MESON_ARGS="-Db_sanitize=$(SAN) -Dms_rtc_logger_rtp=true"
 	else
 		MESON_ARGS=
 	endif

@@ -7,34 +7,6 @@
 #include "FBS/transport.h"
 
 namespace base {
-namespace webrtc {
-  static inline uint32_t AssignPriority(uint32_t component_id) {
-    // borrow from
-    // https://github.com/IIlllII/bitbreeds-webrtc/blob/master/webrtc-signaling/src/main/java/com/bitbreeds/webrtc/signaling/SDPUtil.java#L191
-    return 2113929216 + 16776960 + (256 - component_id);
-  }
-
-  static inline std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c) {
-    std::string sdplines;
-    auto &l = c.factory().to<Listener>();
-    ASSERT(proto == "UDP" || proto == "TCP");
-    auto nwport = proto == "UDP" ? l.udp_port() : l.tcp_port();
-    size_t idx = 0;
-    for (auto &a : c.factory().config().ifaddrs) {
-      sdplines += str::Format(
-        "a=candidate:0 %u %s %u %s %u typ host\n",
-        idx + 1, proto.c_str(), AssignPriority(idx), a.c_str(), nwport
-      );
-      idx++;
-    }
-    sdplines += str::Format(R"cands(a=end-of-candidates
-a=sctp-port:5000
-a=max-message-size:%u)cands",
-      c.factory().config().send_buffer_size
-    );
-    return sdplines;
-  }    
-}
 namespace rtp {
   #define FIND_OR_RAISE(__name, __it, __key) \
     auto __name = __it->find(__key); \
@@ -511,7 +483,14 @@ namespace rtp {
         return false;
       }
       this->codecs.emplace_back(*rtx_codec);
-    }    
+    }
+    // auto ssrcgit = section.find("ssrcGroups");
+    // std::map<uint32_t, std::vector<std::string>> ssrcgs;
+    // if (ssrcgit != section.end()) {
+    //   for (auto it = ssrcgit->begin(); it != ssrcgit->end(); it++) {
+    //     ssrcgs.insert();
+    //   }
+    // }
     auto ssrcit = section.find("ssrcs");
     if (ssrcit != section.end()) {
       bool found = false;
@@ -699,7 +678,7 @@ namespace rtp {
         has_ssrc = true;
       }
     } else {
-      QRPC_LOGJ(info, {{"ev","cname is not empty"},{"encodings_size",encodings.size()},{"cname",cname}});
+      // QRPC_LOGJ(info, {{"ev","cname is not empty"},{"encodings_size",encodings.size()},{"cname",cname}});
       ASSERT(encodings.size() > 0);
       for (auto &e : encodings) {
         ssrcline += str::Format("\na=ssrc:%u cname:%s", e.ssrc, cname.c_str());
@@ -715,7 +694,7 @@ namespace rtp {
           ssrcline += str::Format("\na=ssrc-group:FID %u %u", e.ssrc, e.rtx.ssrc);
         }
       }
-      QRPC_LOGJ(info, {{"ev","add ssrcline"},{"ssrcline",ssrcline}});
+      // QRPC_LOGJ(info, {{"ev","add ssrcline"},{"ssrcline",ssrcline}});
       sdplines += ssrcline;
     }
     std::string scline = "\na=simulcast:";

@@ -159,12 +159,25 @@ class QRPClient {
       return;
     }
     // create dummy peer connection to generate sdp
-    const pc = new RTCPeerConnection(); 
+    const pc = await this.#createPeerConnection();
     // Store pc object and token
     this.pc = pc;
     this.initIce();
     this.#setupCallbacks(pc);
     await this.#handshake();
+  }
+  async #createPeerConnection() {
+    if (!this.cert) {
+      this.cert = await RTCPeerConnection.generateCertificate({
+        name: 'ECDSA',
+        namedCurve: 'P-256'
+      });
+    }
+    // create dummy peer connection to generate sdp
+    return new RTCPeerConnection({
+      iceServers: [],
+      certificates: [this.cert]
+    });
   }
   #setupCallbacks(pc) {
     // Listen for data channels
@@ -484,8 +497,7 @@ class QRPClient {
       this.tracks[key] = t;
       tracks[kind] = t;
     }
-    console.log("cpc", this.cpc);
-    this.cpc = new RTCPeerConnection();
+    this.cpc = await this.#createPeerConnection();
     this.#setupCallbacks(this.cpc);
     await this.cpc.setRemoteDescription({type:"offer",sdp});
     const answer = await this.cpc.createAnswer();
