@@ -49,9 +49,9 @@ namespace rtp {
     RTC::RtpCodecParameters *CodecByPayloadType(uint64_t pt);
     void AddEncoding(
       const std::string &rid, uint64_t pt, uint64_t rtxpt, bool dtx,
-      const std::string &scalability_mode
-    );
-    void AddEncoding(uint32_t ssrc, uint64_t pt, uint64_t rtxpt, bool dtx);
+      const std::string &scalability_mode);
+    void AddEncoding(uint32_t ssrc, uint32_t rtx_ssrc, 
+      uint64_t pt, uint64_t rtxpt, bool dtx);
     static inline uint32_t GenerateSsrc() {
       return random::gen(100000000, 900000000);
     }

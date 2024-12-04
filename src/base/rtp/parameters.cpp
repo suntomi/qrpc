@@ -186,13 +186,15 @@ namespace rtp {
     p.hasRtx = rtxpt != 0; // here, rtx ssrc is unknown
     encodings.push_back(p);
   }
-  void Parameters::AddEncoding(uint32_t ssrc, uint64_t pt, uint64_t rtxpt, bool dtx) {
+  void Parameters::AddEncoding(uint32_t ssrc, uint32_t rtx_ssrc, uint64_t pt, uint64_t rtxpt, bool dtx) {
     RTC::RtpEncodingParameters p;
     p.ssrc = ssrc;
     p.dtx = dtx;
     p.codecPayloadType = pt;
     p.hasCodecPayloadType = pt != 0;
-    p.hasRtx = rtxpt != 0; // here, rtx ssrc is unknown
+    ASSERT((rtxpt != 0) == (rtx_ssrc != 0));
+    p.hasRtx = rtxpt != 0 && rtx_ssrc != 0; // here, rtx ssrc is unknown
+    p.rtx.ssrc = rtx_ssrc;
     encodings.push_back(p);
   }
   const Parameters Parameters::ToProbator() const {
@@ -484,15 +486,53 @@ namespace rtp {
       }
       this->codecs.emplace_back(*rtx_codec);
     }
-    // auto ssrcgit = section.find("ssrcGroups");
-    // std::map<uint32_t, std::vector<std::string>> ssrcgs;
-    // if (ssrcgit != section.end()) {
-    //   for (auto it = ssrcgit->begin(); it != ssrcgit->end(); it++) {
-    //     ssrcgs.insert();
-    //   }
-    // }
+    auto ssrcgit = section.find("ssrcGroups");
+    std::map<uint32_t, uint32_t> media_rtx_ssrc_map;
+    std::set<uint32_t> ssrc_group_set;
+    if (ssrcgit != section.end()) {
+      for (auto it = ssrcgit->begin(); it != ssrcgit->end(); it++) {
+        auto semit = it->find("semantics");
+        if (semit == it->end()) {
+          answer = "ssrcGropus: no key for 'semantics'";
+          ASSERT(false);
+          return false;
+        }
+        auto sem = semit->get<std::string>();
+        if (sem != "FID") {
+          QRPC_LOGJ(warn, {{"ev","invalid semantics"},{"sem",sem}});
+          ASSERT(false);
+          continue;
+        }
+        auto ssrcsit = it->find("ssrcs");
+        if (ssrcsit == it->end()) {
+          answer = "ssrcGropus: no key for 'ssrcs'";
+          ASSERT(false);
+          return false;
+        }
+        auto ssrcsstr = ssrcsit->get<std::string>();
+        auto ssrcs = str::Split(ssrcsstr, " ");
+        if (ssrcs.size() != 2) {
+          answer = str::Format("ssrcGropus: parse error for value for ssrcs = %s", ssrcsstr.c_str());
+          ASSERT(false);
+          return false;
+        }
+        try {
+          uint32_t media_ssrc = std::stoul(ssrcs[0]);
+          uint32_t rtx_ssrc = std::stoul(ssrcs[1]);
+          media_rtx_ssrc_map[media_ssrc] = rtx_ssrc;
+          ssrc_group_set.insert(media_ssrc);
+          ssrc_group_set.insert(rtx_ssrc);
+        } catch (std::exception &e) {
+          answer = str::Format("ssrcGropus: parse error for value for ssrcs = %s", ssrcsstr.c_str());
+          ASSERT(false);
+          return false;
+        }
+      }
+    }
+    auto has_ssrcs = false;
     auto ssrcit = section.find("ssrcs");
     if (ssrcit != section.end()) {
+      has_ssrcs = true;
       bool found = false;
       for (auto it = ssrcit->begin(); it != ssrcit->end(); it++) {
         auto ait = it->find("attribute");
@@ -520,7 +560,18 @@ namespace rtp {
           auto idit = it->find("id");
           auto vit = it->find("value");
           auto id = idit->get<uint32_t>();
-          AddEncoding(id, selected_pt, rtx_pt, usedtx);
+          auto rtx_ssrc_it = media_rtx_ssrc_map.find(id);
+          if (rtx_ssrc_it != media_rtx_ssrc_map.end()) {
+            // id is in ssrc_group and key of media_rtx_ssrc_map.
+            // that means id is media ssrc and rtx_ssrc_it contains its rtx ssrc
+            // if id is in ssrc_group and is not key of media_rtx_ssrc_map, 
+            // that means id is rtx ssrc and should not be treated as new encoding.
+            AddEncoding(id, rtx_ssrc_it->second, selected_pt, rtx_pt, usedtx);
+          } else if (ssrc_group_set.find(id) == ssrc_group_set.end()) {
+            // id not in ssrc group, so no possibility that its rtx entry, 
+            // just add it as new encoding.
+            AddEncoding(id, 0, selected_pt, rtx_pt, usedtx);
+          }
           auto ssrcit = ssrcs.find(id);
           if (ssrcit == ssrcs.end()) {
             ssrcs[id] = {
@@ -540,6 +591,12 @@ namespace rtp {
     }
     auto scit = section.find("simulcast");
     if (scit != section.end()) {
+      if (has_ssrcs) {
+        answer = str::Format("does not support both a=ssrcs and a=simulcast attributes");
+        QRPC_LOGJ(warn, {{"ev","failed to parse pt"},{"ssrcs",*ssrcit}});
+        ASSERT(false);
+        return false;
+      }
       FIND_OR_RAISE(dit, scit, "dir1");
       FIND_OR_RAISE(lit, scit, "list1");
       auto dir1 = dit->get<std::string>();
