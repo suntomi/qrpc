@@ -21,6 +21,18 @@ namespace str {
     snprintf(buff, sizeof(buff), "%p", p);
     return buff;
   }
+  static std::vector<std::string> Split(const std::string &s, const std::string &delim) {
+    std::vector<std::string> v;
+    size_t start = 0;
+    size_t end = s.find(delim);
+    while (end != std::string::npos) {
+      v.push_back(s.substr(start, end - start));
+      start = end + delim.length();
+      end = s.find(delim, start);
+    }
+    v.push_back(s.substr(start, end));
+    return v;
+  }
   static size_t Vprintf(char *buff, qrpc_size_t sz, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -29,10 +41,14 @@ namespace str {
     return r;
   }
   template<class... Args>
-  static std::string Format(const char *fmt, const Args... args) {
-    static thread_local char buff[1024];
+  static inline std::string Format(size_t bufsz, const char *fmt, const Args... args) {
+    char buff[bufsz];
     Vprintf(buff, sizeof(buff), fmt, args...);
     return std::string(buff);
+  }
+  template<class... Args>
+  static inline std::string Format(const char *fmt, const Args... args) {
+    return Format(1024, fmt, args...);
   }
   inline int CmpNocase(const std::string &a, const std::string &b, size_t n) {
     return strncasecmp(a.c_str(), b.c_str(), n);

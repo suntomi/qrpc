@@ -7,6 +7,7 @@
 
 namespace base {
 namespace webrtc {
+  // implementation of DCEP https://www.rfc-editor.org/rfc/rfc8832.html
   enum PPID {
     WEBRTC_DCEP = 50,
     STRING = 51,
@@ -43,6 +44,7 @@ namespace webrtc {
   typedef base::Stream Stream;
   class DcepRequest : public Stream::Config {
   public:
+    // https://www.rfc-editor.org/rfc/rfc8832.html#name-data_channel_open-message
     typedef struct {
       DcepMessageType msg_type;
       DcepChannelType channel_type;
@@ -163,6 +165,7 @@ namespace webrtc {
   };
   class DcepResponse {
   public:
+    // https://www.rfc-editor.org/rfc/rfc8832.html#name-data_channel_ack-message
     const uint8_t *ToPaylod(uint8_t *buffer, size_t sz) {
       if (sz < PayloadSize()) {
         logger::error({{"ev","invalid dcep packet"},{"reason", "buffer size is too small"},{"sz",sz},{"payload_size",PayloadSize()}});

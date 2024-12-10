@@ -80,19 +80,24 @@ typedef struct {
 } qrpc_serial_t;
 
 typedef struct qrpc_conn_tag {
-    qrpc_serial_t s; //see ConnSerialCodec
-    void *p;    //NqSessionDelegate
+  qrpc_serial_t s; //see ConnSerialCodec
+  void *p;    //NqSessionDelegate
 } qrpc_conn_t;
 
 typedef struct qrpc_stream_tag {
-    qrpc_serial_t s; //see StreamSerialCodec
-    void *p;    //NqStream
+  qrpc_serial_t s; //see StreamSerialCodec
+  void *p;    //NqStream
 } qrpc_stream_t; 
-//this is essentially same as nq_stream, but would be helpful to prevent misuse of rpc/stream
+//below are essentially same as nq_stream, but would be helpful to prevent misuse of rpc/stream/media/alarm
 typedef struct qrpc_rpc_tag {
-    qrpc_serial_t s; //see StreamSerialCodec
-    void *p;    //NqStream
+  qrpc_serial_t s; //see StreamSerialCodec
+  void *p;    //NqStream
 } qrpc_rpc_t; 
+
+typedef struct qrpc_media_tag {
+  qrpc_serial_t s;
+  void *p;    //NqMedia
+} qrpc_media_t;
 
 typedef struct qrpc_alarm_tag {
   qrpc_serial_t s;   //see AlarmSerialCodec
@@ -130,7 +135,7 @@ struct qrpc_webrtc_config_tag {
 };
 
 // for future. webtransport will be based QUIC, so below fields are basically required to configure QUIC
-struct qrpc_webtransport_config_tag {
+struct qrpc_webtx_config_tag {
   //applicaiton protocol (ALPN) data, if you want to use the library
   //for implementing http3 server/client, you should set here the value `QRPC_H3_ALPN`
   const char *alpn;
@@ -171,7 +176,7 @@ typedef struct {
   qrpc_wire_proto_t proto;
   union {
     qrpc_webrtc_config_tag webrtc;
-    qrpc_webtransport_config_tag webtransport;
+    qrpc_webtx_config_tag webtx;
   };
 } qrpc_transport_config_t;
 
@@ -268,6 +273,8 @@ QRPC_DECL_CLOSURE(void, qrpc_on_server_conn_close_t, void *, qrpc_conn_t,  const
 QRPC_DECL_CLOSURE(void, qrpc_on_conn_validate_t, void *, qrpc_conn_t, const char *);
 //called when qrpc_conn_modify_hdmap invoked with valid qrpc_conn_t
 QRPC_DECL_CLOSURE(void, qrpc_on_conn_modify_hdmap_t, void *, qrpc_hdmap_t);
+//called when qrpc_conn emit event
+QRPC_DECL_CLOSURE(void, qrpc_on_event_t, void *, qrpc_conn_t, const void *);
 
 
 /* stream */
@@ -291,8 +298,6 @@ QRPC_DECL_CLOSURE(void, qrpc_on_stream_retransmit_t, void *, int);
 //called as 2nd argument qrpc_stream_valid, when actually given stream is valid.
 QRPC_DECL_CLOSURE(void, qrpc_on_stream_validate_t, void *, qrpc_stream_t, const char *);
 
-QRPC_DECL_CLOSURE(void*, qrpc_stream_factory_t, void *, qrpc_conn_t);
-
 
 /* rpc */
 //rpc opened. return false to reject rpc
@@ -310,6 +315,16 @@ QRPC_DECL_CLOSURE(void, qrpc_on_rpc_task_t, void *, qrpc_rpc_t);
 //called as 2nd argument qrpc_stream_valid, when actually given stream is valid.
 QRPC_DECL_CLOSURE(void, qrpc_on_rpc_validate_t, void *, qrpc_rpc_t, const char *);
 
+
+/* media */
+QRPC_DECL_CLOSURE(bool, qrpc_on_media_open_t, void *, qrpc_media_t, void**);
+//media closed. after this called, qrpc_media_t which given to this function will be invalid.
+QRPC_DECL_CLOSURE(void, qrpc_on_media_close_t, void *, qrpc_media_t);
+//media stream packet received. return false to unsubscribe media stream.
+QRPC_DECL_CLOSURE(bool, qrpc_media_consumer_t, void *, qrpc_media_t, const void *, qrpc_size_t);
+//media stream packet received. should return byte array pointer and its size via qrpc_size_t*.
+//return null to stop publish.
+QRPC_DECL_CLOSURE(bool, qrpc_media_producer_t, void *, qrpc_size_t*);
 
 /* alarm */
 QRPC_DECL_CLOSURE(void, qrpc_on_alarm_t, void *, qrpc_time_t *);
@@ -433,7 +448,7 @@ QAPI_BOOTSTRAP qrpc_server_t qrpc_server_create(int n_worker);
 QAPI_BOOTSTRAP qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_addr_t *addr, const qrpc_svconf_t *config);
 //if block is true, qrpc_server_start blocks until some other thread calls qrpc_server_join. 
 QAPI_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block);
-//request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API
+//request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API anymore
 QAPI_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv);
 
 
@@ -460,16 +475,31 @@ typedef struct {
   bool use_large_msgid; // use 4byte for msgid
 } qrpc_rpc_handler_t;
 
-//setup original stream protocol (client), with 3 pattern
-QAPI_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *name, qrpc_stream_handler_t handler);
+typedef struct {
+  qrpc_on_media_open_t on_media_open;
+  qrpc_on_media_close_t on_media_close;
+} qrpc_media_handler_t;
 
-QAPI_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *name, qrpc_rpc_handler_t handler);
+//decide handler for each incoming stream on demand
+QRPC_DECL_CLOSURE(qrpc_stream_handler_t *, qrpc_stream_director_t, void *, const char *, qrpc_conn_t);
+//decide handler for each incoming maeia on demand
+QRPC_DECL_CLOSURE(qrpc_media_handler_t *, qrpc_media_director_t, void *, const char *, qrpc_conn_t);
+//setup original stream protocol (client) based on its label, with 3 pattern.
+QAPI_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *label, qrpc_stream_handler_t handler);
 
-QAPI_BOOTSTRAP bool qrpc_hdmap_stream_factory(qrpc_hdmap_t h, const char *name, qrpc_stream_factory_t factory);
+QAPI_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *label, qrpc_rpc_handler_t handler);
+//media handler
+QAPI_BOOTSTRAP bool qrpc_hdmap_media_handler(qrpc_hdmap_t h, const char *label, qrpc_media_handler_t handler);
+// set stream director. unlike qrpc_hdmap_raw_handler, the director is used as "fallback". that is, if label is matched
+// above qrpc_hdmap_XXX_handler entry, director will not be called.
+QAPI_BOOTSTRAP bool qrpc_hdmap_stream_director(qrpc_hdmap_t h, qrpc_stream_director_t director);
+// set media director. unlike qrpc_hdmap_raw_handler, the director is used as "fallback". that is, if label is matched
+// above qrpc_hdmap_XXX_handler entry, director will not be called.
+QAPI_BOOTSTRAP bool qrpc_hdmap_media_director(qrpc_hdmap_t h, qrpc_media_director_t director);
 //if you call this API, qrpc_hdmap_t become "raw mode". any other hdmap settings are ignored, 
 //and all incoming/outgoing streams are handled with the handler which is given to this API.
-QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t handler);
-
+//even media stream packet is handled by handler.on_stream_record.
+QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t sh, qrpc_media_handler_t mh);
 
 
 // --------------------------
@@ -511,6 +541,10 @@ QAPI_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reacha
 //get fd attached to the conn. client conn returns dedicated fd for the connection,
 //server side returns lister fd, which is shared among connections.sz
 QAPI_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn);
+//emit event on this conn. when this called, cb registered by qrpc_conn_watch, is called with `args`
+QAPI_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, const char *event, const void *args);
+//make cb callbacked when corresponding qrpc_conn_emit with `event` called
+QAPI_THREADSAFE void qrpc_conn_watch(const char *event, qrpc_on_event_t cb);
 
 
 // --------------------------
@@ -579,7 +613,7 @@ QAPI_THREADSAFE void qrpc_rpc_close(qrpc_rpc_t rpc);
 //send arbiter byte array or object to stream peer. type should be positive
 QAPI_THREADSAFE void qrpc_rpc_call(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_on_rpc_reply_t on_reply);
 //same as qrpc_rpc_call but can specify various options like per call timeout
-QAPI_THREADSAFE void qrpc_rpc_call_ex(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_rpc_opt_t *opts);
+QAPI_THREADSAFE void qrpc_rpc_callx(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_rpc_opt_t *opts);
 //send arbiter byte array or object to stream peer, without receving reply. type should be positive
 QAPI_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen);
 //send reply of specified request. result >= 0, data and datalen is response, otherwise error detail
@@ -594,9 +628,56 @@ QAPI_INLINE bool qrpc_rpc_equal(qrpc_rpc_t c1, qrpc_rpc_t c2) { return c1.s.data
 //useful if you need to give special meaning to specified stream_id, like http2 over quic
 QAPI_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc);
 //get context, which is set at qrpc_conn_rpc. only safe with qrpc_rpc_t which passed to closure callbacks
-QAPI_CLOSURECALL void *nq_rpc_ctx(qrpc_rpc_t s);
+QAPI_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t s);
 
 
+
+// --------------------------
+//
+// media API
+//
+// --------------------------
+typedef enum {
+  QRPC_RTP_PARAM_INTEGER,
+  QRPC_RTP_PARAM_STRING,
+  QRPC_RTP_PARAM_DECIMAL,
+  QRPC_RTP_PARAM_BOOLEAN,
+} qrpc_media_param_type_t;
+struct qrpc_media_rtp_param_t {
+  const char *name;
+  qrpc_media_param_type_t type;
+  union {
+    uint64_t i;
+    const char *s;
+    double d;
+    bool b;
+  };
+};
+struct qrpc_media_rtcp_fb_t {
+  const char *type;
+  const char *parameter;
+};
+struct qrpc_media_codec_t {
+  char *mime_type;
+  uint32_t clock_rate;
+  uint8_t payload_type;
+  uint8_t channels;
+  uint16_t padd;
+  qrpc_media_rtp_param_t *parameters;
+  qrpc_media_rtcp_fb_t *rtcp_fbs;
+};
+struct qrpc_media_params_t {
+  char *mid;
+  struct qrpc_media_codec_t codecs[];
+};
+// publish media stream, which name is label
+QAPI_THREADSAFE void qrpc_conn_media(qrpc_conn_t conn, const char *name, qrpc_media_producer_t p);
+// get correspond connection from media
+QAPI_THREADSAFE qrpc_conn_t qrpc_media_conn(qrpc_media_t media);
+// consume media stream packet
+QAPI_THREADSAFE void qrpc_media_consume(qrpc_media_t media, qrpc_media_consumer_t c);
+// create media subscriber object from conn, which can be used for qrpc_media_sub
+QAPI_THREADSAFE qrpc_media_consumer_t qrpc_conn_media_consumer(qrpc_conn_t conn, qrpc_media_params_t params);
 
 // --------------------------
 //
@@ -704,9 +785,9 @@ typedef struct {
 
 QAPI_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf);
 //write JSON structured log output. 
-QAPI_THREADSAFE void nq_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params);
+QAPI_THREADSAFE void qrpc_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params);
 //write JSON Structured log output, with only msg
-QAPI_INLINE void nq_msg(qrpc_loglv_t lv, const char *msg) { nq_log(lv, msg, NULL, 0); }
+QAPI_INLINE void qrpc_msg(qrpc_loglv_t lv, const char *msg) { qrpc_log(lv, msg, NULL, 0); }
 //flush cached log. only enable if you configure manual_flush to true. 
 //recommend to call from only one thread. otherwise log output order may change from actual order.
 QAPI_THREADSAFE void qrpc_log_flush(); 

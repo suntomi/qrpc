@@ -66,20 +66,13 @@ namespace base {
     Id id = id_factory_.New();
     handlers_.insert(std::make_pair(at, Entry(id, h)));
     schedule_times_.insert(std::make_pair(id, at));
-    logger::debug({{"ev","timer: create"},{"tid",id},{"ptr",str::dptr(this)}});
+    // logger::debug({{"ev","timer: create"},{"tid",id},{"at",at}});
     return id;
   }
   bool TimerScheduler::Stop(Id id) {
-    if (processed_now_ == id) {
-      logger::warn({
-        {"ev","try stop current processed timer. try using return 0 to stop processed timer"},
-        {"tid",id}});
-      ASSERT(false);
-      return true;
-    }
     auto i = schedule_times_.find(id);
     if (i == schedule_times_.end()) {
-      logger::warn({{"ev","timer: id not found"},{"tid",id},{"ptr",str::dptr(this)}});
+      logger::warn({{"ev","timer: id not found"},{"tid",id}});
       ASSERT(false);
       return false;
     }
@@ -88,8 +81,15 @@ namespace base {
     for (auto &j = range.first; j != range.second; ++j) {
       Entry &e = j->second;
       if (e.id == id) {
-        logger::debug({{"ev","timer: stopped"},{"tid",id}});
-        handlers_.erase(j);
+        // logger::debug({{"ev","timer: stopped"},{"tid",id},{"at",i->second}});
+        if (processed_now_) {
+          // handlers_.erase will break iterator now iterates in Poll()
+          // instead of erase entry, just set special handler for e.handler
+          // next time the entry processed, the entry will do nothing and be freed
+          e.handler = []() { return STOP; };
+        } else {
+          handlers_.erase(j);
+        }
         schedule_times_.erase(id);
         return true;
       }
@@ -139,26 +139,28 @@ namespace base {
   }
   void TimerScheduler::Poll() {
     qrpc_time_t now = qrpc_time_now();
-    ASSERT(processed_now_ == 0);
+    ASSERT(!processed_now_);
+    processed_now_ = true;
     for (auto it = handlers_.begin(); it != handlers_.end(); ) {
       auto &ent = *it;
       if (ent.first > now) {
         break;
       }
-      ASSERT(schedule_times_.find(ent.second.id) != schedule_times_.end() && 
+      ASSERT(schedule_times_.find(ent.second.id) == schedule_times_.end() ||
         (*schedule_times_.find(ent.second.id)).second == ent.first);
       auto e = std::move(ent.second);
-      processed_now_ = e.id;
       it = handlers_.erase(it);
-      schedule_times_.erase(processed_now_);
       qrpc_time_t next = e.handler();
       if (next < now) {
+        // logger::debug({{"ev","timer: stopped by rv"},{"tid",e.id},{"next",next}});
+        schedule_times_.erase(e.id);
         continue;
       }
+      ASSERT(schedule_times_.find(e.id) != schedule_times_.end());
       handlers_.insert(std::make_pair(next, e));
-      schedule_times_.insert(std::make_pair(processed_now_, next));
+      schedule_times_[e.id] = next;
     }
-    processed_now_ = 0;
+    processed_now_ = false;
   }
 
 }

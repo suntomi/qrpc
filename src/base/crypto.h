@@ -40,6 +40,7 @@ namespace base {
     inline uint8_t *bytes(uint8_t *ret, size_t len) {
       // generate random bytes from std::mt19937
       for (size_t i = 0; i < len; ++i) {
+        // TODO: should use uint64_t and cast to uint8_t*?
         ret[i] = gen<uint8_t>(0, UINT8_MAX);
       }
       return ret;

@@ -40,6 +40,6 @@ namespace base {
     std::multimap<qrpc_time_t, Entry> handlers_;
     std::map<uint64_t, qrpc_time_t> schedule_times_;
     IdFactory<Id> id_factory_;
-    Id processed_now_;
+    bool processed_now_;
   };
 }

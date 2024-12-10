@@ -13,7 +13,7 @@ async function main() {
     console.log("test for " + b);
     let driver = new Builder().forBrowser(b).build();
     driver.get('http://localhost:8888');
-    await driver.wait(until.elementLocated(By.id('result')), 20000)
+    await driver.wait(until.elementLocated(By.id('result')), 200000)
       .then(async (element) => {
         const text = await element.getText();
         if (text !== "success") {

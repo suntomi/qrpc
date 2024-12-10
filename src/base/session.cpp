@@ -96,6 +96,131 @@ namespace base {
     return true;
   }
 
+  int UdpSessionFactory::UdpSession::Flush() {
+    auto size = write_vecs_.size();
+  #if defined(__QRPC_USE_RECVMMSG__)
+    mmsghdr mmsg[size];
+    for (size_t idx = 0; idx < size; idx++) {
+      auto &iov = write_vecs()[idx];
+      auto &h = mmsg[idx].msg_hdr;
+      h.msg_name = const_cast<sockaddr *>(addr().sa());
+      h.msg_namelen = addr().salen();
+      h.msg_iov = &iov;
+      h.msg_iovlen = 1;
+      h.msg_control = nullptr;
+      h.msg_controllen = 0;
+      mmsg[idx].msg_len = 0;
+    }
+    int r;
+    if ((r = Syscall::SendTo(fd_, mmsg, size)) < 0) {
+      if (Syscall::WriteMayBlocked(r, false)) {
+        return count; // nothing should be sent
+      }
+      ASSERT(false);
+      QRPC_LOGJ(error, {{"ev", "Syscall::SendTo fails"}, {"errno", Syscall::Errno()}});
+    }
+    ASSERT(r <= size);
+    Reset(r);
+    return size - r;
+  #else
+    for (size_t idx = 0; idx < size; idx++) {
+      auto &iov = write_vecs_[idx];
+      if (iov.iov_len <= 0) {
+          continue;
+      }
+      // TODO: batched sendto for sendmmsg environment
+      struct msghdr h;
+      h.msg_name = const_cast<sockaddr *>(addr().sa());
+      h.msg_namelen = addr().salen();
+      h.msg_iov = &iov;
+      h.msg_iovlen = 1;
+      h.msg_control = nullptr;
+      h.msg_controllen = 0;
+      if (Syscall::SendTo(fd_, &h) < 0) {
+        // reset with sent count (idx)
+        Reset(idx);
+        if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+            return size - idx;
+        }
+        QRPC_LOGJ(error, {{"ev","SendTo fails"},{"fd",fd_},{"errno",Syscall::Errno()}});
+        ASSERT(false);
+        return QRPC_ESYSCALL;
+      }
+    }
+    Reset(size);
+  #endif
+    return QRPC_OK;
+  }
+
+  int UdpListener::Flush() {
+    size_t n_writebuf = write_buffers_.Allocated();
+  #if defined(__QRPC_USE_RECVMMSG__)
+    mmsghdr mmsg[n_writebuf];
+    auto n_sessions = sessions_.size();
+    int sends[n_sessions];
+    UdpSession *sessions[n_sessions];
+    size_t count = 0, session_idx = 0;
+    for (auto kv : sessions_) {
+      auto s = dynamic_cast<UdpSession *>(kv.second);
+      auto size = s->write_vecs().size();
+      sends[session_idx] = size;
+      sessions[session_idx] = s;
+      session_idx++;
+      for (size_t idx = 0; idx < size; idx++) {
+        auto &iov = s->write_vecs()[idx];
+        auto &h = mmsg[count++].msg_hdr;
+        h.msg_name = const_cast<sockaddr *>(s->addr().sa());
+        h.msg_namelen = s->addr().salen();
+        h.msg_iov = &iov;
+        h.msg_iovlen = 1;
+        h.msg_control = nullptr;
+        h.msg_controllen = 0;
+        mmsg[count - 1].msg_len = 0;
+      }
+    }
+    int r;
+    if ((r = Syscall::SendTo(fd_, mmsg, count)) < 0) {
+      if (Syscall::WriteMayBlocked(r, false)) {
+        return count; // nothing should be sent
+      }
+      ASSERT(false);
+      QRPC_LOGJ(error, {{"ev", "Syscall::SendTo fails"}, {"errno", Syscall::Errno()}});
+      return count;
+    }
+    if (r < count) {
+      auto remain = count - r;
+      // partially sent. reset iovs due to sent count
+      for (size_t idx; idx < session_idx; idx++) {
+        auto s = sessions[idx];
+        if (sends[idx] < r) {
+          s->Reset(sends[idx]);
+          r -= sends[idx];
+        } else {
+          s->Reset(sends[idx] - r);
+          break;
+        }
+      }
+      return remain;
+    } else {
+      // all sent
+      for (size_t idx; idx < session_idx; idx++) {
+        auto s = sessions[idx];
+        s->Reset(sends[idx]);
+      }
+      return 0;
+    }
+  #else
+    for (auto kv : sessions_) {
+      auto s = dynamic_cast<UdpSession *>(kv.second);
+      int r = s->Flush();
+      if (r != 0) {
+        return n_writebuf - write_buffers_.Allocated();
+      }
+    }
+    return 0;
+  #endif
+  }
+
   UdpListener::UdpListener(UdpListener &&rhs) :
     UdpSessionFactory(std::move(rhs)),
     fd_(rhs.fd_),
@@ -155,32 +280,8 @@ namespace base {
         dynamic_cast<UdpSession*>(s)->Touch(now);
       }
     }
-  #if defined(__QRPC_USE_RECVMMSG__)
-    mmsghdr mmsg[write_buffers_.Allocated()];
-    size_t count = 0;
-    for (auto kv : sessions_) {
-      auto s = dynamic_cast<UdpSession *>(kv.second);
-      for (auto &iov : s->write_vecs()) {
-        auto &h = mmsg[count++].msg_hdr;
-        h.msg_name = const_cast<sockaddr *>(s->addr().sa());
-        h.msg_namelen = s->addr().salen();
-        h.msg_iov = &iov;
-        h.msg_iovlen = 1;
-        h.msg_control = nullptr;
-        h.msg_controllen = 0;
-        mmsg[count - 1].msg_len = 0;
-      }
-    }
-    if (Syscall::SendTo(fd_, mmsg, count) < 0) {
-      // TODO: handle error correctly and try to send again
-      ASSERT(false);
-      logger::die({{"ev", "Syscall::SendTo fails"}, {"errno", Syscall::Errno()}});
-    }
-    for (auto kv : sessions_) {
-      auto s = dynamic_cast<UdpSession *>(kv.second);
-      s->Reset();
-    }
-  #endif
+    // send all buffered packets and start flush task if unsent packets remain
+    TryFlush();
   }
 
   int UdpListener::Read() {
@@ -191,29 +292,29 @@ namespace base {
       h.msg_controllen = Syscall::kDefaultUdpPacketControlBufferSize;
       read_packets_[i].msg_len = 0;
     }
-    #if defined(__QRPC_USE_RECVMMSG__)
-      int r = Syscall::RecvFrom(fd_, read_packets_.data(), batch_size_);
-      if (r < 0) {
-        int eno = Syscall::Errno();
-        if (Syscall::WriteMayBlocked(eno, false)) {
-          return QRPC_EAGAIN;
-        }
-        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
-        return QRPC_ESYSCALL;
+  #if defined(__QRPC_USE_RECVMMSG__)
+    int r = Syscall::RecvFrom(fd_, read_packets_.data(), batch_size_);
+    if (r < 0) {
+      int eno = Syscall::Errno();
+      if (Syscall::WriteMayBlocked(eno, false)) {
+        return QRPC_EAGAIN;
       }
-      return r;
-    #else
-      int r = Syscall::RecvFrom(fd_, &read_packets_.data()->msg_hdr);
-      if (r < 0) {
-        int eno = Syscall::Errno();
-        if (Syscall::WriteMayBlocked(eno, false)) {
-          return QRPC_EAGAIN;
-        }
-        logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});
-        return QRPC_ESYSCALL;
-      }
-      read_packets_.data()->msg_len = r;
-      return 1;
-    #endif
+      logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
+      return QRPC_ESYSCALL;
     }
+    return r;
+  #else
+    int r = Syscall::RecvFrom(fd_, &read_packets_.data()->msg_hdr);
+    if (r < 0) {
+      int eno = Syscall::Errno();
+      if (Syscall::WriteMayBlocked(eno, false)) {
+        return QRPC_EAGAIN;
+      }
+      logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});
+      return QRPC_ESYSCALL;
+    }
+    read_packets_.data()->msg_len = r;
+    return 1;
+  #endif
+  }
 }

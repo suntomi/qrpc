@@ -139,7 +139,8 @@ namespace base {
             return hdr_contains("Accept-Encoding", encoding);
         }
         bool        hdr_contains(const char *header_name, const char *content) const;
-        const char  *body() const { return m_ctx.bd; }
+        const char  *bodyptr() const { return m_ctx.bd; }
+        std::string body() const { return std::string(m_ctx.bd, m_ctx.bl); }
         result_code     rc() const { return (result_code)m_ctx.res; }
         int         bodylen() const { return m_ctx.bl; }
         const char *url(char *b, int l, size_t *p_out = nullptr);
@@ -597,7 +598,7 @@ namespace base {
             size_t copied = 0;
             if (bl > 0) {
                 copied += (bl < l ? bl : l);
-                Syscall::MemCopy(p, m_sm.body() + m_sm_body_read, copied);
+                Syscall::MemCopy(p, m_sm.bodyptr() + m_sm_body_read, copied);
                 ConsumeBody(copied);
                 l -= copied;
                 p += copied;

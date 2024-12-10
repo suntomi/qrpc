@@ -103,7 +103,7 @@ namespace logger {
     level::def lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
     const std::string &fmt, const Args... args
   ) {
-      char buffer[1024];
+      char buffer[4096];
       snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
       log(lv, file, line, func, trace_id, buffer);
   }
@@ -119,7 +119,7 @@ namespace logger {
   inline void logf(
     level::def lv, const std::string &fmt, const Args... args
   ) {
-      char buffer[1024];
+      char buffer[4096];
       snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
       log(lv, buffer);
   }

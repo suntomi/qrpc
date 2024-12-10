@@ -14,7 +14,8 @@ using BaseListener = Listener;
 using BaseClient = Client;
 namespace webrtc {
   using ConnectionFactory = base::webrtc::ConnectionFactory;
-  using DtlsTransport = base::webrtc::DtlsTransport;
+  using Connection = base::webrtc::Connection;
+  using DtlsTransport = RTC::DtlsTransport;
 
   // NewStream
   static inline Stream *NewStream(
@@ -70,7 +71,7 @@ namespace webrtc {
     Listener(Worker &w, int port_index, const qrpc_addr_t &addr, const qrpc_svconf_t &config) : base::webrtc::Listener(
       w.loop(), ConfigFrom(addr, config.transport),
       // connection factory method
-      [this](ConnectionFactory &cf, base::webrtc::DtlsTransport::Role role) {
+      [this](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
         return new Connection(cf, role);
       },
       // stream factory
@@ -96,7 +97,7 @@ namespace webrtc {
     WebRTCClient(Worker &w, const qrpc_addr_t &addr, const qrpc_clconf_t &config) : base::webrtc::Client(
       w.loop(), ConfigFrom(addr, config.transport),
       // connection factory method
-      [this](ConnectionFactory &cf, base::webrtc::DtlsTransport::Role role) {
+      [this](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
         return new WebRTCConnection(cf, role);
       },
       // stream factory

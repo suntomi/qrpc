@@ -263,7 +263,7 @@ namespace base {
             }
             inline bool migrated() const { return fd_ == INVALID_FD; }
             // implements Session
-            const char *proto() const { return "tcp"; }
+            const char *proto() const { return "TCP"; }
             // implements IoProcessor
             void OnEvent(Fd fd, const Event &e) override {
                 ASSERT(fd == fd_);
@@ -449,22 +449,23 @@ namespace base {
         #else
             static constexpr int BATCH_SIZE = 1;
         #endif
-            Config(Resolver &r, qrpc_time_t st, int mbs) :
+            Config(Resolver &r, qrpc_time_t st, int mbs, bool sw) :
                 SessionFactory::Config(r, st), max_batch_size(
                 #if defined(__QRPC_USE_RECVMMSG__)
                     mbs
                 #else
                     1
                 #endif
-                ) {}
-            Config(int mbs) :
+                ), stream_write(sw) {}
+            Config(int mbs, bool sw) :
                 SessionFactory::Config(SessionFactory::Config::Default()),
-                max_batch_size(mbs) {}
+                max_batch_size(mbs), stream_write(sw) {}
             static inline Config Default() {
-                return Config(BATCH_SIZE);
+                return Config(BATCH_SIZE, false);
             }
         public:
             int max_batch_size;
+            bool stream_write{false};
         };
         #if !defined(__QRPC_USE_RECVMMSG__)
         struct mmsghdr {
@@ -484,18 +485,119 @@ namespace base {
             char padd[4];
         };
     public:
-        class UdpSession : public Session, public IoProcessor {
+        class UdpSession : public Session {
         public:
-            UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) { AllocIovec(); }
-            ~UdpSession() override { FreeIovec(); }
+            UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) {}
+            ~UdpSession() override { FreeIovecs(); }
             DISALLOW_COPY_AND_ASSIGN(UdpSession);
             UdpSessionFactory &udp_session_factory() { return factory().to<UdpSessionFactory>(); }
             const UdpSessionFactory &udp_session_factory() const { return factory().to<UdpSessionFactory>(); }
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
+            int Flush(); 
             // implements Session
-            const char *proto() const { return "udp"; }
+            const char *proto() const { return "UDP"; }
             int Send(const char *data, size_t sz) override {
                 return Write(data, sz);
+            }
+        protected:
+            bool AllocIovec(size_t sz) {
+                void *b;
+                if (sz > Syscall::kMaxOutgoingPacketSize) {
+                    QRPC_LOGJ(warn, {{"ev","try to send packet lager than MTU"},{"sz",sz}});
+                    b = Syscall::MemAlloc(sz);
+                } else {
+                    b = udp_session_factory().write_buffers_.Alloc();
+                }
+                if (b == nullptr) {
+                    logger::error({{"ev","write_buffers_.Alloc fails"},{"sz",sz}});
+                    ASSERT(false);
+                    return false;
+                }
+                write_vecs_.push_back({ .iov_base = b, .iov_len = 0 });
+                return true;
+            }
+            void FreeIovec(struct iovec &iov) {
+                if (iov.iov_len > Syscall::kMaxOutgoingPacketSize) {
+                    Syscall::MemFree(iov.iov_base);
+                } else {
+                    udp_session_factory().write_buffers_.Free(iov.iov_base);
+                }
+            }
+            void FreeIovecs() {
+                for (int i = 0; i < write_vecs_.size(); i++) {
+                    struct iovec &iov = write_vecs_[i];
+                    FreeIovec(iov);
+                }
+                write_vecs_.clear();
+            }
+            void Reset(size_t size) {
+                if (size >= write_vecs_.size()) {
+                    for (int i = 0; i < size - 1; i++) {
+                        struct iovec &iov = write_vecs_.back();
+                        FreeIovec(iov);
+                        write_vecs_.pop_back();
+                    }
+                    // remain first buffer for next write
+                    auto &iov = write_vecs_[0];
+                    iov.iov_len = 0;
+                } else if (size > 0) {
+                    for (int i = 0; i < size; i++) {
+                        struct iovec &iov = write_vecs_[i];
+                        FreeIovec(iov);
+                    }
+                    write_vecs_.erase(write_vecs_.begin(), write_vecs_.begin() + size);
+                }
+            }
+            int Write(const char *p, size_t sz) {
+                if (!AllocIovec(sz)) {
+                    ASSERT(false);
+                    return QRPC_EALLOC;
+                }
+                struct iovec &curr_iov = write_vecs_[write_vecs_.size() - 1];
+                ASSERT(curr_iov.iov_len == 0);
+                Syscall::MemCopy(reinterpret_cast<char *>(curr_iov.iov_base), p, sz);
+                curr_iov.iov_len = sz;
+                return QRPC_OK;
+            }
+        private:
+            std::vector<struct iovec> write_vecs_;
+        };
+    public:
+        UdpSessionFactory(Loop &l, FactoryMethod &&m, Config config = Config::Default()) :
+            SessionFactory(l, std::move(m), config), batch_size_(config.max_batch_size),
+            stream_write_(config.stream_write), write_buffers_(batch_size_) {}
+        UdpSessionFactory(UdpSessionFactory &&rhs) : SessionFactory(std::move(rhs)),
+            batch_size_(rhs.batch_size_), stream_write_(rhs.stream_write_),
+            write_buffers_(std::move(rhs.write_buffers_)) {}
+        DISALLOW_COPY_AND_ASSIGN(UdpSessionFactory);
+    public:
+        Fd CreateSocket(int port, bool *overflow_supported) {
+            Fd fd;
+            // create udp socket
+            if ((fd = Syscall::CreateUDPSocket(AF_INET, overflow_supported)) < 0) {
+                return INVALID_FD;
+            }
+            if (Syscall::Bind(fd, port) != QRPC_OK) {
+                Syscall::Close(fd);
+                return INVALID_FD;
+            }
+            return fd;
+        }
+    protected:
+        int batch_size_;
+        bool stream_write_;
+        Allocator<WritePacketBuffer> write_buffers_;
+    };
+    class UdpClient : public UdpSessionFactory {
+    public:
+        class UdpSession : public UdpSessionFactory::UdpSession, public IoProcessor {
+        public:
+            UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) :
+                UdpSessionFactory::UdpSession(f, fd, addr) {}
+            ~UdpSession() override {
+                if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+                    udp_session_factory().alarm_processor().Cancel(alarm_id_);
+                }
             }
             // implements IoProcessor
             void OnEvent(Fd fd, const Event &e) override {
@@ -524,127 +626,46 @@ namespace base {
                             break;
                         }
                         if (sz == 0 || (sz = OnRead(buffer, sz)) < 0) {
+                            TryFlush();
                             Close(sz == 0 ? QRPC_CLOSE_REASON_REMOTE : QRPC_CLOSE_REASON_LOCAL, sz);
                             break;
                         }
                     }
+                    TryFlush();
                 }
+            }            
+        protected:
+            void TryFlush() {
+                if (Flush() > 0) {
+                    StartFlushTask();
+                }
+            }
+            void StartFlushTask() {
+                if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+                    return;
+                }
+                alarm_id_ = udp_session_factory().alarm_processor().Set(
+                    [this]() {
+                        if (this->Flush() > 0) {
+                            return qrpc_time_now() + qrpc_time_usec(100);
+                        } else {
+                            alarm_id_ = AlarmProcessor::INVALID_ID;
+                            return 0ULL;
+                        }
+                    }, qrpc_time_now() + qrpc_time_usec(100)
+                );
             }
         protected:
-            bool AllocIovec() {
-                auto b = udp_session_factory().write_buffers_.Alloc();
-                if (b == nullptr) {
-                    logger::error({{"ev","write_buffers_.Alloc fails"}});
-                    ASSERT(false);
-                    return false;
-                }
-                write_vecs_.push_back({ .iov_base = b, .iov_len = 0 });
-            }
-            void FreeIovec() {
-                for (int i = 0; i < write_vecs_.size(); i++) {
-                    struct iovec &iov = write_vecs_.back();
-                    udp_session_factory().write_buffers_.Free(iov.iov_base);
-                    write_vecs_.pop_back();
-                }
-            }
-            void Reset() {
-                auto size = write_vecs_.size();
-                // free additional buffers
-                if (size > 1) {
-                    for (int i = 0; i < size - 1; i++) {
-                        struct iovec &iov = write_vecs_.back();
-                        udp_session_factory().write_buffers_.Free(iov.iov_base);
-                        write_vecs_.pop_back();
-                    }
-                }
-                auto &iov = write_vecs_[0];
-                iov.iov_len = 0;
-            }
-            int Flush() {
-                for (auto &iov : write_vecs_) {
-                    if (iov.iov_len <= 0) {
-                        continue;
-                    }
-                    // TODO: batched sendto for sendmmsg environment
-                    struct msghdr h;
-                    h.msg_name = const_cast<sockaddr *>(addr().sa());
-                    h.msg_namelen = addr().salen();
-                    h.msg_iov = &iov;
-                    h.msg_iovlen = 1;
-                    h.msg_control = nullptr;
-                    h.msg_controllen = 0;
-                    if (Syscall::SendTo(fd_, &h) < 0) {
-                        // TODO: if EAGAIN, should try again without Reset()ing entire buffers
-                        // by removing only finished iov
-                        logger::error({{"ev","SendTo fails"},{"fd",fd_},{"errno",Syscall::Errno()},{"merr",Syscall::StrError()}});
-                        ASSERT(false);
-                        return QRPC_ESYSCALL;
-                    }                    
-                }
-                Reset();
-                return QRPC_OK;
-            }
-            int Write(const char *p, size_t sz) {
-                int r;
-                ASSERT(write_vecs_.size() > 0);
-                while (sz > 0) {
-                    struct iovec &curr_iov = write_vecs_[write_vecs_.size() - 1];
-                    if (curr_iov.iov_len + sz > Syscall::kMaxOutgoingPacketSize) {
-                    #if defined(__QRPC_USE_RECVMMSG__)
-                        if (AllocIovec()) {
-                            return QRPC_EALLOC;
-                        }
-                        curr_iov = write_vecs_[write_vecs_.size() - 1];
-                    #else
-                        if ((r = Flush()) < 0) { return r; }
-                    #endif
-                    }
-                    size_t copied = std::min(sz, Syscall::kMaxOutgoingPacketSize - curr_iov.iov_len);
-                    Syscall::MemCopy(
-                        reinterpret_cast<char *>(curr_iov.iov_base) + curr_iov.iov_len, p, copied
-                    );
-                    curr_iov.iov_len += copied;
-                    p += copied;
-                    sz -= copied;
-                }
-                if ((r = Flush()) < 0) { return r; }
-                return QRPC_OK;
-            }
-        private:
-            std::vector<struct iovec> write_vecs_;
+            AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
         };
-    public:
-        UdpSessionFactory(Loop &l, FactoryMethod &&m, Config config = Config::Default()) :
-            SessionFactory(l, std::move(m), config), batch_size_(config.max_batch_size), write_buffers_(batch_size_) {}
-        UdpSessionFactory(UdpSessionFactory &&rhs) : SessionFactory(std::move(rhs)),
-            batch_size_(rhs.batch_size_), write_buffers_(std::move(rhs.write_buffers_)) {}
-        DISALLOW_COPY_AND_ASSIGN(UdpSessionFactory);
-    public:
-        Fd CreateSocket(int port, bool *overflow_supported) {
-            Fd fd;
-            // create udp socket
-            if ((fd = Syscall::CreateUDPSocket(AF_INET, overflow_supported)) < 0) {
-                return INVALID_FD;
-            }
-            if (Syscall::Bind(fd, port) != QRPC_OK) {
-                Syscall::Close(fd);
-                return INVALID_FD;
-            }
-            return fd;
-        }
-    protected:
-        int batch_size_;
-        Allocator<WritePacketBuffer> write_buffers_;
-    };
-    class UdpClient : public UdpSessionFactory {
     public:
         UdpClient(
             Loop &l, Resolver &r, qrpc_time_t session_timeout = qrpc_time_sec(120),
-            int batch_size = Config::BATCH_SIZE
+            int batch_size = Config::BATCH_SIZE, bool stream_write = false
         ) : UdpSessionFactory(l, [this](Fd fd, const Address &ap) {
             DIE("client should not call this, provide factory with SessionFactory::Connect");
             return (Session *)nullptr;
-        }, Config(r, session_timeout, batch_size)) {}
+        }, Config(r, session_timeout, batch_size, stream_write)) {}
         UdpClient(UdpClient &&rhs) : UdpSessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {}
         ~UdpClient() override { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(UdpClient);
@@ -658,14 +679,15 @@ namespace base {
         }
         Session *Open(const Address &a, FactoryMethod m) override {
             bool overflow_supported;
-            // use unified fd (with recv/send mmsg) or create original fd for connection.
+            // create original fd for connection.
+            // because client session factory need multiple connection to same destination
             Fd fd = CreateSocket(0, &overflow_supported);
-            auto s = Create(fd, a, m);
+            auto s = dynamic_cast<UdpSession *>(Create(fd, a, m));
             if (s == nullptr) {
                 ASSERT(false);
                 return nullptr;
             }
-            if (loop_.Add(fd, dynamic_cast<UdpSession *>(s), Loop::EV_WRITE) < 0) {
+            if (loop_.Add(fd, s, Loop::EV_WRITE) < 0) {
                 logger::error({{"ev","Loop::Add fails"},{"fd",fd}});
                 s->Close(QRPC_CLOSE_REASON_LOCAL, Syscall::Errno(), "Loop::Add fails");
                 return nullptr;
@@ -705,6 +727,10 @@ namespace base {
                 Syscall::Close(fd_);
                 fd_ = INVALID_FD;
             }
+            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+                alarm_processor().Cancel(alarm_id_);
+                alarm_id_ = AlarmProcessor::INVALID_ID;
+            }
         }
         bool Bind() { return Listen(0); }
         bool Listen(int port) {
@@ -738,6 +764,28 @@ namespace base {
         int Read();
         void SetupPacket();
         void ProcessPackets(int count);
+        int Flush();
+    protected:
+        void TryFlush() {
+            if (Flush() > 0) {
+                StartFlushTask();
+            }
+        }
+        void StartFlushTask() {
+            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+                return;
+            }
+            alarm_id_ = alarm_processor().Set(
+                [this]() {
+                    if (this->Flush() > 0) {
+                        return qrpc_time_now() + qrpc_time_usec(100);
+                    } else {
+                        alarm_id_ = AlarmProcessor::INVALID_ID;
+                        return 0ULL;
+                    }
+                }, qrpc_time_now() + qrpc_time_usec(100)
+            );
+        }
     public:
         // implements SessionFactory
         Session *Create(int fd, const Address &a, FactoryMethod &m) override {
@@ -790,6 +838,7 @@ namespace base {
         Fd fd_;
         int port_;
         bool overflow_supported_;
+        AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
         std::map<Address, Session*> sessions_;
         std::vector<mmsghdr> read_packets_;
         std::vector<ReadPacketBuffer> read_buffers_;

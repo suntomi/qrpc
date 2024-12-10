@@ -97,12 +97,19 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    webrtc::AdhocListener w(l, webrtc::AdhocListener::Config {
+    base::webrtc::AdhocListener w(l, base::webrtc::AdhocListener::Config {
         .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
+        .rtp = {
+            .initial_outgoing_bitrate = 10000000,
+            .max_incoming_bitrate = 10000000,
+            .max_outgoing_bitrate = 10000000,
+            .min_outgoing_bitrate = 0,
+        },
         .send_buffer_size = 256 * 1024,
         .http_timeout = qrpc_time_sec(5),
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
+        .consent_check_interval = qrpc_time_sec(10),
         .fingerprint_algorithm = "sha-256",
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
@@ -163,7 +170,7 @@ int main(int argc, char *argv[]) {
         s.Respond(HRC_OK, h, 2, html.get(), htmlsz);
         return nullptr;
     }).
-    Route(std::regex("/(.*)\\.(.*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
+    Route(std::regex("/([^/]*)\\.([^/]*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
         size_t filesz;
         auto path = rootpath + "/resources/" + m[1].str() + "." + m[2].str();
         auto file = Syscall::ReadFile(path, &filesz);
@@ -180,7 +187,8 @@ int main(int argc, char *argv[]) {
             {"jpg", "image/jpeg"},
             {"jpeg", "image/jpeg"},
             {"gif", "image/gif"},
-            {"ico", "image/x-icon"}
+            {"ico", "image/x-icon"},
+            {"html", "text/html"}
         };
         HttpHeader h[] = {
             {.key = "Content-Type", .val = ctypes[m[2].str()].c_str()},
@@ -224,13 +232,13 @@ int main(int argc, char *argv[]) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
-    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1));
+    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1, true));
     if (!us.Listen(9999)) {
         DIE("fail to listen on UDP");
     }
     UdpListener tu(l, [&tu](Fd fd, const Address &a) {
         return new TestUdpSession(tu, fd, a);
-    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1));
+    }, AdhocUdpListener::Config(NopResolver::Instance(), qrpc_time_sec(5), 1, true));
     if (!tu.Listen(10000)) {
         DIE("fail to listen on UDP for test");
     }

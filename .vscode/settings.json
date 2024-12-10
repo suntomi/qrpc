@@ -89,7 +89,9 @@
     "*.inc": "cpp",
     "ranges": "cpp",
     "filesystem": "cpp",
-    "span": "cpp"
+    "span": "cpp",
+    "__memory": "cpp",
+    "__availability": "cpp"
   },
   "dotnet.defaultSolution": "disable"
 }

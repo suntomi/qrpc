@@ -34,7 +34,11 @@ config_setting(
 
 cc_import(
   name = "mediasoup",
-  hdrs = glob(["src/ext/mediasoup/worker/include/**", "src/ext/mediasoup/worker/subprojects/**"]),
+  hdrs = glob([
+    "src/ext/mediasoup/worker/include/**",
+    "src/ext/mediasoup/worker/subprojects/**",
+    "src/ext/mediasoup/worker/deps/libwebrtc/**"
+  ]),
   static_library = selects.with_or({
     ":is_debug_build": "src/ext/mediasoup/worker/out/Debug/libmediasoup-worker.a",
     "//conditions:default": "src/ext/mediasoup/worker/out/Release/libmediasoup-worker.a",
@@ -55,10 +59,16 @@ cc_import(
     "src/ext/hedley/*.h",
     "src/ext/sha1/*.h",
     "src/ext/libsdptransform/include/*.hpp",
+  ], exclude = [
+    "src/**/*.md"
   ]),
   copts = [
     "-std=c++17",
   ] 
+  + selects.with_or({
+    ":asan": ["-fsanitize=address"],
+    "//conditions:default": [],
+  })
   + MS_CPPARGS 
   + selects.with_or({
     (
@@ -71,24 +81,34 @@ cc_import(
       "-D__ENABLE_KQUEUE__",
     ],
     ":windows": [
-      "-D__ENABLE_IOCP__",
+      "-D__ENABLE_UV__", # TODO: fallback to uv. but we need to support native windows?
     ],
     (":android", "//conditions:default"): [
       "-D__ENABLE_EPOLL__", "-D__QRPC_USE_RECVMMSG__"
     ],
   }),
+  linkopts = selects.with_or({
+    ":asan": ["-fsanitize=address"],
+    "//conditions:default": [],
+  }),
   includes = [
     "src",
     "src/ext",
+    "src/ext/mediasoup/worker/deps/libwebrtc",
+    "src/ext/mediasoup/worker/deps/libwebrtc/libwebrtc",
     "src/ext/mediasoup/worker/include",
-    "src/ext/mediasoup/worker/subprojects/abseil-cpp-20220623.0",
+    "src/ext/mediasoup/worker/subprojects/abseil-cpp-20230802.1",
+    "src/ext/mediasoup/worker/subprojects/flatbuffers-24.3.6/include",
+    "src/ext/mediasoup/worker/subprojects/libuv-v1.48.0/include",
+    "src/ext/mediasoup/worker/subprojects/libsrtp-3.0-alpha/include",
     "src/ext/mediasoup/worker/subprojects/nlohmann_json-3.10.5/include",
-    "src/ext/mediasoup/worker/subprojects/libuv-v1.44.2/include",
-    "src/ext/mediasoup/worker/subprojects/libsrtp-2.5.0/include",
     "src/ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
-    "src/ext/mediasoup/worker/subprojects/usrsctp-4e06feb01cadcd127d119486b98a4bd3d64aa1e7/usrsctplib",
+    "src/ext/mediasoup/worker/subprojects/usrsctp-d45b53f5dfa79533f5c5e7aefa5d7570405afb39/usrsctplib",
     "src/ext/libsdptransform/include",
-  ],
+  ] + selects.with_or({
+    ":is_debug_build": ["src/ext/mediasoup/worker/out/Debug/build/fbs"],
+    "//conditions:default": ["src/ext/mediasoup/worker/out/Release/build/fbs"],
+  }),
   deps = [":mediasoup", "//src/ext/cares:ares"],
   linkstatic = True,
 ) for exe, main in [

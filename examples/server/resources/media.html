@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+  <head>
+    <title>WebRTC with QRPC media</title>
+  </head>
+  <body>
+    <div id="cname"></div>
+    <input type="text" id="idedit" placeholder="input connection id of other peer and press Enter"/>
+
+    <script src="http://localhost:8888/client.js"></script>
+    <script>
+      showMedia = (t) => {
+        console.log(`play ${t.kind}`, t.label);
+        let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
+        if (!mediaElement) {
+          mediaElement = document.createElement(t.kind);
+          mediaElement.id = `${t.kind}-${t.id}`;
+          mediaElement.autoplay = true;
+          document.body.appendChild(mediaElement);
+        }
+        mediaElement.srcObject = t.stream;
+      }
+      onIDEdit = async (event) => {
+        if (event.key === 'Enter') {
+          const id = event.target.value;
+          console.log(`input id = ${id}`);
+          await c.openMedia(`${id}/webcam`, webcamMediaHandler);
+        }
+      }
+      setupUI = (c) => {
+        // このconnectionのidを表示
+        let idElement = document.getElementById("cname");
+        if (idElement) {
+          idElement.innerText = c.cname;
+        }
+        // 編集ボックスのEnterキーイベントリスナーを追加
+        document.getElementById('idedit').addEventListener('keydown', onIDEdit);         
+      }
+      cleanupUI = (c) => {
+        document.getElementById('idedit').removeEventListener('keydown', onIDEdit);
+      }
+      //Create whip client
+      const url = "http://localhost:8888/qrpc";
+      const c = new QRPClient(url);
+      const context = {};
+      const MAX_RECONNECT = 1;
+      let closed = 0;
+      const webcamMediaHandler = {
+        onopen: (track)=>{
+          console.log("media open", track.stream.id, track.id);
+          showMedia(track);
+        },
+        onclose: (track)=>{
+          console.log("media close", track.id, track.kind);
+          document.getElementById(`${track.kind}-${track.id}`).remove();
+        },
+      };
+      c.onopen = async () => {
+        console.log("client onopen called");
+        setupUI(c);
+        await c.createMedia("webcam", Object.assign({}, webcamMediaHandler, {
+          stream: await navigator.mediaDevices.getUserMedia({
+            video: {width: {ideal: 1280}, height: {ideal: 720}},
+            audio: true
+          }), 
+          encodings: [
+            // 5Mbps ?
+            {rid: 'h1', maxBitrate: 5000000, active: true, scaleResolutionDownBy: 1.0},
+            // 1Mbps ?
+            {rid: 'm1', maxBitrate: 1000000, active: true, scaleResolutionDownBy: 2.0},
+            // 100kbps ?
+            {rid: 'l1', maxBitrate: 500000, active: true, scaleResolutionDownBy: 4.0}
+          ],
+        }));
+        console.log("open media");
+        return context;
+      };
+      c.onclose = () => {
+        console.log("client onclose called", closed);
+        cleanupUI(c);
+        if (closed < MAX_RECONNECT) {
+          closed++;
+          return 2000 * 1000 * 1000;
+        } else {
+          return;
+        }
+      };
+      c.connect();
+    </script>
+  </body>
+</html>
