@@ -58,12 +58,11 @@ void ConnectionFactory::CloseConnection(Connection &c) {
   logger::info({{"ev","close webrtc connection"},{"ufrag",c.ufrag()},{"cname",c.cname()}});
   bool is_consumer = c.is_consumer();
   c.Fin(); // cleanup resources if not yet
-  connections_.erase(c.ufrag());
-  // if consumer, c might be freed here
   if (!is_consumer) {
     cnmap_.erase(c.cname());
   }
-  // if producer, c might be freed here
+  connections_.erase(c.ufrag());
+  // c might be freed here
 }
 static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket& packet) {
   TRACK();
@@ -1347,11 +1346,10 @@ void ConnectionFactory::Connection::SendRtpPacket(
     return;
   }
   // packet->Dump();
-  // std::string mid;
-  // if (packet->ReadMid(mid)) {
-  //   QRPC_LOGJ(info, {{"ev","sendrtp"},{"to",ice_server_->GetSelectedSession()->addr().str()},
-  //     {"ssrc",packet->GetSsrc()},{"mid",mid},{"seq",packet->GetSequenceNumber()},{"pt",packet->GetPayloadType()},{"sz",sz}});
-  // }
+  std::string mid, rid;
+  auto has_mid = packet->ReadMid(mid), has_rid = packet->ReadRid(rid);
+  QRPC_LOGJ(info, {{"ev","sendrtp"},// {"to",ice_server_->GetSelectedSession()->addr().str()},
+    {"ssrc",packet->GetSsrc()},{"mid",has_mid ? mid : "x"},{"rid",has_rid ? rid : "x"},{"seq",packet->GetSequenceNumber()},{"pt",packet->GetPayloadType()},{"sz",sz}});
   // Increase send transmission.
   rtp_handler_->DataSent(sz);
 }
