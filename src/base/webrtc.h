@@ -125,7 +125,6 @@ namespace webrtc {
       inline const ConnectionFactory &factory() const { return factory_; }
       inline const IceServer &ice_server() const { return *ice_server_.get(); }
       inline const IceUFrag &ufrag() const { return ice_server().GetUsernameFragment(); }
-      inline const std::string &cname() const { return cname_; }
       inline RTC::DtlsTransport &dtls_transport() { return *dtls_transport_.get(); }
       inline rtp::Handler &rtp_handler() { return *rtp_handler_.get(); }
       inline bool rtp_enabled() const { return rtp_handler_ != nullptr; }
@@ -236,6 +235,7 @@ namespace webrtc {
 
       // implements rtp::Handler::Listener
       const std::string &rtp_id() const override { return ufrag(); }
+      const std::string &cname() const override { return cname_; }
       void RecvStreamClosed(uint32_t ssrc) override;
       void SendStreamClosed(uint32_t ssrc) override; 
       bool IsConnected() const override;

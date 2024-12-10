@@ -55,6 +55,7 @@ namespace rtp {
       typedef const std::function<void(bool sent)> onSendCallback;  
     public:
       virtual const std::string &rtp_id() const = 0;
+      virtual const std::string &cname() const = 0;
       virtual void RecvStreamClosed(uint32_t ssrc) = 0;
       virtual void SendStreamClosed(uint32_t ssrc) = 0;
       virtual bool IsConnected() const = 0;
@@ -73,11 +74,12 @@ namespace rtp {
     };
     typedef Listener::onSendCallback onSendCallback;
   public:
-    Handler(Listener &l) : RTC::Transport(&shared(), l.rtp_id(), &router(), TransportOptions()),
+    Handler(Listener &l) : RTC::Transport(&shared(), l.rtp_id(), &router(), TransportOptions(l.GetRtpConfig())),
       listener_(l), producer_factory_(*this), consumer_factory_(*this), medias_(),
       rid_label_map_(), trackid_label_map_(), ssrc_trackid_map_(), rid_scalability_mode_map_() {}
     inline Listener &listener() { return listener_; }
     inline const std::string &rtp_id() const { return listener_.rtp_id(); }
+    inline const std::string &cname() const { return listener_.cname(); }
     static inline RTC::Shared &shared() { return shared_.get(); }
     static inline RTC::Router &router() { return router_; }
     static inline Channel::ChannelSocket &socket() { return shared_.socket(); }
@@ -86,7 +88,7 @@ namespace rtp {
       fbb.Clear();
       return fbb;
     }
-    static const FBS::Transport::Options* TransportOptions();
+    static const FBS::Transport::Options* TransportOptions(const Config &c);
     inline std::string FindScalabilityMode(const std::string &rid) {
       auto it = rid_scalability_mode_map_.find(rid);
       return it != rid_scalability_mode_map_.end() ? it->second : "";

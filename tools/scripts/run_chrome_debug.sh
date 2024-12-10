@@ -1,1 +1,1 @@
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --enable-logging --v=1
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --enable-logging=stderr --vmodule=*/webrtc/*=3

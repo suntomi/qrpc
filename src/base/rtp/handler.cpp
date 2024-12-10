@@ -6,6 +6,8 @@
 #include "base/webrtc/mpatch.h"
 #include "base/rtp/parameters.h"
 
+#include <flatbuffers/idl.h>
+
 #include "RTC/BweType.hpp"
 // #include "RTC/PipeConsumer.hpp"
 #include "RTC/RTCP/FeedbackPs.hpp"
@@ -28,6 +30,35 @@
 
 namespace base {
 namespace rtp {
+	thread_local std::map<std::string, std::string> schemas_;
+	static const std::string &InitSchema(const std::string &type) {
+		auto it = schemas_.find(type);
+		if (it != schemas_.end()) {
+			return it->second;
+		}
+		std::string path = "/Users/iyatomi/Documents/suntomi/qrpc/src/ext/mediasoup/worker/fbs/" + type + ".fbs";
+		std::string content;
+		if (!::flatbuffers::LoadFile(path.c_str(), false, &content)) {
+			logger::die({{"ev","fail to load file"},{"path",path}});
+		}
+		schemas_[type] = content;
+		return schemas_.find(type)->second;
+	}
+	template <class T>
+	static std::string Dump(const std::string &type, const std::string &table, ::flatbuffers::FlatBufferBuilder &fbb) {
+		std::string ret;
+		static const char *paths[] = {
+			"/Users/iyatomi/Documents/suntomi/qrpc/src/ext/mediasoup/worker/fbs/"
+		};
+		::flatbuffers::Parser parser;
+		auto &s = InitSchema(type);
+		if (!parser.Parse(s.c_str(), paths)) {
+			logger::die({{"ev","fail to parse schema"},{"type",type},{"error",parser.error_}});
+		}
+		auto r = ::flatbuffers::GenTextFromTable(parser, ::flatbuffers::GetRoot<T>(fbb.GetBufferPointer()), table, &ret);
+		ASSERT(!r); // non null means failure
+		return ret;
+	}
 	static std::string to_string(std::thread::id id) {
     std::stringstream ss;
     ss << id;
@@ -50,10 +81,10 @@ namespace rtp {
 		}
 	}
 	
-	const FBS::Transport::Options* Handler::TransportOptions() {
+	const FBS::Transport::Options* Handler::TransportOptions(const Config &c) {
 		auto &fbb = GetFBB();
 		fbb.Finish(FBS::Transport::CreateOptions(
-			fbb, false, std::nullopt, std::nullopt, false)
+			fbb, false, std::nullopt, c.initial_outgoing_bitrate, false)
 		);
 		return ::flatbuffers::GetRoot<FBS::Transport::Options>(fbb.GetBufferPointer());
 	}
@@ -110,6 +141,7 @@ namespace rtp {
 				ASSERT(false);
 				continue;
 			}
+			config.rtcp.cname = peer.cname();
 			config.GetGeneratedSsrc(generated_ssrcs);
 			// if video consumer and there is no probator mid, generate probator mid => param pair
 			auto probator_mid = RTC::RtpProbationGenerator::GetMidValue();
@@ -138,6 +170,9 @@ namespace rtp {
 				ASSERT(false);
 				return false;
 		}
+		// auto &fbb = GetFBB();
+		// fbb.Finish(consumer_factory_.FillBuffer(consumer, fbb));
+		// puts(Dump<FBS::Consumer::DumpResponse>("consumer", "FBS.Consumer.DumpResponse", fbb).c_str());
 		return true;
 	}
 	Producer *Handler::FindProducer(const std::string &label, Parameters::MediaKind kind) const {
@@ -227,7 +262,9 @@ namespace rtp {
 			ssrc_trackid_map_[kv.first] = kv.second.track_id;
 		}
 		auto producer = producer_factory_.Create(gid, p);
-
+		// auto &fbb = GetFBB();
+		// fbb.Finish(producer->FillBuffer(fbb));
+		// puts(Dump<FBS::Producer::DumpResponse>("producer", "FBS.Producer.DumpResponse", fbb).c_str());
 		return producer != nullptr ? QRPC_OK : QRPC_EINVAL;
 	}
 	bool Handler::SetExtensionId(uint8_t id, const std::string &uri) {

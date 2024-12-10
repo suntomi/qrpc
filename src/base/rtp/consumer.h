@@ -28,6 +28,8 @@ namespace rtp {
       const Handler &peer, const std::string &label, Parameters::MediaKind kind,
       const RTC::RtpParameters &consumer_params, bool paused, bool pipe
     );
+    flatbuffers::Offset<FBS::Consumer::DumpResponse>
+    FillBuffer(Consumer *c, flatbuffers::FlatBufferBuilder& builder);
   protected:
     uint32_t mid_seed_{0};
     Handler &handler_;

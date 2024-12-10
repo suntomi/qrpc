@@ -102,7 +102,7 @@ int main(int argc, char *argv[]) {
         .rtp = {
             .initial_outgoing_bitrate = 10000000,
             .max_incoming_bitrate = 10000000,
-            .max_outgoing_bitrate = 0,
+            .max_outgoing_bitrate = 10000000,
             .min_outgoing_bitrate = 0,
         },
         .send_buffer_size = 256 * 1024,

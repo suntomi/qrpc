@@ -14,6 +14,7 @@
 #include "DepLibWebRTC.hpp"
 #include "DepUsrSCTP.hpp"
 #include "DepOpenSSL.hpp"
+#include "FBS/message.h"
 #include "Logger.hpp"
 #include "RTC/SrtpSession.hpp"
 #include "RTC/StunPacket.hpp"
@@ -162,6 +163,9 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
     std::lock_guard<std::mutex> lock(g_ref_sync_mutex_);
     if (g_ref_count_ == 0) {
       // Initialize static stuff.
+      std::string llv = "debug";
+      Settings::SetLogLevel(llv);
+      Settings::SetLogTags({"rtp", "rtcp"});
       DepOpenSSL::ClassInit();
       DepLibSRTP::ClassInit();
       DepUsrSCTP::ClassInit();
@@ -188,7 +192,37 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
       );
       UnixStreamSocketHandle::SetWriter(
         [](const uint8_t *p, size_t sz) {
-          QRPC_LOGJ(info,{{"ev","from rtp"},{"msg",byteArrayToString(p, sz)}});
+          // p should generated with ::flatbuffers::FinishSizePrefixed
+          auto *msg = ::flatbuffers::GetSizePrefixedRoot<FBS::Message::Message>(p);
+          switch (msg->data_type()) {
+            case FBS::Message::Body::Request: {
+              auto *req = msg->data_as_Request();
+              QRPC_LOGJ(info,{{"ev","rtp req"},{"type",req->body_type()}});
+              ASSERT(false);
+            } break;
+            case FBS::Message::Body::Response: {
+              auto *res = msg->data_as_Response();
+              QRPC_LOGJ(info,{{"ev","rtp res"},{"type",res->body_type()}});
+              switch (res->body_type()) {
+                case FBS::Response::Body::Transport_ProduceResponse:
+                case FBS::Response::Body::Transport_ConsumeResponse:
+                  return;
+                default:
+                  ASSERT(false);
+              }
+            } break;
+            case FBS::Message::Body::Notification: {
+              auto *n = msg->data_as_Notification();
+              QRPC_LOGJ(info,{{"ev","rtp notify"},{"type",n->body_type()}});
+            } break;
+            case FBS::Message::Body::Log: {
+              auto *log = msg->data_as_Log();
+              QRPC_LOGJ(info,{{"ev","rtp log"},{"msg",log->data()->str()}});
+            } break;
+            default:
+              ASSERT(false);
+              break;
+          }
         }
       );
       DepUsrSCTP::CreateChecker();
@@ -1312,7 +1346,12 @@ void ConnectionFactory::Connection::SendRtpPacket(
     }
     return;
   }
-  // QRPC_LOGJ(info, {{"ev","sendrtp"},{"ssrc",packet->GetSsrc()},{"pt",packet->GetPayloadType()},{"sz",sz}});
+  // packet->Dump();
+  // std::string mid;
+  // if (packet->ReadMid(mid)) {
+  //   QRPC_LOGJ(info, {{"ev","sendrtp"},{"to",ice_server_->GetSelectedSession()->addr().str()},
+  //     {"ssrc",packet->GetSsrc()},{"mid",mid},{"seq",packet->GetSequenceNumber()},{"pt",packet->GetPayloadType()},{"sz",sz}});
+  // }
   // Increase send transmission.
   rtp_handler_->DataSent(sz);
 }

@@ -285,7 +285,7 @@ namespace rtp {
       if (!h.SetExtensionId(id, uri)) {
         continue;
       }
-      RTC::RtpHeaderExtensionParameters p;
+      auto &p = this->headerExtensions.emplace_back();
       p.id = id;
       auto t = FromUri(uri);
       if (t.has_value()) {
@@ -295,7 +295,6 @@ namespace rtp {
         ASSERT(false);
         return false;
       }
-      this->headerExtensions.push_back(p);
     }
     // parse fmtp
     std::map<uint64_t, std::string> fmtpmap;
@@ -649,7 +648,12 @@ namespace rtp {
         ASSERT(false);
         continue;
       }
-      sdplines += str::Format("\na=extmap:%u %s", hs[i].id, urit->second.c_str());
+      if (!cname.empty()) {
+        // for consuming connection, rtp layer uses hs[i].type parameter as its id
+        sdplines += str::Format("\na=extmap:%u %s", hs[i].type, urit->second.c_str());
+      } else {
+        sdplines += str::Format("\na=extmap:%u %s", hs[i].id, urit->second.c_str());
+      }
     }
     for (size_t i = 0; i < this->codecs.size(); i++) {
       auto &c = this->codecs[i];

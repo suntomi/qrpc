@@ -72,5 +72,20 @@ namespace rtp {
       return nullptr;
     }
   }
+  flatbuffers::Offset<FBS::Consumer::DumpResponse>
+  ConsumerFactory::FillBuffer(Consumer *c, flatbuffers::FlatBufferBuilder& builder) {
+    switch (c->GetType()) {
+      case RTC::RtpParameters::Type::SIMPLE:
+        return dynamic_cast<RTC::SimpleConsumer *>(c)->FillBuffer(builder);
+      case RTC::RtpParameters::Type::SIMULCAST:
+        return dynamic_cast<RTC::SimulcastConsumer *>(c)->FillBuffer(builder);
+      case RTC::RtpParameters::Type::PIPE:
+        return dynamic_cast<RTC::PipeConsumer *>(c)->FillBuffer(builder);
+      default:
+        QRPC_LOG(error, "unsupported type: %d", c->GetType());
+        ASSERT(false);
+        return flatbuffers::Offset<FBS::Consumer::DumpResponse>(0);
+    }
+  }
 }
 }
