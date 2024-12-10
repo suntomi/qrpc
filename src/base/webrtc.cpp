@@ -162,20 +162,8 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 	{
     std::lock_guard<std::mutex> lock(g_ref_sync_mutex_);
     if (g_ref_count_ == 0) {
-      // Initialize static stuff.
-      std::string llv = "debug";
-      Settings::SetLogLevel(llv);
-      Settings::SetLogTags({"rtp", "rtcp"});
-      DepOpenSSL::ClassInit();
-      DepLibSRTP::ClassInit();
-      DepUsrSCTP::ClassInit();
-      DepLibWebRTC::ClassInit();
-      Utils::Crypto::ClassInit();
-      RTC::DtlsTransport::ClassInit();
-      RTC::SrtpSession::ClassInit();
       // setup RTC::Timer and UnixStreamSocket, Logger, rtp::Parameters
       rtp::Parameters::SetupHeaderExtensionMap();
-      Logger::ClassInit(&g_channel_socket_);
       ::TimerHandle::SetTimerProc(
         [&a](const ::TimerHandle::Handler &h, uint64_t start_at) {
           return a.Set([hh = h]() {
@@ -204,6 +192,7 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
               auto *res = msg->data_as_Response();
               QRPC_LOGJ(info,{{"ev","rtp res"},{"type",res->body_type()}});
               switch (res->body_type()) {
+                case FBS::Response::Body::NONE:
                 case FBS::Response::Body::Transport_ProduceResponse:
                 case FBS::Response::Body::Transport_ConsumeResponse:
                   return;
@@ -224,7 +213,18 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
               break;
           }
         }
-      );
+      );      
+      std::string llv = "debug";
+      rtp::Handler::ConfigureLogging(llv, {"rtp", "rtcp"});
+      // Initialize static stuff.
+      DepOpenSSL::ClassInit();
+      DepLibSRTP::ClassInit();
+      DepUsrSCTP::ClassInit();
+      DepLibWebRTC::ClassInit();
+      Utils::Crypto::ClassInit();
+      RTC::DtlsTransport::ClassInit();
+      RTC::SrtpSession::ClassInit();
+      Logger::ClassInit(&g_channel_socket_);
       DepUsrSCTP::CreateChecker();
     }
     g_ref_count_++;

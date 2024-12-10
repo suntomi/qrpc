@@ -6,6 +6,7 @@
 #include "base/webrtc/mpatch.h"
 #include "base/rtp/parameters.h"
 
+#include <FBS/worker.h>
 #include <flatbuffers/idl.h>
 
 #include "RTC/BweType.hpp"
@@ -24,6 +25,7 @@
 #include "RTC/RtcLogger.hpp"
 #include "RTC/TransportCongestionControlClient.hpp"
 #include "RTC/TransportCongestionControlServer.hpp"
+#include "Settings.hpp"
 #include <libwebrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h> // webrtc::RtpPacketSendInfo
 
 #include <thread>
@@ -70,6 +72,7 @@ namespace rtp {
 	thread_local const std::map<FBS::Request::Method, FBS::Request::Body> Handler::payload_map_ = {
 		{ FBS::Request::Method::TRANSPORT_CONSUME, FBS::Request::Body::Transport_ConsumeRequest },
 		{ FBS::Request::Method::TRANSPORT_PRODUCE, FBS::Request::Body::Transport_ProduceRequest },
+		{ FBS::Request::Method::WORKER_UPDATE_SETTINGS, FBS::Request::Body::Worker_UpdateSettingsRequest }
 		// more to come if needed
 	};
 
@@ -79,6 +82,18 @@ namespace rtp {
 				pause = j["pause"].get<bool>();
 			}
 		}
+	}
+
+	void Handler::ConfigureLogging(const std::string &log_level, const std::vector<std::string> &log_tags) {
+		auto &fbb = GetFBB();
+		std::vector<::flatbuffers::Offset<::flatbuffers::String>> log_tags_packed;
+		for (const auto &tag : log_tags) {
+			log_tags_packed.push_back(fbb.CreateString(tag));
+		}
+		auto req = Handler::CreateRequest(fbb, FBS::Request::Method::WORKER_UPDATE_SETTINGS,
+			FBS::Worker::CreateUpdateSettingsRequestDirect(fbb, log_level.c_str(), &log_tags_packed)
+		);
+		Settings::HandleRequest(&req);
 	}
 	
 	const FBS::Transport::Options* Handler::TransportOptions(const Config &c) {

@@ -88,13 +88,15 @@ namespace rtp {
       fbb.Clear();
       return fbb;
     }
+    static void ConfigureLogging(const std::string &log_level, const std::vector<std::string> &log_tags);
     static const FBS::Transport::Options* TransportOptions(const Config &c);
     inline std::string FindScalabilityMode(const std::string &rid) {
       auto it = rid_scalability_mode_map_.find(rid);
       return it != rid_scalability_mode_map_.end() ? it->second : "";
     }
     qrpc_time_t OnTimer(qrpc_time_t now);
-    template <typename BodyOffset> void HandleRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) {
+    template <typename BodyOffset>
+    static Channel::ChannelRequest CreateRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) {
       auto btit = payload_map_.find(m);
       if (btit == payload_map_.end()) {
         ASSERT(false);
@@ -103,9 +105,10 @@ namespace rtp {
       fbb.Finish(FBS::Request::CreateRequestDirect(
         fbb, 0, m, "dummy", btit->second, flatbuffers::Offset<void>(ofs.o)
       ));
-      RTC::Transport::HandleRequest(
-        &Channel::ChannelRequest(&socket(), flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()))
-      );
+      return Channel::ChannelRequest(&socket(), flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()));
+    }
+    template <typename BodyOffset> void HandleRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) { 
+      RTC::Transport::HandleRequest(&Handler::CreateRequest(fbb, m, ofs));
     }
     int Produce(const std::string &id, const Parameters &p);
     bool PrepareConsume(
