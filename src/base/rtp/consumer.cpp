@@ -20,8 +20,9 @@ namespace rtp {
   protected:
     std::shared_ptr<Media> media_;
   };
-	std::string ConsumerFactory::GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind) { 
-		return "/c/" + id + "/" + label + "/" + Parameters::FromMediaKind(kind);
+	std::string ConsumerFactory::GenerateId(
+    const std::string &id, const std::string &peer_id, const std::string &label, Parameters::MediaKind kind) { 
+		return "/c/" + id + "/" + peer_id + "/" + label + "/" + Parameters::FromMediaKind(kind);
 	}
   Consumer *ConsumerFactory::Create(
     const Handler &peer, const std::string &label, Parameters::MediaKind kind,
@@ -39,7 +40,7 @@ namespace rtp {
     auto m = handler_.FindFrom(label);
 		::flatbuffers::FlatBufferBuilder fbb;
     auto encodings = consumed_producer->params().PackConsumableEncodings(fbb);
-    auto id = GenerateId(peer.rtp_id(), label, kind);
+    auto id = GenerateId(handler_.rtp_id(), peer.rtp_id(), label, kind);
     auto &producer_id = consumed_producer->id;
     Handler::SetConsumerFactory([m](
 			RTC::RtpParameters::Type type,

@@ -46,6 +46,7 @@ namespace rtp {
       std::string media_path;
       ConsumeOptions options;
     };
+    typedef std::vector<ConsumeConfig> ConsumeConfigs;
     struct RouterListener : RTC::Router::Listener {
       RTC::WebRtcServer* OnRouterNeedWebRtcServer(
 			  RTC::Router* router, std::string& webRtcServerId) override { return nullptr; }
@@ -114,7 +115,7 @@ namespace rtp {
     bool PrepareConsume(
       Handler &peer, const std::vector<std::string> &parsed_media_path, 
       const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
-      std::map<std::string, rtp::Handler::ConsumeConfig> &consume_config_map, std::vector<uint32_t> &generated_ssrcs);
+      ConsumeConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
     bool Consume(Handler &peer, const std::string &label, const ConsumeConfig &config);
     bool SetExtensionId(uint8_t id, const std::string &uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);

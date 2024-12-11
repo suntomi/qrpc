@@ -6,8 +6,7 @@
 namespace base {
 namespace rtp {
 	bool Producer::consumer_params(const RTC::RtpParameters &consumed_producer_params, Parameters &p) const {
-		// just copy mid
-		p.mid = params_.mid;
+		// p.mid will be set by Handler::PrepareConsume
 		// choose codecs from consumed_producer_params.codecs that matched params_.codec_capabilities
 		std::map<int32_t, const RTC::RtpCodecParameters *> rtxmap;
 		for (auto &consumable_codec : consumed_producer_params.codecs) {

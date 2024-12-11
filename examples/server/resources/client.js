@@ -207,7 +207,6 @@ class QRPClient {
       const stats = await receiver.getStats();
       let label = undefined;
       for (const report of stats.values()) {
-        console.log("report", report);
         if (report.type === 'inbound-rtp') {
           console.log(`track id: ${tid}, SSRC: ${report.ssrc}`);
           label = this.ssrcLabelMap[report.ssrc];
@@ -466,12 +465,12 @@ class QRPClient {
       this.ridLabelMap[e.rid] = label;
       this.ridScalabilityModeMap[e.rid] = e.scalabilityMode;
     });
-    // sort by maxBitrate asc, because server regards the first encoding as the lowest quality,
-    // regardless its bitrate
+    // sort by maxBitrate asc, because server regards earlier encoding as lower quality,
+    // regardless its actual bitrate
     encodings.sort((a, b) => a.maxBitrate - b.maxBitrate);
     const tracks = {};
     stream.getTracks().forEach(t => {
-      this.trackIdLabelMap[t.id] = label
+      this.trackIdLabelMap[t.id] = label;
       const track = new QRPCTrack(label, stream, t, encodings, onopen, onclose);
       this.tracks[track.key] = track;
       track.open(this.pc);
@@ -499,7 +498,9 @@ class QRPClient {
       this.tracks[key] = t;
       tracks[kind] = t;
     }
-    this.cpc = await this.#createPeerConnection();
+    if (!this.cpc) {
+      this.cpc = await this.#createPeerConnection();
+    }
     this.#setupCallbacks(this.cpc);
     await this.cpc.setRemoteDescription({type:"offer",sdp});
     const answer = await this.cpc.createAnswer();

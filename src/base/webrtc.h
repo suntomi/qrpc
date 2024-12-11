@@ -131,8 +131,8 @@ namespace webrtc {
       // for now, qrpc server initiates dtls transport because safari does not initiate it
       // even if we specify "setup: passive" in SDP of whip response
       inline bool is_client() const { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
-      inline bool is_consumer() const { return consume_config_map_.size() > 0; }
-      inline std::map<std::string, rtp::Handler::ConsumeConfig> &consume_config_map() { return consume_config_map_; }
+      inline bool is_consumer() const { return consume_configs_.size() > 0; }
+      inline std::vector<rtp::Handler::ConsumeConfig> &consume_configs() { return consume_configs_; }
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void SetCname(const std::string &cname);
@@ -267,7 +267,7 @@ namespace webrtc {
       AlarmProcessor::Id alarm_id_;
       std::string cname_;
       std::shared_ptr<Connection> consumer_connection_;
-      std::map<std::string, rtp::Handler::ConsumeConfig> consume_config_map_; // media_path => consume config
+      std::vector<rtp::Handler::ConsumeConfig> consume_configs_; // media_path => consume config
       bool sctp_connected_, closed_;
     };
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;

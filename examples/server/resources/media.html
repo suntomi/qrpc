@@ -10,7 +10,7 @@
     <script src="http://localhost:8888/client.js"></script>
     <script>
       showMedia = (t) => {
-        console.log(`play ${t.kind}`, t.label);
+        // console.log(`play ${t.kind}`, t.label);
         let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
         if (!mediaElement) {
           mediaElement = document.createElement(t.kind);

@@ -210,14 +210,14 @@ a=setup:active
 
   std::string SDP::GenerateAnswer(
     ConnectionFactory::Connection &c, const std::string &proto,
-    const std::map<Media::Mid, AnswerParams> anwser_params
+    const std::vector<AnswerParams> anwser_params
   ) {
     auto now = qrpc_time_now();
     auto bundle = std::string("a=group:BUNDLE");
     std::string media_sections;
-    for (auto &kv : anwser_params) {
-      bundle += (" " + kv.first);
-      media_sections += GenerateSectionAnswer(c, proto, kv.second);
+    for (auto &ap : anwser_params) {
+      bundle += (" " + ap.params->mid);
+      media_sections += GenerateSectionAnswer(c, proto, ap);
     }
     // string value to the str::Format should be converted to c string like str.c_str()
     // a=ice-lite attribute is important for indicating to peer that we are ice-lite mode
@@ -235,39 +235,38 @@ a=msid-semantic: WMS
     );    
   }  
 
-  rtp::Parameters *SDP::AnswerMediaSection(
+  bool SDP::AnswerMediaSection(
     const json &section, const std::string &proto,
     ConnectionFactory::Connection &c,
-    std::map<std::string, rtp::Parameters> &section_answer_map,
+    rtp::Parameters &params,
     std::string &errmsg
   ) const {
     auto tit = section.find("type");
     if (tit == section.end()) {
       errmsg = "section: no value for key 'type'";
       ASSERT(false);
-      return nullptr;
+      return false;
     }
     auto media_type = tit->get<std::string>();
-    rtp::Parameters params;
     std::string sdplines;
     if (media_type == "application") {
       auto midit = section.find("mid");
       if (midit == section.end()) {
         errmsg = "section: no value for key 'mid'";
         ASSERT(false);
-        return nullptr;
+        return false;
       }
       auto portit = section.find("port");
       if (portit == section.end()) {
         errmsg = "rtpmap: no value for key 'port'";
         ASSERT(false);
-        return nullptr;
+        return false;
       }
       auto protoit = section.find("protocol");
       if (protoit == section.end()) {
         errmsg = "section: no value for key 'protocol'";
         ASSERT(false);
-        return nullptr;
+        return false;
       }
       params.mid = midit->get<std::string>();
       params.kind = rtp::Parameters::MediaKind::APP;
@@ -277,22 +276,55 @@ a=msid-semantic: WMS
     } else {
       c.InitRTP();
       if (!params.Parse(c.rtp_handler(), section, errmsg)) {
-        return nullptr;
+        return false;
       }
     }
-    auto kv = section_answer_map.emplace(params.mid, params);
-    // if (media_type == "video") {
-    //   auto probatorParam = params.ToProbator();
-    //   section_answer_map.emplace(probatorParam.mid, probatorParam);
-    // }
-    return &(kv.first->second);
+    return true;
+  }
+
+  bool SDP::CreateSectionAnswer(
+    std::vector<AnswerParams> &section_answers, const std::vector<std::string> &mids,
+    const std::vector<rtp::Parameters> &params, std::string &error
+  ) {
+    section_answers.resize(mids.size());
+    for (const auto& p : params) {
+      auto midit = std::find(mids.begin(), mids.end(), p.mid);
+      if (midit == mids.end()) {
+        error = "no mid found in mids";
+        ASSERT(false);
+        return false;
+      }
+      auto d = std::distance(mids.begin(), midit);
+      if (d >= section_answers.size() || d < 0) {
+        error = "invalid mid index:" + std::to_string(d);
+        ASSERT(false);
+        return false;
+      }
+      section_answers[d] = AnswerParams(p);
+    }
+    return true;
   }
 
   bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
     json dsec, asec, vsec;
-    std::map<std::string, rtp::Parameters> section_answer_map;
+    std::vector<rtp::Parameters> section_params;
+    std::vector<AnswerParams> section_answers;
     std::string media_sections, proto;
-    rtp::Parameters *params;
+    auto grit = find("groups");
+    if (grit == end() || grit->size() == 0) {
+      answer = "no value for key 'groups' or no element in it";
+      QRPC_LOGJ(warn, {{"ev","malform sdp"},{"reason",answer},{"groups",grit == end() ? "null" : grit->dump()}});
+      ASSERT(false);
+      return false;
+    }
+    auto midsit = grit->begin()->find("mids");
+    if (midsit == grit->begin()->end()) {
+      answer = "no value for key 'mids' in 'groups'";
+      QRPC_LOGJ(warn, {{"ev","malform sdp"},{"reason",answer},{"groups",grit->dump()}});
+      ASSERT(false);
+      return false;
+    }
+    auto mids = str::Split(midsit->get<std::string>(), " ");
     if (FindMediaSection("application", dsec)) {
       // find protocol from SCTP backed transport
       auto protoit = dsec.find("protocol");
@@ -319,7 +351,8 @@ a=msid-semantic: WMS
         return false;
       }
       c.dtls_transport().SetRemoteFingerprint(fp);
-      if ((params = AnswerMediaSection(dsec, proto, c, section_answer_map, answer)) == nullptr) {
+      auto &params = section_params.emplace_back();
+      if (!AnswerMediaSection(dsec, proto, c, params, answer)) {
         QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
         ASSERT(false);
         return false;
@@ -327,8 +360,9 @@ a=msid-semantic: WMS
     }
     // TODO: should support multiple audio/video streams from same webrtc connection?
     if (FindMediaSection("audio", asec)) {
-      if ((params = AnswerMediaSection(asec, proto, c, section_answer_map, answer)) != nullptr) {
-        if (c.rtp_handler().Produce(c.rtp_id(), *params) != QRPC_OK) {
+      auto &params = section_params.emplace_back();
+      if (AnswerMediaSection(asec, proto, c, params, answer)) {
+        if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
           answer = "fail to create audio producer";
           return false;
         }
@@ -339,8 +373,9 @@ a=msid-semantic: WMS
       }
     }
     if (FindMediaSection("video", vsec)) {
-      if ((params = AnswerMediaSection(vsec, proto, c, section_answer_map, answer)) != nullptr) {
-        if (c.rtp_handler().Produce(c.rtp_id(), *params) != QRPC_OK) {
+      auto &params = section_params.emplace_back();
+      if (AnswerMediaSection(vsec, proto, c, params, answer)) {
+        if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
           answer = "fail to create video producer";
           return false;
         }
@@ -350,8 +385,14 @@ a=msid-semantic: WMS
         return false;
       }
     }
-    // false for geneating answer for prodducer
-    answer = GenerateAnswer(c, proto, section_answer_map);
+    // create section_answers by setting section_params that is sorted with bundle mid order
+    if (!CreateSectionAnswer(section_answers, mids, section_params, answer)) {
+      QRPC_LOGJ(warn, {{"ev","fail to set section answer"},{"mids",mids},{"error",answer}});
+      ASSERT(false);
+      return false;
+    }
+    // geneating answer for prodducer
+    answer = GenerateAnswer(c, proto, section_answers);
     return true;
   }
 } // namespace webrtc
