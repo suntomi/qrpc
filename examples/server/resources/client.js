@@ -460,13 +460,15 @@ class QRPClient {
       throw new Error("encoding is mandatory");
     }
     encodings.forEach(e => {
-      if (!e.rid) {
-        throw new Error("for each encodings, rid is mandatory");
-      }
+      if (!e.rid) { throw new Error("for each encodings, rid is mandatory"); }
+      if (!e.maxBitrate) { throw new Error("for each encodings, maxBitrate is mandatory"); }
       e.scalabilityMode = e.scalabilityMode || QRPClient.DEFAULT_SCALABILITY_MODE;
       this.ridLabelMap[e.rid] = label;
       this.ridScalabilityModeMap[e.rid] = e.scalabilityMode;
     });
+    // sort by maxBitrate asc, because server regards the first encoding as the lowest quality,
+    // regardless its bitrate
+    encodings.sort((a, b) => a.maxBitrate - b.maxBitrate);
     const tracks = {};
     stream.getTracks().forEach(t => {
       this.trackIdLabelMap[t.id] = label

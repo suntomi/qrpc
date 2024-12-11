@@ -1346,10 +1346,10 @@ void ConnectionFactory::Connection::SendRtpPacket(
     return;
   }
   // packet->Dump();
-  std::string mid, rid;
-  auto has_mid = packet->ReadMid(mid), has_rid = packet->ReadRid(rid);
-  QRPC_LOGJ(info, {{"ev","sendrtp"},// {"to",ice_server_->GetSelectedSession()->addr().str()},
-    {"ssrc",packet->GetSsrc()},{"mid",has_mid ? mid : "x"},{"rid",has_rid ? rid : "x"},{"seq",packet->GetSequenceNumber()},{"pt",packet->GetPayloadType()},{"sz",sz}});
+  // std::string mid, rid;
+  // auto has_mid = packet->ReadMid(mid), has_rid = packet->ReadRid(rid);
+  // QRPC_LOGJ(info, {{"ev","sendrtp"},// {"to",ice_server_->GetSelectedSession()->addr().str()},
+  //   {"ssrc",packet->GetSsrc()},{"mid",has_mid ? mid : "x"},{"rid",has_rid ? rid : "x"},{"seq",packet->GetSequenceNumber()},{"pt",packet->GetPayloadType()},{"sz",sz}});
   // Increase send transmission.
   rtp_handler_->DataSent(sz);
 }
