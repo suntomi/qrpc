@@ -58,12 +58,11 @@ void ConnectionFactory::CloseConnection(Connection &c) {
   logger::info({{"ev","close webrtc connection"},{"ufrag",c.ufrag()},{"cname",c.cname()}});
   bool is_consumer = c.is_consumer();
   c.Fin(); // cleanup resources if not yet
-  connections_.erase(c.ufrag());
-  // if consumer, c might be freed here
   if (!is_consumer) {
     cnmap_.erase(c.cname());
   }
-  // if producer, c might be freed here
+  connections_.erase(c.ufrag());
+  // c might be freed here
 }
 static inline ConnectionFactory::IceUFrag GetLocalIceUFragFrom(RTC::StunPacket& packet) {
   TRACK();
@@ -162,20 +161,8 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 	{
     std::lock_guard<std::mutex> lock(g_ref_sync_mutex_);
     if (g_ref_count_ == 0) {
-      // Initialize static stuff.
-      std::string llv = "debug";
-      Settings::SetLogLevel(llv);
-      Settings::SetLogTags({"rtp", "rtcp"});
-      DepOpenSSL::ClassInit();
-      DepLibSRTP::ClassInit();
-      DepUsrSCTP::ClassInit();
-      DepLibWebRTC::ClassInit();
-      Utils::Crypto::ClassInit();
-      RTC::DtlsTransport::ClassInit();
-      RTC::SrtpSession::ClassInit();
       // setup RTC::Timer and UnixStreamSocket, Logger, rtp::Parameters
       rtp::Parameters::SetupHeaderExtensionMap();
-      Logger::ClassInit(&g_channel_socket_);
       ::TimerHandle::SetTimerProc(
         [&a](const ::TimerHandle::Handler &h, uint64_t start_at) {
           return a.Set([hh = h]() {
@@ -204,6 +191,7 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
               auto *res = msg->data_as_Response();
               QRPC_LOGJ(info,{{"ev","rtp res"},{"type",res->body_type()}});
               switch (res->body_type()) {
+                case FBS::Response::Body::NONE:
                 case FBS::Response::Body::Transport_ProduceResponse:
                 case FBS::Response::Body::Transport_ConsumeResponse:
                   return;
@@ -224,7 +212,18 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
               break;
           }
         }
-      );
+      );      
+      std::string llv = "debug";
+      rtp::Handler::ConfigureLogging(llv, {"rtp", "rtcp"});
+      // Initialize static stuff.
+      DepOpenSSL::ClassInit();
+      DepLibSRTP::ClassInit();
+      DepUsrSCTP::ClassInit();
+      DepLibWebRTC::ClassInit();
+      Utils::Crypto::ClassInit();
+      RTC::DtlsTransport::ClassInit();
+      RTC::SrtpSession::ClassInit();
+      Logger::ClassInit(&g_channel_socket_);
       DepUsrSCTP::CreateChecker();
     }
     g_ref_count_++;
@@ -508,32 +507,34 @@ bool ConnectionFactory::Connection::PrepareConsume(
   auto h = factory().FindHandler(parsed[0]);
   std::vector<uint32_t> generated_ssrcs;
   if (rtp_handler().PrepareConsume(
-    *h, parsed, options_map, consumer_connection_->consume_config_map(), generated_ssrcs)) {
+    *h, parsed, options_map, consumer_connection_->consume_configs(), generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = media_path;
     }
     auto proto = ice_server().GetSelectedSession()->proto();
-    std::map<std::string, SDP::AnswerParams> answer_params;
-    for (const auto &kv : consumer_connection_->consume_config_map()) {
+    std::vector<SDP::AnswerParams> answer_params;
+    for (const auto &c : consumer_connection_->consume_configs()) {
+      QRPC_LOGJ(info, {{"ev","create answer conf"},{"path",c.media_path},{"mid",c.mid}});
       std::string cname;
-      if (kv.second.mid == RTC::RtpProbationGenerator::GetMidValue()) {
-        cname = kv.second.mid;
+      if (c.mid == RTC::RtpProbationGenerator::GetMidValue()) {
+        cname = c.mid;
       } else {
-        auto parsed = str::Split(kv.second.media_path, "/");
+        auto parsed = str::Split(c.media_path, "/");
         if (parsed.size() < 3) {
-          QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",kv.second.media_path}});
+          QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",c.media_path}});
           ASSERT(false);
           return false;
         }
         cname = parsed[0];
         ASSERT(!cname.empty());
       }
-      answer_params.emplace(std::piecewise_construct,
-        std::forward_as_tuple(kv.second.mid),
-        std::forward_as_tuple(kv.second, cname)
-      );
+      answer_params.emplace_back(c, cname);
     }
     sdp = SDP::GenerateAnswer(*consumer_connection_, proto, answer_params);
+    if (consumer_connection_->IsConnected()) {
+      QRPC_LOGJ(error, {{"ev","consumer connection already ready. consume now"}});
+      consumer_connection_->Consume();
+    }
     return true;
   } else {
     ASSERT(false);
@@ -548,8 +549,8 @@ bool ConnectionFactory::Connection::Consume() {
   }
   // force initiate rtp
   InitRTP();
-  for (const auto &entry : consume_config_map()) {
-    if (!ConsumeMedia(entry.second)) {
+  for (const auto &c : consume_configs()) {
+    if (!ConsumeMedia(c)) {
       return false;
     }
   }
@@ -1347,11 +1348,10 @@ void ConnectionFactory::Connection::SendRtpPacket(
     return;
   }
   // packet->Dump();
-  // std::string mid;
-  // if (packet->ReadMid(mid)) {
-  //   QRPC_LOGJ(info, {{"ev","sendrtp"},{"to",ice_server_->GetSelectedSession()->addr().str()},
-  //     {"ssrc",packet->GetSsrc()},{"mid",mid},{"seq",packet->GetSequenceNumber()},{"pt",packet->GetPayloadType()},{"sz",sz}});
-  // }
+  // std::string mid, rid;
+  // auto has_mid = packet->ReadMid(mid), has_rid = packet->ReadRid(rid);
+  // QRPC_LOGJ(info, {{"ev","sendrtp"},// {"to",ice_server_->GetSelectedSession()->addr().str()},
+  //   {"ssrc",packet->GetSsrc()},{"mid",has_mid ? mid : "x"},{"rid",has_rid ? rid : "x"},{"seq",packet->GetSequenceNumber()},{"pt",packet->GetPayloadType()},{"sz",sz}});
   // Increase send transmission.
   rtp_handler_->DataSent(sz);
 }

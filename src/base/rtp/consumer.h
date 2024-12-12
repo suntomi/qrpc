@@ -22,7 +22,8 @@ namespace rtp {
       if (mid_seed_ > 1000000000) { ASSERT(false); mid_seed_ = 0; } 
       return std::to_string(mid);
     }
-    static std::string GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind);
+    static std::string GenerateId(
+      const std::string &id, const std::string &peer_id, const std::string &label, Parameters::MediaKind kind);
   public:
     Consumer *Create(
       const Handler &peer, const std::string &label, Parameters::MediaKind kind,

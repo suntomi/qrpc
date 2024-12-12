@@ -46,6 +46,7 @@ namespace rtp {
       std::string media_path;
       ConsumeOptions options;
     };
+    typedef std::vector<ConsumeConfig> ConsumeConfigs;
     struct RouterListener : RTC::Router::Listener {
       RTC::WebRtcServer* OnRouterNeedWebRtcServer(
 			  RTC::Router* router, std::string& webRtcServerId) override { return nullptr; }
@@ -88,13 +89,15 @@ namespace rtp {
       fbb.Clear();
       return fbb;
     }
+    static void ConfigureLogging(const std::string &log_level, const std::vector<std::string> &log_tags);
     static const FBS::Transport::Options* TransportOptions(const Config &c);
     inline std::string FindScalabilityMode(const std::string &rid) {
       auto it = rid_scalability_mode_map_.find(rid);
       return it != rid_scalability_mode_map_.end() ? it->second : "";
     }
     qrpc_time_t OnTimer(qrpc_time_t now);
-    template <typename BodyOffset> void HandleRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) {
+    template <typename BodyOffset>
+    static Channel::ChannelRequest CreateRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) {
       auto btit = payload_map_.find(m);
       if (btit == payload_map_.end()) {
         ASSERT(false);
@@ -103,15 +106,16 @@ namespace rtp {
       fbb.Finish(FBS::Request::CreateRequestDirect(
         fbb, 0, m, "dummy", btit->second, flatbuffers::Offset<void>(ofs.o)
       ));
-      RTC::Transport::HandleRequest(
-        &Channel::ChannelRequest(&socket(), flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()))
-      );
+      return Channel::ChannelRequest(&socket(), flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()));
+    }
+    template <typename BodyOffset> void HandleRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) { 
+      RTC::Transport::HandleRequest(&Handler::CreateRequest(fbb, m, ofs));
     }
     int Produce(const std::string &id, const Parameters &p);
     bool PrepareConsume(
       Handler &peer, const std::vector<std::string> &parsed_media_path, 
       const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
-      std::map<std::string, rtp::Handler::ConsumeConfig> &consume_config_map, std::vector<uint32_t> &generated_ssrcs);
+      ConsumeConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
     bool Consume(Handler &peer, const std::string &label, const ConsumeConfig &config);
     bool SetExtensionId(uint8_t id, const std::string &uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);

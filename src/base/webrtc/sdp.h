@@ -29,32 +29,42 @@ namespace webrtc {
     bool FindMediaSection(const std::string &type, json &j) const;
   protected:
     bool GetRemoteFingerPrint(const json &section, std::string &answer, RTC::DtlsTransport::Fingerprint &ret) const;
-    rtp::Parameters *AnswerMediaSection(
+    bool AnswerMediaSection(
       const json &section, const std::string &proto, ConnectionFactory::Connection &c,
-      std::map<std::string, rtp::Parameters> &section_answer_map, std::string &errmsg) const;
+      rtp::Parameters &params, std::string &errmsg) const;
+    std::vector<std::string> GetMids() const;
   public:
     struct AnswerParams {
       const rtp::Parameters *params;
-      const std::string cname;
+      std::string cname;
+      AnswerParams() : params(nullptr), cname("") {}
       AnswerParams(const rtp::Parameters &p) : params(&p), cname("") {}
       AnswerParams(const rtp::Parameters &p, const std::string &cname) : params(&p), cname(cname) {}
+      const AnswerParams & operator = (const AnswerParams &p) {
+        params = p.params;
+        cname = p.cname;
+        return *this;
+      }
     };
     static std::string GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,
-      const std::map<Media::Mid, rtp::Parameters> &params_map
+      const std::vector<rtp::Parameters> &params
     ) {
-      std::map<Media::Mid, AnswerParams> anwser_params;
-      for (const auto &kv : params_map) { anwser_params.emplace(kv.first, kv.second); }
+      std::vector<AnswerParams> anwser_params;
+      for (const auto &p : params) { anwser_params.emplace_back(p); }
       return GenerateAnswer(c, proto, anwser_params);
     }
     static std::string GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,
-      const std::map<Media::Mid, AnswerParams> anwser_params
+      const std::vector<AnswerParams> anwser_params
     );
     static inline std::string GenerateSectionAnswer(ConnectionFactory::Connection &c, 
       const std::string &proto, const AnswerParams &p);
     static std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c);
     static uint32_t AssignPriority(uint32_t component_id);
+    static bool CreateSectionAnswer(
+      std::vector<AnswerParams> &section_answers, const std::vector<std::string> &mids,
+      const std::vector<rtp::Parameters> &params, std::string &error);
   public:
   };
 } // namespace webrtc

@@ -6,6 +6,7 @@
 #include "base/webrtc/mpatch.h"
 #include "base/rtp/parameters.h"
 
+#include <FBS/worker.h>
 #include <flatbuffers/idl.h>
 
 #include "RTC/BweType.hpp"
@@ -24,6 +25,7 @@
 #include "RTC/RtcLogger.hpp"
 #include "RTC/TransportCongestionControlClient.hpp"
 #include "RTC/TransportCongestionControlServer.hpp"
+#include "Settings.hpp"
 #include <libwebrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h> // webrtc::RtpPacketSendInfo
 
 #include <thread>
@@ -70,6 +72,7 @@ namespace rtp {
 	thread_local const std::map<FBS::Request::Method, FBS::Request::Body> Handler::payload_map_ = {
 		{ FBS::Request::Method::TRANSPORT_CONSUME, FBS::Request::Body::Transport_ConsumeRequest },
 		{ FBS::Request::Method::TRANSPORT_PRODUCE, FBS::Request::Body::Transport_ProduceRequest },
+		{ FBS::Request::Method::WORKER_UPDATE_SETTINGS, FBS::Request::Body::Worker_UpdateSettingsRequest }
 		// more to come if needed
 	};
 
@@ -79,6 +82,18 @@ namespace rtp {
 				pause = j["pause"].get<bool>();
 			}
 		}
+	}
+
+	void Handler::ConfigureLogging(const std::string &log_level, const std::vector<std::string> &log_tags) {
+		auto &fbb = GetFBB();
+		std::vector<::flatbuffers::Offset<::flatbuffers::String>> log_tags_packed;
+		for (const auto &tag : log_tags) {
+			log_tags_packed.push_back(fbb.CreateString(tag));
+		}
+		auto req = Handler::CreateRequest(fbb, FBS::Request::Method::WORKER_UPDATE_SETTINGS,
+			FBS::Worker::CreateUpdateSettingsRequestDirect(fbb, log_level.c_str(), &log_tags_packed)
+		);
+		Settings::HandleRequest(&req);
 	}
 	
 	const FBS::Transport::Options* Handler::TransportOptions(const Config &c) {
@@ -91,8 +106,7 @@ namespace rtp {
 	bool Handler::PrepareConsume(
       Handler &peer, const std::vector<std::string> &parsed_media_path,
 			const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
-			std::map<std::string, rtp::Handler::ConsumeConfig> &consume_config_map,
-			std::vector<uint32_t> &generated_ssrcs
+			ConsumeConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs
 	) {
 		static const std::vector<Parameters::MediaKind> kinds = {
 			Parameters::MediaKind::AUDIO, Parameters::MediaKind::VIDEO
@@ -100,7 +114,11 @@ namespace rtp {
 		const auto &label = parsed_media_path[1];
 		for (const auto k : kinds) {
 			auto media_path = parsed_media_path[0] + "/" + label + "/" + Parameters::FromMediaKind(k);
-			if (consume_config_map.find(media_path) != consume_config_map.end()) {
+			auto ccit = std::find_if(consume_configs.begin(), consume_configs.end(), [&media_path](const auto &c) {
+				return c.media_path == media_path;
+			});
+			QRPC_LOGJ(info, {{"ev","check consume config"},{"path",media_path},{"exists",ccit != consume_configs.end()}});
+			if (ccit != consume_configs.end()) {
 				QRPC_LOGJ(info, {
 					{"ev","ignore media because already prepared"},
 					{"label",label},{"kind",Parameters::FromMediaKind(k)}
@@ -123,13 +141,9 @@ namespace rtp {
 				});
 				continue;
 			}
-			auto entry = consume_config_map.emplace(media_path, ConsumeConfig());
-			auto &config = entry.first->second;
+			auto &config = consume_configs.emplace_back();
 			config.media_path = media_path;
 			config.options = options_map.find(k) == options_map.end() ? ConsumeOptions() : options_map.find(k)->second;
-			// generate unique mid from own consumer factory
-			auto mid = consumer_factory_.GenerateMid();
-			config.mid = mid;
 			// copy additional parameter from producer that affects sdp generation
 			config.kind = k;
 			config.network = consumed_producer->params().network;
@@ -141,26 +155,33 @@ namespace rtp {
 				ASSERT(false);
 				continue;
 			}
+			// generate unique mid from own consumer factory
+			auto mid = consumer_factory_.GenerateMid();
+			config.mid = mid;
 			config.rtcp.cname = peer.cname();
 			config.GetGeneratedSsrc(generated_ssrcs);
 			// if video consumer and there is no probator mid, generate probator mid => param pair
-			auto probator_mid = RTC::RtpProbationGenerator::GetMidValue();
-			if (k == Parameters::MediaKind::VIDEO && consume_config_map.find(probator_mid) == consume_config_map.end()) {
-				consume_config_map.emplace(probator_mid, ConsumeConfig(config.ToProbator()));
+			ccit = std::find_if(consume_configs.begin(), consume_configs.end(), [](const auto &c) {
+				return c.mid == RTC::RtpProbationGenerator::GetMidValue();
+			});
+			if (k == Parameters::MediaKind::VIDEO && ccit == consume_configs.end()) {
+				consume_configs.emplace_back(ConsumeConfig(config.ToProbator()));
 			}
 		}
-		QRPC_LOGJ(info, {{"ev","set consume configs"},{"configs",consume_config_map.size()}});
+		QRPC_LOGJ(info, {{"ev","set consume configs"},{"configs",consume_configs.size()}});
 		return true;
 	}
 
 	bool Handler::Consume(
 		Handler &peer, const std::string &label, const ConsumeConfig &config
 	) {
-		auto cid = ConsumerFactory::GenerateId(peer.rtp_id(), label, config.kind);
-		if (HasConsumer(cid)) {
-			QRPC_LOGJ(info, {{"ev","consume already created"},{"cid",cid}});
+		auto cid = ConsumerFactory::GenerateId(rtp_id(), peer.rtp_id(), label, config.kind);
+		auto cit = GetConsumers().find(cid);
+		if (cit != GetConsumers().end()) {
+			QRPC_LOGJ(info, {{"ev","consumer already created"},{"cid",cid},{"mid",cit->second->GetRtpParameters().mid}});
 			return true;
 		}
+		QRPC_LOGJ(info, {{"ev","create consumer"},{"cid",cid},{"mid",config.mid}});
 		const auto &options = config.options;
 		const auto &kind = config.kind;
 		// false for creating pipe consumer: TODO: support pipe consumer
@@ -169,6 +190,9 @@ namespace rtp {
 				QRPC_LOGJ(error, {{"ev","fail to create consumer"}});
 				ASSERT(false);
 				return false;
+		}
+		for (auto &kv : GetConsumers()) {
+			QRPC_LOGJ(info, {{"ev","consumer list"},{"cid",kv.first},{"mid",kv.second->GetRtpParameters().mid}});			
 		}
 		// auto &fbb = GetFBB();
 		// fbb.Finish(consumer_factory_.FillBuffer(consumer, fbb));
