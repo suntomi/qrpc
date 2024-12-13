@@ -419,7 +419,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         return QRPC_OK;
       }
       const auto msgid = mit->second.get<uint64_t>();
-      std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map;
+      std::map<rtp::Parameters::MediaKind, ControlOptions> options_map;
       const auto oit = args.find("options");
       if (oit != args.end()) {
         const auto &opts = oit->second.get<std::map<std::string,json>>();
@@ -475,7 +475,7 @@ void ConnectionFactory::Connection::InitRTP() {
 }
 bool ConnectionFactory::Connection::PrepareConsume(
   const std::string &media_path, 
-  const std::map<rtp::Parameters::MediaKind, ConsumeOptions> &options_map,
+  const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map,
   std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map
 ) {
   // TODO: support fullpath like $url/@cname/name. first should remove part before /@
@@ -507,13 +507,13 @@ bool ConnectionFactory::Connection::PrepareConsume(
   auto h = factory().FindHandler(parsed[0]);
   std::vector<uint32_t> generated_ssrcs;
   if (rtp_handler().PrepareConsume(
-    *h, parsed, options_map, consumer_connection_->consume_configs(), generated_ssrcs)) {
+    *h, parsed, options_map, consumer_connection_->media_stream_configs(), generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = media_path;
     }
     auto proto = ice_server().GetSelectedSession()->proto();
     std::vector<SDP::AnswerParams> answer_params;
-    for (const auto &c : consumer_connection_->consume_configs()) {
+    for (const auto &c : consumer_connection_->media_stream_configs()) {
       QRPC_LOGJ(info, {{"ev","create answer conf"},{"path",c.media_path},{"mid",c.mid}});
       std::string cname;
       if (c.mid == RTC::RtpProbationGenerator::GetMidValue()) {
@@ -549,7 +549,7 @@ bool ConnectionFactory::Connection::Consume() {
   }
   // force initiate rtp
   InitRTP();
-  for (const auto &c : consume_configs()) {
+  for (const auto &c : media_stream_configs()) {
     if (!ConsumeMedia(c)) {
       return false;
     }
@@ -557,7 +557,7 @@ bool ConnectionFactory::Connection::Consume() {
   return true;
 }
 bool ConnectionFactory::Connection::ConsumeMedia(
-  const rtp::Handler::ConsumeConfig &config
+  const rtp::Handler::MediaStreamConfig &config
 ) {
   if (config.mid == RTC::RtpProbationGenerator::GetMidValue()) {
     QRPC_LOGJ(debug, {{"ev","ignore probator"}});
@@ -572,6 +572,11 @@ bool ConnectionFactory::Connection::ConsumeMedia(
     return false;
   }
   auto h = factory().FindHandler(parsed[0]);
+  if (h == nullptr) {
+    QRPC_LOGJ(error, {{"ev","peer not found"},{"cname",parsed[0]}});
+    ASSERT(false);
+    return false;
+  }
   std::vector<uint32_t> generated_ssrcs;
   if (rtp_handler().Consume(*h, parsed[1], config)) {
     return true;
@@ -1241,7 +1246,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       logger::error({{"proto","sctp"},{"ev","invalid DCEP request received"}});
       return;
     }
-    auto c = req->ToStreamConfig();
+    auto c = req->ToMediaStreamConfig();
     auto s = NewStream(
       c, c.label == SyscallStream::NAME ? 
         [this](const Stream::Config &config, base::Connection &conn) {

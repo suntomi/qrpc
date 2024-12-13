@@ -35,18 +35,22 @@ namespace rtp {
       size_t max_outgoing_bitrate, max_incoming_bitrate;
       size_t min_outgoing_bitrate;
     };
-    struct ConsumeOptions {
-      ConsumeOptions(const json &j);
-      ConsumeOptions() : pause(false) {}
-      bool pause;
-    };
-    struct ConsumeConfig : public Parameters {
-      ConsumeConfig() : Parameters() {}
-      ConsumeConfig(const Parameters &p) : Parameters(p) {}
+    struct MediaStreamConfig : public Parameters {
+      struct ControlOptions {
+        ControlOptions(const json &j);
+        ControlOptions() : pause(false) {}
+        bool pause;
+      };
+      enum Direction { SEND, RECV };
+      MediaStreamConfig() : Parameters() {}
+      MediaStreamConfig(const Parameters &p, Direction d) : Parameters(p), direction(d) {}
+      inline bool sender() const { return direction == Direction::SEND; }
+      inline bool receiver() const { return direction == Direction::RECV; }
       std::string media_path;
-      ConsumeOptions options;
+      Direction direction{ Direction::RECV };
+      ControlOptions options;
     };
-    typedef std::vector<ConsumeConfig> ConsumeConfigs;
+    typedef std::vector<MediaStreamConfig> MediaStreamConfigs;
     struct RouterListener : RTC::Router::Listener {
       RTC::WebRtcServer* OnRouterNeedWebRtcServer(
 			  RTC::Router* router, std::string& webRtcServerId) override { return nullptr; }
@@ -114,11 +118,15 @@ namespace rtp {
     int Produce(const std::string &id, const Parameters &p);
     bool PrepareConsume(
       Handler &peer, const std::vector<std::string> &parsed_media_path, 
-      const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
-      ConsumeConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
-    bool Consume(Handler &peer, const std::string &label, const ConsumeConfig &config);
+      const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
+      MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
+    bool Consume(Handler &peer, const std::string &label, const MediaStreamConfig &config);
     bool SetExtensionId(uint8_t id, const std::string &uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
+    const std::string &FindLabelByMid(const std::string &mid) const {
+      auto it = mid_label_map_.find(mid);
+      return it != mid_label_map_.end() ? it->second : "";
+    }
     std::shared_ptr<Media> FindFrom(const Parameters &p);
     std::shared_ptr<Media> FindFrom(const std::string &label);
     Producer *FindProducer(const std::string &label, Parameters::MediaKind kind) const;

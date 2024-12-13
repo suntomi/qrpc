@@ -76,7 +76,7 @@ namespace rtp {
 		// more to come if needed
 	};
 
-	Handler::ConsumeOptions::ConsumeOptions(const json &j) {
+	Handler::MediaStreamConfig::ControlOptions::ControlOptions(const json &j) {
 		if (j.is_object()) {
 			if (j.contains("pause")) {
 				pause = j["pause"].get<bool>();
@@ -105,8 +105,8 @@ namespace rtp {
 	}
 	bool Handler::PrepareConsume(
       Handler &peer, const std::vector<std::string> &parsed_media_path,
-			const std::map<rtp::Parameters::MediaKind, ConsumeOptions> options_map,
-			ConsumeConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs
+			const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
+			MediaStreamConfigs &media_stream_configs, std::vector<uint32_t> &generated_ssrcs
 	) {
 		static const std::vector<Parameters::MediaKind> kinds = {
 			Parameters::MediaKind::AUDIO, Parameters::MediaKind::VIDEO
@@ -114,11 +114,11 @@ namespace rtp {
 		const auto &label = parsed_media_path[1];
 		for (const auto k : kinds) {
 			auto media_path = parsed_media_path[0] + "/" + label + "/" + Parameters::FromMediaKind(k);
-			auto ccit = std::find_if(consume_configs.begin(), consume_configs.end(), [&media_path](const auto &c) {
-				return c.media_path == media_path;
+			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
+				return c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
 			});
-			QRPC_LOGJ(info, {{"ev","check consume config"},{"path",media_path},{"exists",ccit != consume_configs.end()}});
-			if (ccit != consume_configs.end()) {
+			QRPC_LOGJ(info, {{"ev","check consume config"},{"path",media_path},{"exists",ccit != media_stream_configs.end()}});
+			if (ccit != media_stream_configs.end()) {
 				QRPC_LOGJ(info, {
 					{"ev","ignore media because already prepared"},
 					{"label",label},{"kind",Parameters::FromMediaKind(k)}
@@ -134,16 +134,18 @@ namespace rtp {
 				continue;
 			}
 			auto consumed_producer = peer.FindProducer(label, k);
-			if (local_producer == nullptr) {
+			if (consumed_producer == nullptr) {
 				QRPC_LOGJ(info, {
 					{"ev","ignore media because corresponding producer of peer not found"},
 					{"label",label},{"kind",Parameters::FromMediaKind(k)},{"peer",peer.rtp_id()}
 				});
 				continue;
 			}
-			auto &config = consume_configs.emplace_back();
+			auto &config = media_stream_configs.emplace_back();
+			config.direction = MediaStreamConfig::Direction::SEND;
 			config.media_path = media_path;
-			config.options = options_map.find(k) == options_map.end() ? ConsumeOptions() : options_map.find(k)->second;
+			config.options = options_map.find(k) == options_map.end() ?
+				MediaStreamConfig::ControlOptions() : options_map.find(k)->second;
 			// copy additional parameter from producer that affects sdp generation
 			config.kind = k;
 			config.network = consumed_producer->params().network;
@@ -161,19 +163,19 @@ namespace rtp {
 			config.rtcp.cname = peer.cname();
 			config.GetGeneratedSsrc(generated_ssrcs);
 			// if video consumer and there is no probator mid, generate probator mid => param pair
-			ccit = std::find_if(consume_configs.begin(), consume_configs.end(), [](const auto &c) {
-				return c.mid == RTC::RtpProbationGenerator::GetMidValue();
+			ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [](const auto &c) {
+				return c.mid == RTC::RtpProbationGenerator::GetMidValue() && c.sender();
 			});
-			if (k == Parameters::MediaKind::VIDEO && ccit == consume_configs.end()) {
-				consume_configs.emplace_back(ConsumeConfig(config.ToProbator()));
+			if (k == Parameters::MediaKind::VIDEO && ccit == media_stream_configs.end()) {
+				media_stream_configs.emplace_back(MediaStreamConfig(config.ToProbator(), MediaStreamConfig::Direction::SEND));
 			}
 		}
-		QRPC_LOGJ(info, {{"ev","set consume configs"},{"configs",consume_configs.size()}});
+		QRPC_LOGJ(info, {{"ev","set consume configs"},{"configs",media_stream_configs.size()}});
 		return true;
 	}
 
 	bool Handler::Consume(
-		Handler &peer, const std::string &label, const ConsumeConfig &config
+		Handler &peer, const std::string &label, const MediaStreamConfig &config
 	) {
 		auto cid = ConsumerFactory::GenerateId(rtp_id(), peer.rtp_id(), label, config.kind);
 		auto cit = GetConsumers().find(cid);
@@ -276,12 +278,12 @@ namespace rtp {
 		return nullptr;
 	}
 	int Handler::Produce(const std::string &id, const Parameters &p) {
-		auto lit = mid_label_map_.find(p.mid);
-		if (lit == mid_label_map_.end()) {
+		auto l = FindLabelByMid(p.mid);
+		if (l.empty()) {
 			QRPC_LOGJ(error, {{"ev","failed to find mid label"},{"mid",p.mid}});
 			return QRPC_EINVAL;
 		}
-		auto gid = ProducerFactory::GenerateId(id, lit->second, p.kind);
+		auto gid = ProducerFactory::GenerateId(id, l, p.kind);
 		for (auto kv : p.ssrcs) {
 			ssrc_trackid_map_[kv.first] = kv.second.track_id;
 		}

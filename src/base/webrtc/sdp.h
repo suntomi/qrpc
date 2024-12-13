@@ -31,8 +31,8 @@ namespace webrtc {
     bool GetRemoteFingerPrint(const json &section, std::string &answer, RTC::DtlsTransport::Fingerprint &ret) const;
     bool AnswerMediaSection(
       const json &section, const std::string &proto, ConnectionFactory::Connection &c,
-      rtp::Parameters &params, std::string &errmsg) const;
-    std::vector<std::string> GetMids() const;
+      rtp::Handler::MediaStreamConfig &params, std::string &errmsg) const;
+    bool GetBundleMids(std::vector<std::string> &mids, std::string &error) const;
   public:
     struct AnswerParams {
       const rtp::Parameters *params;
@@ -64,7 +64,7 @@ namespace webrtc {
     static uint32_t AssignPriority(uint32_t component_id);
     static bool CreateSectionAnswer(
       std::vector<AnswerParams> &section_answers, const std::vector<std::string> &mids,
-      const std::vector<rtp::Parameters> &params, std::string &error);
+      const rtp::Handler::MediaStreamConfigs &params, std::string &error);
   public:
   };
 } // namespace webrtc

@@ -54,36 +54,8 @@ class QRPClient {
     if (data.fn === "close") {
       console.log("shutdown by server");
       this.close();
-    } else if (data.fn === "nego") {
-      // our library basically exchange media stream via QRPC server
-      // at least, we will have to implement WHIP endpoint of QRPC server for first exchanging SDP between peers.
-      this.ridLabelMap = data.args.ridLabelMap;
-      console.log("should not receive nego from server or other peer");
-      await this.pc.setRemoteDescription({type:"offer",sdp:data.args.sdp});
-      const answer = await this.pc.createAnswer();
-      await this.pc.setLocalDescription(answer);
-      this.syscall("nego_ack",{sdp:answer.sdp,gen:this.sdpGen,msgid:data.args.msgid});
-    } else if (data.fn === "nego_ack") {
-      const promise = this.#fetchPromise(data.args.msgid);
-      if (!promise) {
-        console.log(`promises for gen:${data.args.gen} does not exist`);
-        return;
-      }
-      if (this.sdpGen > data.args.gen) {
-        promise.reject(new Error(`old sdp anwser for gen:${data.args.gen} ignored`));
-        return;
-      } else if (this.sdpGen < data.args.gen) {
-        promise.reject(new Error(`future sdp anwser for gen:${data.args.gen} ignored`));
-        return;
-      }
-      if (data.args.error) {
-        promise.reject(new Error(`invalid sdp ${offer.sdp}: ${data.args.error}`));
-        return;
-      } else {
-        promise.resolve(data.args.sdp);
-      }
     } else if (data.fn == "consume") {
-      throw new Error("does not suported");
+      throw new Error("currently, publish to other peer is not suported");
     } else if (data.fn == "consume_ack") {
       const promise = this.#fetchPromise(data.args.msgid);
       if (!promise) {
@@ -129,7 +101,6 @@ class QRPClient {
     this.sdpGen = -1;
     this.msgidSeed = 1;
     this.id = null;
-    this.mediaHandshaked = false;
     this.syscallStream = null;
   }
   initIce() {
@@ -296,6 +267,9 @@ class QRPClient {
     }
   }
   async #handshake() {
+    if (this.sdpGen >= 0) {
+      throw new Error("handshake only called once in session");
+    }
     // generate syscall stream (it also ensures that SDP for data channel is generated)
     this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM, {
       onmessage: this.#syscallMessageHandler.bind(this)
@@ -324,71 +298,27 @@ class QRPClient {
     this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)[\r\n]+/)[1];
 
     let answer;
-    if (this.sdpGen < 0) {
-      //Do the post request to the WHIP endpoint with the SDP offer
-      const fetched = await fetch(this.url, {
-        method: "POST",
-        body: JSON.stringify({sdp:offer.sdp,cname:this.cname,rtp:this.#rtpPayload()}),
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
-
-      if (!fetched.ok)
-        throw new Error(`Request rejected with status ${fetched.status}`)
-
-      //Get the SDP answer
-      answer = await fetched.text();
-      this.sdpGen++;
-    } else {
-      const gen = this.sdpGen++;
-      const reconnect = this.reconnect;
-      try {
-        answer = await new Promise((resolve, reject) => {
-          const msgid = this.#newMsgId();
-          this.syscall("nego", {sdp:offer.sdp,cname:this.cname,gen,rtp:this.#rtpPayload(),msgid});
-          this.rpcPromises[msgid] = { resolve, reject };
-        });
-      } catch (e) {
-        console.log("syscall.nego fails:", gen, e.message);
-        if (gen === this.sdpGen && reconnect === this.reconnect) {
-          console.log("rollback sdp for gen:", this.sdpGen, "reconnect:", this.reconnect);
-          // rollback
-          this.setLocalDescription(oldSdp.sdp);
-        } else {
-          console.log(
-            "ignore rollback sdp for gen:", gen, "current gen:", this.sdpGen,
-            "reconnect:", reconnect, "current reconnect:", this.reconnect
-          );
-        }
+    //Do the post request to the WHIP endpoint with the SDP offer
+    const fetched = await fetch(this.url, {
+      method: "POST",
+      body: JSON.stringify({sdp:offer.sdp,cname:this.cname,rtp:this.#rtpPayload()}),
+      headers: {
+        "Content-Type": "application/json"
       }
+    });
+    if (!fetched.ok) {
+      throw new Error(`Request rejected with status ${fetched.status}`);
     }
+
+    //Get the SDP answer
+    answer = await fetched.text();
+    this.sdpGen++;
 
     this.id = answer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
     console.log("id", this.id, "answer sdp", answer);
 
     //And set remote description
     await this.pc.setRemoteDescription({type:"answer",sdp:answer});
-
-    // // re-create RTCPeerConnection
-    // this.#clear();
-    // this.pc = new RTCPeerConnection();
-    // this.pc.setConfiguration({ iceTransportPolicy: 'all' });
-
-    // this.#setupCallbacks(this.pc);
-    // this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM);
-    // if (this.onopen) {
-    //   this.context = await this.onopen();
-    // }
-    // // And set remote description
-    // await this.pc.setRemoteDescription({type:"offer",sdp:answer});
-
-    // // (re)Set local description
-    // const localAnswer = await this.pc.createAnswer();
-    // localAnswer.sdp = localAnswer.sdp.replace(/a=ice-options:trickle/, "a=ice-options:trickle ice-lite")
-    //   .replace(/a=setup:passive/, `a=setup:active`);
-    // console.log("localAnswer", localAnswer);
-    // await this.pc.setLocalDescription(localAnswer);
   }
   close() {
     if (!this.pc) {
@@ -476,10 +406,8 @@ class QRPClient {
       track.open(this.pc);
       tracks[t.kind] = t;
     });
-    if (this.sdpGen >= 0 && !this.mediaHandshaked) {
-      // renegotiation
-      await this.#handshake();
-      this.mediaHandshaked = true;
+    if (this.sdpGen >= 0) {
+      throw new Error("TODO: renegotiation by calling 'produce' syscall");
     }
     return tracks;
   }

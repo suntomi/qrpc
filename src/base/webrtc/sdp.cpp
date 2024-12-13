@@ -238,7 +238,7 @@ a=msid-semantic: WMS
   bool SDP::AnswerMediaSection(
     const json &section, const std::string &proto,
     ConnectionFactory::Connection &c,
-    rtp::Parameters &params,
+    rtp::Handler::MediaStreamConfig &params,
     std::string &errmsg
   ) const {
     auto tit = section.find("type");
@@ -273,18 +273,28 @@ a=msid-semantic: WMS
       // network.port is mandatory
       params.network.port = portit->get<uint16_t>();
       params.rtp_proto = protoit->get<std::string>();
+      params.media_path = c.cname() + "/qrpc";
     } else {
       c.InitRTP();
       if (!params.Parse(c.rtp_handler(), section, errmsg)) {
         return false;
       }
+      auto l = c.rtp_handler().FindLabelByMid(params.mid);
+      if (l.empty()) {
+        errmsg = "find label from mid = " + params.mid;
+        ASSERT(false);
+        return false;
+      }
+      // TODO: move this logic to one place, say, MediaPath class
+      params.media_path = c.cname() + "/" + l + "/" + params.MediaKindName();
     }
+    params.direction = rtp::Handler::MediaStreamConfig::Direction::RECV;
     return true;
   }
 
   bool SDP::CreateSectionAnswer(
     std::vector<AnswerParams> &section_answers, const std::vector<std::string> &mids,
-    const std::vector<rtp::Parameters> &params, std::string &error
+    const rtp::Handler::MediaStreamConfigs &params, std::string &error
   ) {
     section_answers.resize(mids.size());
     for (const auto& p : params) {
@@ -305,26 +315,33 @@ a=msid-semantic: WMS
     return true;
   }
 
-  bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
-    json dsec, asec, vsec;
-    std::vector<rtp::Parameters> section_params;
-    std::vector<AnswerParams> section_answers;
-    std::string media_sections, proto;
+  bool SDP::GetBundleMids(std::vector<std::string> &mids, std::string &error) const {
     auto grit = find("groups");
     if (grit == end() || grit->size() == 0) {
-      answer = "no value for key 'groups' or no element in it";
-      QRPC_LOGJ(warn, {{"ev","malform sdp"},{"reason",answer},{"groups",grit == end() ? "null" : grit->dump()}});
-      ASSERT(false);
+      error = "no value for key 'groups' or no element in it: " + (grit == end() ? "null" : grit->dump());
       return false;
     }
     auto midsit = grit->begin()->find("mids");
     if (midsit == grit->begin()->end()) {
-      answer = "no value for key 'mids' in 'groups'";
-      QRPC_LOGJ(warn, {{"ev","malform sdp"},{"reason",answer},{"groups",grit->dump()}});
+      error = "no value for key 'mids' in 'groups': " + grit->dump();
+      return false;
+    }
+    mids = str::Split(midsit->get<std::string>(), " ");
+    ASSERT(mids.size() > 0);
+    return true;
+  }
+
+  bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
+    json dsec, asec, vsec;
+    auto &section_params = c.media_stream_configs();
+    std::vector<AnswerParams> section_answers;
+    std::string media_sections, proto;
+    std::vector<std::string> mids;
+    if (!GetBundleMids(mids, answer)) {
+      QRPC_LOGJ(warn, {{"ev","malform sdp"},{"reason",answer}});
       ASSERT(false);
       return false;
     }
-    auto mids = str::Split(midsit->get<std::string>(), " ");
     if (FindMediaSection("application", dsec)) {
       // find protocol from SCTP backed transport
       auto protoit = dsec.find("protocol");

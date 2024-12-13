@@ -27,7 +27,7 @@ namespace webrtc {
   class ConnectionFactory {
   public:
     typedef std::string IceUFrag;
-    typedef rtp::Handler::ConsumeOptions ConsumeOptions;
+    typedef rtp::Handler::MediaStreamConfig::ControlOptions ControlOptions;
   public: // connection
     class Connection;
     template <class PS>
@@ -131,8 +131,12 @@ namespace webrtc {
       // for now, qrpc server initiates dtls transport because safari does not initiate it
       // even if we specify "setup: passive" in SDP of whip response
       inline bool is_client() const { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
-      inline bool is_consumer() const { return consume_configs_.size() > 0; }
-      inline std::vector<rtp::Handler::ConsumeConfig> &consume_configs() { return consume_configs_; }
+      inline bool is_consumer() const { 
+        return std::find_if(media_stream_configs_.begin(), media_stream_configs_.end(), [](const auto &c) {
+          return c.direction == rtp::Handler::MediaStreamConfig::Direction::SEND;
+        }) != media_stream_configs_.end();
+      }
+      inline std::vector<rtp::Handler::MediaStreamConfig> &media_stream_configs() { return media_stream_configs_; }
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void SetCname(const std::string &cname);
@@ -142,9 +146,9 @@ namespace webrtc {
       // first calling prepare consume to setup connection for consumer, then client connect to the connection, Consume starts actual rtp packet transfer
       bool PrepareConsume(
         const std::string &label, 
-        const std::map<rtp::Parameters::MediaKind, ConsumeOptions> &options_map,
+        const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map,
         std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map);
-      bool ConsumeMedia(const rtp::Handler::ConsumeConfig &config);
+      bool ConsumeMedia(const rtp::Handler::MediaStreamConfig &config);
       bool Consume();
       inline void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();
@@ -267,7 +271,7 @@ namespace webrtc {
       AlarmProcessor::Id alarm_id_;
       std::string cname_;
       std::shared_ptr<Connection> consumer_connection_;
-      std::vector<rtp::Handler::ConsumeConfig> consume_configs_; // media_path => consume config
+      std::vector<rtp::Handler::MediaStreamConfig> media_stream_configs_; // stream configs with keeping creation order
       bool sctp_connected_, closed_;
     };
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
