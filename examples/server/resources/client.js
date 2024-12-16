@@ -51,21 +51,24 @@ class QRPClient {
   }
   async #syscallMessageHandler(s, event) {
     const data = JSON.parse(event.data);
-    if (data.fn === "close") {
-      console.log("shutdown by server");
-      this.close();
-    } else if (data.fn == "consume") {
-      throw new Error("currently, publish to other peer is not suported");
-    } else if (data.fn == "consume_ack") {
-      const promise = this.#fetchPromise(data.args.msgid);
+    if (!data.args.msgid) {
+      if (data.fn === "close") {
+        console.log("shutdown by server");
+        this.close();
+      } 
+    } else {
+      const promise = this.#fetchPromise(data.msgid);
       if (!promise) {
-        console.log(`promises for gen:${data.args.gen} does not exist`);
+        console.log(`promises for msgid:${data.msgid} does not exist`);
         return;
       }
       if (data.args.error) {
         promise.reject(new Error(data.args.error));
         return;
-      } else {
+      }
+      if (data.fn == "consume") {
+        throw new Error("currently, publish to other peer is not suported");
+      } else if (data.fn == "consume_ack") {
         if (!data.args.sdp) {
           promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
           return;
@@ -78,6 +81,14 @@ class QRPClient {
           this.ssrcLabelMap[pair[0]] = pair[1];
         }
         console.log("ssrc_label_map => ", this.ssrcLabelMap);
+        promise.resolve(data.args.sdp);
+      } else if (data.fn == "produce") {
+        throw new Error("currently, publish to other peer is not suported");
+      } else if (data.fn == "produce_ack") {
+        if (!data.args.sdp) {
+          promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
+          return;
+        }
         promise.resolve(data.args.sdp);
       }
     }
@@ -122,6 +133,9 @@ class QRPClient {
     const promise = this.rpcPromises[msgid];
     delete this.rpcPromises[msgid];
     return promise;
+  }
+  #handshaked() {
+    return this.sdpGen >= 0;
   }
   async connect() {
     //If already publishing
@@ -266,42 +280,44 @@ class QRPClient {
       }
     }
   }
+  async #createOffer(tracks) {
+    // create dummy peer connection to generate sdp
+    const pc = new RTCPeerConnection();
+    // emurate creating stream to generate correct sdp
+    pc.createDataChannel("dummy");
+    for (const k in tracks) {
+      tracks[k].open(pc);
+    }
+    const offer = pc.createOffer();
+    pc.close();
+    return offer;
+  }
   async #handshake() {
-    if (this.sdpGen >= 0) {
+    if (this.#handshaked()) {
       throw new Error("handshake only called once in session");
     }
     // generate syscall stream (it also ensures that SDP for data channel is generated)
     this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM, {
       onmessage: this.#syscallMessageHandler.bind(this)
     });
-    // dummy onopen call to generate correct offer of dummy PeerConnection
     if (this.onopen) {
       this.context = await this.onopen();
     }
-    // Create new SDP offer
-    const offer = await this.pc.createOffer();
-    console.log("offer sdp", offer.sdp);
-    const oldSdp = this.pc.localDescription;
-    // (re)Set local description
-    await this.pc.setLocalDescription(offer);
-
-    // gathering mid-label mapping, because it needs to call after sdp is set,
-    // setLocalDescription must called before running these codes
-    for (const k in this.tracks) {
-      const t = this.tracks[k];
-      if (!t.active) { continue; }
-      this.midLabelMap[t.mid] = t.label;
-    }
+    // Create new SDP offer without initializing actual peer connection
+    const localOffer = await this.#createOffer(this.tracks);
+    console.log("local offer sdp", localOffer.sdp);
+    // const oldSdp = this.pc.localDescription;
+    // // (re)Set local description
+    // await this.pc.setLocalDescription(offer);
 
     //store local ice ufrag/pwd
-    this.iceUsername = offer.sdp.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
-    this.icePassword = offer.sdp.match(/a=ice-pwd:(.*)[\r\n]+/)[1];
+    this.iceUsername = localOffer.sdp.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
+    this.icePassword = localOffer.sdp.match(/a=ice-pwd:(.*)[\r\n]+/)[1];
 
-    let answer;
     //Do the post request to the WHIP endpoint with the SDP offer
     const fetched = await fetch(this.url, {
       method: "POST",
-      body: JSON.stringify({sdp:offer.sdp,cname:this.cname,rtp:this.#rtpPayload()}),
+      body: JSON.stringify({sdp:localOffer.sdp,cname:this.cname,rtp:this.#rtpPayload()}),
       headers: {
         "Content-Type": "application/json"
       }
@@ -311,14 +327,22 @@ class QRPClient {
     }
 
     //Get the SDP answer
-    answer = await fetched.text();
+    const remoteOffer = await fetched.text();
     this.sdpGen++;
 
     this.id = answer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
-    console.log("id", this.id, "answer sdp", answer);
+    console.log("id", this.id, "remote offer sdp", remoteOffer);
 
     //And set remote description
-    await this.pc.setRemoteDescription({type:"answer",sdp:answer});
+    await this.pc.setRemoteDescription({type:"offer",sdp:remoteOffer});
+    //set tracks to actual peer connection
+    for (const k in this.tracks) {
+      this.tracks[k].open(this.pc);
+    }
+    //Create the answer
+    const answer = await this.pc.createAnswer();
+    console.log("local answer sdp", answer.sdp);
+    await this.pc.setLocalDescription(answer);
   }
   close() {
     if (!this.pc) {
@@ -402,22 +426,26 @@ class QRPClient {
     stream.getTracks().forEach(t => {
       this.trackIdLabelMap[t.id] = label;
       const track = new QRPCTrack(label, stream, t, encodings, onopen, onclose);
+      console.log("createMedia: add track for", track.key);
       this.tracks[track.key] = track;
       track.open(this.pc);
       tracks[t.kind] = t;
     });
-    if (this.sdpGen >= 0) {
-      throw new Error("TODO: renegotiation by calling 'produce' syscall");
+    if (this.#handshaked()) {
+      // already handshaked, so renegotiate for new produced tracks.
+      const localOffer = await this.#createOffer(tracks);
+      console.log("createMedia: local offer", localOffer.sdp);
+      await this.syscall("produce", { 
+        label, sdp: localOffer.sdp, options: (audio || video) ? { audio, video } : undefined
+      });
     }
     return tracks;
   }
   async openMedia(label, {onopen, onclose, audio, video}) {
-    const sdp = await new Promise((resolve, reject) => {
-      const msgid = this.#newMsgId();
-      this.syscall("consume", { label, options: (audio || video) ? { audio, video } : undefined, msgid });
-      this.rpcPromises[msgid] = { resolve, reject };
+    const sdp = await this.syscall("consume", { 
+      label, options: (audio || video) ? { audio, video } : undefined
     });
-    console.log("openMedia remote offer", sdp);
+    console.log("openMedia: remote offer", sdp);
     const tracks = {};
     for (const kind of ["video", "audio"]) {
       const t = new QRPCTrack(label, null, null, undefined, onopen, onclose);
@@ -432,7 +460,7 @@ class QRPClient {
     this.#setupCallbacks(this.cpc);
     await this.cpc.setRemoteDescription({type:"offer",sdp});
     const answer = await this.cpc.createAnswer();
-    console.log("openMedia local answer", answer.sdp);
+    console.log("openMedia: local answer", answer.sdp);
     await this.cpc.setLocalDescription(answer);
     return tracks;
   }
@@ -465,8 +493,12 @@ class QRPClient {
     s.close();
     delete this.streams[label];
   }
-  syscall(fn, args) {
-    this.syscallStream.send(JSON.stringify({fn, args}));
+  async syscall(fn, args) {
+    return await new Promise((resolve, reject) => {
+      const msgid = this.#newMsgId();
+      this.syscallStream.send(JSON.stringify({fn, args, msgid}));
+      this.rpcPromises[msgid] = { resolve, reject };
+    });
   }
   #setupStream(s, h) {
     s.onopen = (h.onopen && ((event) => {
