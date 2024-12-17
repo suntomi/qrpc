@@ -7,6 +7,8 @@ class QRPCTrack {
     this.onopen = onopen;
     this.onclose = onclose;
     this.track = track
+    this.direction = track ? "send" : "recv";
+    this.lastPC = null;
   }
   get id() { return this.track.id; }
   get key() { return QRPCTrack.key(this.label, this.track.kind); }
@@ -15,7 +17,12 @@ class QRPCTrack {
   get mid() { return this.transceiver.mid; }
   get active() { return this.track != null; }
   open(pc) {
-    if (this.track.kind === "video") {
+    if (this.direction !== "send") {
+      throw new Error("open is only needed for send tracks");
+    }
+    if (this.lastPC === pc && this.transceiver) {
+      this.transceiver.sender.replaceTrack(this.track);
+    } else if (this.track.kind === "video") {
       this.transceiver = pc.addTransceiver(
         this.track,
         {direction: 'sendonly', sendEncodings: this.encodings, streams: [this.stream]}
@@ -28,12 +35,15 @@ class QRPCTrack {
     } else {
       throw new Error(`invalid track kind ${this.track.kind}`);
     }
+    this.lastPC = pc;
   }
   close() {
     if (this.track) {
       this.onclose(this);
       this.track.stop();
       this.track = null;
+      this.transceiver = null;
+      this.lastPC = null;
     }
   }
 }
@@ -103,6 +113,7 @@ class QRPClient {
   #clear() {
     this.streams = {};
     this.tracks = {};
+    this.sentTracks = [];
     this.trackIdLabelMap = {};
     this.ridLabelMap = {};
     this.midLabelMap = {};
@@ -285,12 +296,25 @@ class QRPClient {
     const pc = new RTCPeerConnection();
     // emurate creating stream to generate correct sdp
     pc.createDataChannel("dummy");
-    for (const k in tracks) {
-      tracks[k].open(pc);
+    for (const t of tracks) {
+      t.open(pc);
     }
     const offer = pc.createOffer();
     pc.close();
     return offer;
+  }
+  async #setRemoteOffer(remoteOffer) {
+    console.log("remote offer sdp", remoteOffer)
+    //set remote description
+    await this.pc.setRemoteDescription({type:"offer",sdp:remoteOffer});
+    //set tracks to actual peer connection
+    for (const t of this.sentTracks) {
+      t.open(this.pc);
+    }
+    //Create the answer
+    const answer = await this.pc.createAnswer();
+    console.log("local answer sdp", answer.sdp);
+    await this.pc.setLocalDescription(answer);
   }
   async #handshake() {
     if (this.#handshaked()) {
@@ -304,7 +328,7 @@ class QRPClient {
       this.context = await this.onopen();
     }
     // Create new SDP offer without initializing actual peer connection
-    const localOffer = await this.#createOffer(this.tracks);
+    const localOffer = await this.#createOffer(this.sentTracks);
     console.log("local offer sdp", localOffer.sdp);
     // const oldSdp = this.pc.localDescription;
     // // (re)Set local description
@@ -330,19 +354,10 @@ class QRPClient {
     const remoteOffer = await fetched.text();
     this.sdpGen++;
 
-    this.id = answer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
-    console.log("id", this.id, "remote offer sdp", remoteOffer);
+    this.id = remoteOffer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
+    console.log("id", this.id);
 
-    //And set remote description
-    await this.pc.setRemoteDescription({type:"offer",sdp:remoteOffer});
-    //set tracks to actual peer connection
-    for (const k in this.tracks) {
-      this.tracks[k].open(this.pc);
-    }
-    //Create the answer
-    const answer = await this.pc.createAnswer();
-    console.log("local answer sdp", answer.sdp);
-    await this.pc.setLocalDescription(answer);
+    await this.#setRemoteOffer(remoteOffer);
   }
   close() {
     if (!this.pc) {
@@ -422,46 +437,39 @@ class QRPClient {
     // sort by maxBitrate asc, because server regards earlier encoding as lower quality,
     // regardless its actual bitrate
     encodings.sort((a, b) => a.maxBitrate - b.maxBitrate);
-    const tracks = {};
+    const tracks = [];
     stream.getTracks().forEach(t => {
       this.trackIdLabelMap[t.id] = label;
-      const track = new QRPCTrack(label, stream, t, encodings, onopen, onclose);
+      const t = new QRPCTrack(label, stream, t, encodings, onopen, onclose);
       console.log("createMedia: add track for", track.key);
-      this.tracks[track.key] = track;
-      track.open(this.pc);
-      tracks[t.kind] = t;
+      this.tracks[t.key] = t;
+      this.sendTracks.push(t);
+      tracks.push(t);
     });
     if (this.#handshaked()) {
       // already handshaked, so renegotiate for new produced tracks.
       const localOffer = await this.#createOffer(tracks);
       console.log("createMedia: local offer", localOffer.sdp);
-      await this.syscall("produce", { 
+      const remoteOffer = await this.syscall("produce", { 
         label, sdp: localOffer.sdp, options: (audio || video) ? { audio, video } : undefined
       });
+      await this.#setRemoteOffer(remoteOffer);
     }
     return tracks;
   }
   async openMedia(label, {onopen, onclose, audio, video}) {
-    const sdp = await this.syscall("consume", { 
+    const remoteOffer = await this.syscall("consume", { 
       label, options: (audio || video) ? { audio, video } : undefined
     });
-    console.log("openMedia: remote offer", sdp);
-    const tracks = {};
+    const tracks = [];
     for (const kind of ["video", "audio"]) {
       const t = new QRPCTrack(label, null, null, undefined, onopen, onclose);
       const key = QRPCTrack.key(label, kind);
       console.log("openMedia: add track for", key);
       this.tracks[key] = t;
-      tracks[kind] = t;
+      tracks.push(t);
     }
-    if (!this.cpc) {
-      this.cpc = await this.#createPeerConnection();
-    }
-    this.#setupCallbacks(this.cpc);
-    await this.cpc.setRemoteDescription({type:"offer",sdp});
-    const answer = await this.cpc.createAnswer();
-    console.log("openMedia: local answer", answer.sdp);
-    await this.cpc.setLocalDescription(answer);
+    await this.#setRemoteOffer(remoteOffer);
     return tracks;
   }
   closeMedia(label, kind) {
