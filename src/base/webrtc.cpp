@@ -364,21 +364,21 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
     if (fn == "close") {
       QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
       c.factory().ScheduleClose(c);
-    } else if (fn == "nego") {
+    } else if (fn == "produce") {
       const auto ait = data.find("args");
       if (ait == data.end()) {
         QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'args'"}});
         return QRPC_OK;
       }
       const auto &args = ait->get<std::map<std::string,json>>();
-      const auto sit = args.find("sdp");
-      if (sit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'sdp'"}});
+      const auto lit = args.find("label");
+      if (lit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
         return QRPC_OK;
       }
-      const auto git = args.find("gen");
-      if (git == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'gen'"}});
+      const auto sdpit = args.find("sdp");
+      if (sdpit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'sdp'"}});
         return QRPC_OK;
       }
       const auto mit = args.find("msgid");
@@ -386,21 +386,22 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
         return QRPC_OK;
       }
-      const auto msgid = mit->second.get<uint64_t>();
-      const auto rtpit = args.find("rtp");
-      if (rtpit != args.end()) {
-        c.InitRTP();
-        c.rtp_handler().SetNegotiationArgs(rtpit->second.get<std::map<std::string,json>>());
-      }
-      const auto &sdp_text = sit->second.get<std::string>();
-      std::string answer;
-      SDP sdp(sdp_text);
-      if (!sdp.Answer(c, answer)) {
-        QRPC_LOGJ(error, {{"ev","invalid client sdp"},{"sdp",sdp_text},{"reason",answer}});
-        Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"msgid",msgid},{"error",answer}});
+      const auto mlmit = args.find("midLabelMap");
+      if (mlmit == args.end()) {
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
         return QRPC_OK;
       }
-      Call("nego_ack",{{"gen",git->second.get<uint64_t>()},{"msgid",msgid},{"sdp",answer}});
+      c.rtp_handler().UpdateMidLabelMap(mlmit->second.get<std::map<Media::Mid,Media::Id>>());
+      const auto msgid = mit->second.get<uint64_t>();
+      auto label = lit->second.get<std::string>();
+      SDP sdp(sdpit->second.get<std::string>());
+      std::string answer;
+      if (sdp.Answer(c, answer)) {
+        QRPC_LOGJ(error, {{"ev","fail to produce"},{"label",label}});
+        Call("consume_ack",{{"msgid",msgid},{"error","fail to prepare consume"}});
+        return QRPC_OK;
+      }
+      Call("consume_ack",{{"msgid",msgid},{"sdp",answer}});            
     } else if (fn == "consume") {
       const auto ait = data.find("args");
       if (ait == data.end()) {
@@ -487,53 +488,22 @@ bool ConnectionFactory::Connection::PrepareConsume(
     ASSERT(false);
     return false;
   }
-  if (consumer_connection_ == nullptr) {
-    const auto &fp = dtls_transport().GetRemoteFingerprint();
-    if (!fp.has_value()) {
-      QRPC_LOGJ(error, {{"ev","parent connect does not established"}});
-      ASSERT(false);
-      return false;
-    }
-    std::string ufrag, pwd;
-    consumer_connection_ = factory().Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd, true);
-    if (consumer_connection_ == nullptr) {
-      QRPC_LOGJ(error, {{"ev","fail to create connection"}});
-      ASSERT(false);
-      return false;
-    }
-    // copy fingerprint because client has not generated it yet
-    consumer_connection_->dtls_transport().SetRemoteFingerprint(fp.value());
-  }
   auto h = factory().FindHandler(parsed[0]);
+  auto mscs = media_stream_configs();
   std::vector<uint32_t> generated_ssrcs;
-  if (rtp_handler().PrepareConsume(
-    *h, parsed, options_map, consumer_connection_->media_stream_configs(), generated_ssrcs)) {
+  if (rtp_handler().PrepareConsume(*h, parsed, options_map, mscs, generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = media_path;
     }
     auto proto = ice_server().GetSelectedSession()->proto();
-    std::vector<SDP::AnswerParams> answer_params;
-    for (const auto &c : consumer_connection_->media_stream_configs()) {
-      QRPC_LOGJ(info, {{"ev","create answer conf"},{"path",c.media_path},{"mid",c.mid}});
-      std::string cname;
-      if (c.mid == RTC::RtpProbationGenerator::GetMidValue()) {
-        cname = c.mid;
-      } else {
-        auto parsed = str::Split(c.media_path, "/");
-        if (parsed.size() < 3) {
-          QRPC_LOGJ(error, {{"ev","invalid media_path"},{"path",c.media_path}});
-          ASSERT(false);
-          return false;
-        }
-        cname = parsed[0];
-        ASSERT(!cname.empty());
-      }
-      answer_params.emplace_back(c, cname);
+    if (!SDP::GenerateAnswer(*consumer_connection_, proto, mscs, sdp)) {
+      QRPC_LOGJ(error, {{"ev","fail to generate sdp"},{"reason",sdp}});
+      ASSERT(false);
+      return false;
     }
-    sdp = SDP::GenerateAnswer(*consumer_connection_, proto, answer_params);
-    if (consumer_connection_->IsConnected()) {
+    if (IsConnected()) {
       QRPC_LOGJ(error, {{"ev","consumer connection already ready. consume now"}});
-      consumer_connection_->Consume();
+      Consume();
     }
     return true;
   } else {

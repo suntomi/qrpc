@@ -32,39 +32,15 @@ namespace webrtc {
     bool AnswerMediaSection(
       const json &section, const std::string &proto, ConnectionFactory::Connection &c,
       rtp::Handler::MediaStreamConfig &params, std::string &errmsg) const;
-    bool GetBundleMids(std::vector<std::string> &mids, std::string &error) const;
   public:
-    struct AnswerParams {
-      const rtp::Parameters *params;
-      std::string cname;
-      AnswerParams() : params(nullptr), cname("") {}
-      AnswerParams(const rtp::Parameters &p) : params(&p), cname("") {}
-      AnswerParams(const rtp::Parameters &p, const std::string &cname) : params(&p), cname(cname) {}
-      const AnswerParams & operator = (const AnswerParams &p) {
-        params = p.params;
-        cname = p.cname;
-        return *this;
-      }
-    };
-    static std::string GenerateAnswer(
+    static bool GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,
-      const std::vector<rtp::Parameters> &params
-    ) {
-      std::vector<AnswerParams> anwser_params;
-      for (const auto &p : params) { anwser_params.emplace_back(p); }
-      return GenerateAnswer(c, proto, anwser_params);
-    }
-    static std::string GenerateAnswer(
-      ConnectionFactory::Connection &c, const std::string &proto,
-      const std::vector<AnswerParams> anwser_params
+      const rtp::Handler::MediaStreamConfigs &configs, std::string &answer
     );
-    static inline std::string GenerateSectionAnswer(ConnectionFactory::Connection &c, 
-      const std::string &proto, const AnswerParams &p);
+    static inline bool GenerateSectionAnswer(ConnectionFactory::Connection &c, 
+      const std::string &proto, const rtp::Handler::MediaStreamConfig &p, std::string &answer);
     static std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c);
     static uint32_t AssignPriority(uint32_t component_id);
-    static bool CreateSectionAnswer(
-      std::vector<AnswerParams> &section_answers, const std::vector<std::string> &mids,
-      const rtp::Handler::MediaStreamConfigs &params, std::string &error);
   public:
   };
 } // namespace webrtc

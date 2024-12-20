@@ -199,17 +199,26 @@ class QRPClient {
       const track = event.track;
       const tid = track.id;
       const receiver = event.receiver;
-      // RTCRtpReceiverの統計情報を取得
-      const stats = await receiver.getStats();
+      // TODO: unify this step by using event.transceiver.mid and this.midLabelMap
       let label = undefined;
-      for (const report of stats.values()) {
-        if (report.type === 'inbound-rtp') {
-          console.log(`track id: ${tid}, SSRC: ${report.ssrc}`);
-          label = this.ssrcLabelMap[report.ssrc];
-          if (!label) {
-            console.log(`No label is defined for ssrc = ${report.ssrc}`, this.ssrcLabelMap);
+      if (event.transceiver) {
+        label = this.midLabelMap[event.transceiver.mid];
+        if (!label) {
+          console.log(`No label is defined for mid = ${event.transceiver.mid}`);
+        }
+      }
+      if (!label && receiver) {
+        // RTCRtpReceiverの統計情報を取得
+        const stats = await receiver.getStats();
+        for (const report of stats.values()) {
+          if (report.type === 'inbound-rtp') {
+            console.log(`track id: ${tid}, SSRC: ${report.ssrc}`);
+            label = this.ssrcLabelMap[report.ssrc];
+            if (!label) {
+              console.log(`No label is defined for ssrc = ${report.ssrc}`, this.ssrcLabelMap);
+            }
+            break;
           }
-          break;
         }
       }
       if (!label) {
@@ -292,16 +301,21 @@ class QRPClient {
     }
   }
   async #createOffer(tracks) {
+    const midLabelMap = {};
     // create dummy peer connection to generate sdp
-    const pc = new RTCPeerConnection();
+    const pc = await this.#createPeerConnection();
     // emurate creating stream to generate correct sdp
     pc.createDataChannel("dummy");
     for (const t of tracks) {
       t.open(pc);
+      // now, mid is decided. mid (in server remote offer) probably changes 
+      // after it processes on server side, but because of client mid also decided
+      // by server remote offer, changes causes no problem.
+      midLabelMap[t.mid] = t.label;
     }
     const offer = pc.createOffer();
     pc.close();
-    return offer;
+    return {offer, midLabelMap};
   }
   async #setRemoteOffer(remoteOffer) {
     console.log("remote offer sdp", remoteOffer)
@@ -328,7 +342,7 @@ class QRPClient {
       this.context = await this.onopen();
     }
     // Create new SDP offer without initializing actual peer connection
-    const localOffer = await this.#createOffer(this.sentTracks);
+    const {localOffer, midLabelMap} = await this.#createOffer(this.sentTracks);
     console.log("local offer sdp", localOffer.sdp);
     // const oldSdp = this.pc.localDescription;
     // // (re)Set local description
@@ -341,7 +355,11 @@ class QRPClient {
     //Do the post request to the WHIP endpoint with the SDP offer
     const fetched = await fetch(this.url, {
       method: "POST",
-      body: JSON.stringify({sdp:localOffer.sdp,cname:this.cname,rtp:this.#rtpPayload()}),
+      body: JSON.stringify({
+        sdp:localOffer.sdp,
+        cname:this.cname,
+        rtp:Object.assign(this.#rtpPayload(),{midLabelMap})
+      }),
       headers: {
         "Content-Type": "application/json"
       }
@@ -410,14 +428,12 @@ class QRPClient {
     if (
       Object.keys(this.ridLabelMap).length !== 0 ||
       Object.keys(this.ridScalabilityModeMap).length !== 0 ||
-      Object.keys(this.trackIdLabelMap).length !== 0 ||
-      Object.keys(this.midLabelMap).length !== 0
+      Object.keys(this.trackIdLabelMap).length !== 0
     ) {
       return {
         ridLabelMap:this.ridLabelMap,
         ridScalabilityModeMap:this.ridScalabilityModeMap,
         trackIdLabelMap:this.trackIdLabelMap,
-        midLabelMap:this.midLabelMap,
       };
     }
     return undefined;
@@ -448,10 +464,10 @@ class QRPClient {
     });
     if (this.#handshaked()) {
       // already handshaked, so renegotiate for new produced tracks.
-      const localOffer = await this.#createOffer(tracks);
+      const {localOffer, midLabelMap} = await this.#createOffer(tracks, label);
       console.log("createMedia: local offer", localOffer.sdp);
       const remoteOffer = await this.syscall("produce", { 
-        label, sdp: localOffer.sdp, options: (audio || video) ? { audio, video } : undefined
+        label, sdp: localOffer.sdp, options: (audio || video) ? { audio, video } : undefined, midLabelMap
       });
       await this.#setRemoteOffer(remoteOffer);
     }

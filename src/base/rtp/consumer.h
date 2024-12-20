@@ -17,11 +17,6 @@ namespace rtp {
   public:
     ConsumerFactory(Handler &h) : handler_(h) {}
     virtual ~ConsumerFactory() {}
-    inline std::string GenerateMid() {
-      auto mid = mid_seed_++;
-      if (mid_seed_ > 1000000000) { ASSERT(false); mid_seed_ = 0; } 
-      return std::to_string(mid);
-    }
     static std::string GenerateId(
       const std::string &id, const std::string &peer_id, const std::string &label, Parameters::MediaKind kind);
   public:
@@ -32,7 +27,6 @@ namespace rtp {
     flatbuffers::Offset<FBS::Consumer::DumpResponse>
     FillBuffer(Consumer *c, flatbuffers::FlatBufferBuilder& builder);
   protected:
-    uint32_t mid_seed_{0};
     Handler &handler_;
   }; 
 }

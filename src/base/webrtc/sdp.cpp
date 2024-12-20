@@ -182,11 +182,18 @@ a=max-message-size:%u)cands",
     return false;
   }
 
-  std::string SDP::GenerateSectionAnswer(
-    ConnectionFactory::Connection &c, const std::string &proto, const AnswerParams &ap
+  bool SDP::GenerateSectionAnswer(
+    ConnectionFactory::Connection &c, const std::string &proto,
+    const rtp::Handler::MediaStreamConfig &p, std::string &answer
   ) {
-    auto &p = *ap.params;
-    return str::Format(16 * 1024, R"sdp_section(m=%s %llu %s%s
+    if (p.receiver()) {
+      if (!p.GenerateCN(answer)) {
+        // if returns false, answer contains error message
+        ASSERT(false);
+        return false;
+      }
+    }
+    answer = str::Format(16 * 1024, R"sdp_section(m=%s %llu %s%s
 c=IN IP4 0.0.0.0
 a=mid:%s
 a=sendrecv
@@ -201,27 +208,32 @@ a=setup:active
       p.mid.c_str(),
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
-      ap.cname.empty() ? "trickle" : "renomination",
+      p.receiver() ? "trickle" : "renomination",
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      p.Answer(ap.cname).c_str(),
+      p.Answer(answer).c_str(),
       CandidatesSDP(proto, c).c_str()
     );
+    return true;
   }
 
-  std::string SDP::GenerateAnswer(
+  bool SDP::GenerateAnswer(
     ConnectionFactory::Connection &c, const std::string &proto,
-    const std::vector<AnswerParams> anwser_params
+    const rtp::Handler::MediaStreamConfigs &configs, std::string &answer
   ) {
     auto now = qrpc_time_now();
     auto bundle = std::string("a=group:BUNDLE");
-    std::string media_sections;
-    for (auto &ap : anwser_params) {
-      bundle += (" " + ap.params->mid);
-      media_sections += GenerateSectionAnswer(c, proto, ap);
+    std::string media_sections, body;
+    for (auto &config : configs) {
+      bundle += (" " + config.mid);
+      if (!GenerateSectionAnswer(c, proto, config, body)) {
+        ASSERT(false);
+        return false;
+      }
+      media_sections += body;
     }
     // string value to the str::Format should be converted to c string like str.c_str()
     // a=ice-lite attribute is important for indicating to peer that we are ice-lite mode
-    return str::Format(16 * 1024, R"sdp(v=0
+    answer = str::Format(16 * 1024, R"sdp(v=0
 o=- %llu %llu IN IP4 0.0.0.0
 s=-
 t=0 0
@@ -232,7 +244,8 @@ a=msid-semantic: WMS
       now, now,
       bundle.c_str(),
       media_sections.c_str()
-    );    
+    ); 
+    return true;   
   }  
 
   bool SDP::AnswerMediaSection(
@@ -289,59 +302,15 @@ a=msid-semantic: WMS
       params.media_path = c.cname() + "/" + l + "/" + params.MediaKindName();
     }
     params.direction = rtp::Handler::MediaStreamConfig::Direction::RECV;
-    return true;
-  }
-
-  bool SDP::CreateSectionAnswer(
-    std::vector<AnswerParams> &section_answers, const std::vector<std::string> &mids,
-    const rtp::Handler::MediaStreamConfigs &params, std::string &error
-  ) {
-    section_answers.resize(mids.size());
-    for (const auto& p : params) {
-      auto midit = std::find(mids.begin(), mids.end(), p.mid);
-      if (midit == mids.end()) {
-        error = "no mid found in mids";
-        ASSERT(false);
-        return false;
-      }
-      auto d = std::distance(mids.begin(), midit);
-      if (d >= section_answers.size() || d < 0) {
-        error = "invalid mid index:" + std::to_string(d);
-        ASSERT(false);
-        return false;
-      }
-      section_answers[d] = AnswerParams(p);
-    }
-    return true;
-  }
-
-  bool SDP::GetBundleMids(std::vector<std::string> &mids, std::string &error) const {
-    auto grit = find("groups");
-    if (grit == end() || grit->size() == 0) {
-      error = "no value for key 'groups' or no element in it: " + (grit == end() ? "null" : grit->dump());
-      return false;
-    }
-    auto midsit = grit->begin()->find("mids");
-    if (midsit == grit->begin()->end()) {
-      error = "no value for key 'mids' in 'groups': " + grit->dump();
-      return false;
-    }
-    mids = str::Split(midsit->get<std::string>(), " ");
-    ASSERT(mids.size() > 0);
+    params.mid = c.rtp_handler().GenerateMid();
     return true;
   }
 
   bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
     json dsec, asec, vsec;
     auto &section_params = c.media_stream_configs();
-    std::vector<AnswerParams> section_answers;
     std::string media_sections, proto;
     std::vector<std::string> mids;
-    if (!GetBundleMids(mids, answer)) {
-      QRPC_LOGJ(warn, {{"ev","malform sdp"},{"reason",answer}});
-      ASSERT(false);
-      return false;
-    }
     if (FindMediaSection("application", dsec)) {
       // find protocol from SCTP backed transport
       auto protoit = dsec.find("protocol");
@@ -402,15 +371,8 @@ a=msid-semantic: WMS
         return false;
       }
     }
-    // create section_answers by setting section_params that is sorted with bundle mid order
-    if (!CreateSectionAnswer(section_answers, mids, section_params, answer)) {
-      QRPC_LOGJ(warn, {{"ev","fail to set section answer"},{"mids",mids},{"error",answer}});
-      ASSERT(false);
-      return false;
-    }
     // geneating answer for prodducer
-    answer = GenerateAnswer(c, proto, section_answers);
-    return true;
+    return GenerateAnswer(c, proto, section_params, answer);
   }
 } // namespace webrtc
 } // namespace base

@@ -83,6 +83,25 @@ namespace rtp {
 			}
 		}
 	}
+	bool Handler::MediaStreamConfig::GenerateCN(std::string &cname) const {
+		if (mid == RTC::RtpProbationGenerator::GetMidValue()) {
+			cname = mid;
+		} else {
+			auto parsed = str::Split(media_path, "/");
+			if (parsed.size() < 3) {
+				cname = str::Format("invalid media_path: %s", media_path.c_str());
+				ASSERT(false);
+				return false;
+			}
+			cname = parsed[0];
+			if (cname.empty()) {
+				cname = str::Format("invalid media_path: %s", media_path.c_str());
+				ASSERT(false);
+				return false;
+			}
+		}
+		return true;
+	}
 
 	void Handler::ConfigureLogging(const std::string &log_level, const std::vector<std::string> &log_tags) {
 		auto &fbb = GetFBB();
@@ -158,7 +177,7 @@ namespace rtp {
 				continue;
 			}
 			// generate unique mid from own consumer factory
-			auto mid = consumer_factory_.GenerateMid();
+			auto mid = GenerateMid();
 			config.mid = mid;
 			config.rtcp.cname = peer.cname();
 			config.GetGeneratedSsrc(generated_ssrcs);
@@ -223,8 +242,7 @@ namespace rtp {
 		}
 		const auto midit = args.find("midLabelMap");
 		if (midit != args.end()) {
-			mid_label_map_ = midit->second.get<std::map<Media::Mid,Media::Id>>();
-			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",*midit}});
+			UpdateMidLabelMap(midit->second.get<std::map<Media::Mid,Media::Id>>());
 		}
 	}
 	std::shared_ptr<Media> Handler::FindFrom(const std::string &label) {
