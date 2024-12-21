@@ -186,9 +186,11 @@ a=max-message-size:%u)cands",
     ConnectionFactory::Connection &c, const std::string &proto,
     const rtp::Handler::MediaStreamConfig &p, std::string &answer
   ) {
-    if (p.receiver()) {
-      if (!p.GenerateCN(answer)) {
-        // if returns false, answer contains error message
+    std::string cname;
+    if (p.sender()) {
+      if (!p.GenerateCN(cname)) {
+        // if returns false, cname contains error message
+        answer = cname;
         ASSERT(false);
         return false;
       }
@@ -210,7 +212,7 @@ a=setup:active
       c.ice_server().GetPassword().c_str(),
       p.receiver() ? "trickle" : "renomination",
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      p.Answer(answer).c_str(),
+      p.Answer(cname).c_str(),
       CandidatesSDP(proto, c).c_str()
     );
     return true;
@@ -250,6 +252,7 @@ a=msid-semantic: WMS
 
   bool SDP::AnswerMediaSection(
     const json &section, const std::string &proto,
+    const std::map<std::string, std::string> mid_label_map,
     ConnectionFactory::Connection &c,
     rtp::Handler::MediaStreamConfig &params,
     std::string &errmsg
@@ -281,32 +284,37 @@ a=msid-semantic: WMS
         ASSERT(false);
         return false;
       }
-      params.mid = midit->get<std::string>();
       params.kind = rtp::Parameters::MediaKind::APP;
       // network.port is mandatory
       params.network.port = portit->get<uint16_t>();
       params.rtp_proto = protoit->get<std::string>();
-      params.media_path = c.cname() + "/qrpc";
+      params.media_path = c.cname() + "/qrpc/app";
+      params.mid = c.GenerateMid();
     } else {
       c.InitRTP();
       if (!params.Parse(c.rtp_handler(), section, errmsg)) {
         return false;
       }
-      auto l = c.rtp_handler().FindLabelByMid(params.mid);
-      if (l.empty()) {
+      auto lit = mid_label_map.find(params.mid);
+      if (lit == mid_label_map.end()) {
         errmsg = "find label from mid = " + params.mid;
         ASSERT(false);
         return false;
       }
       // TODO: move this logic to one place, say, MediaPath class
-      params.media_path = c.cname() + "/" + l + "/" + params.MediaKindName();
+      params.media_path = c.cname() + "/" + lit->second + "/" + params.MediaKindName();
+      // assign actual mid and update label map
+      params.mid = c.rtp_handler().GenerateMid();
+      c.rtp_handler().UpdateMidLabelMap(params.mid, lit->second);
     }
     params.direction = rtp::Handler::MediaStreamConfig::Direction::RECV;
-    params.mid = c.rtp_handler().GenerateMid();
     return true;
   }
 
-  bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
+  bool SDP::Answer(
+    const std::map<std::string, std::string> mid_label_map, 
+    ConnectionFactory::Connection &c, std::string &answer
+  ) const {
     json dsec, asec, vsec;
     auto &section_params = c.media_stream_configs();
     std::string media_sections, proto;
@@ -338,7 +346,7 @@ a=msid-semantic: WMS
       }
       c.dtls_transport().SetRemoteFingerprint(fp);
       auto &params = section_params.emplace_back();
-      if (!AnswerMediaSection(dsec, proto, c, params, answer)) {
+      if (!AnswerMediaSection(dsec, proto, mid_label_map, c, params, answer)) {
         QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
         ASSERT(false);
         return false;
@@ -347,7 +355,7 @@ a=msid-semantic: WMS
     // TODO: should support multiple audio/video streams from same webrtc connection?
     if (FindMediaSection("audio", asec)) {
       auto &params = section_params.emplace_back();
-      if (AnswerMediaSection(asec, proto, c, params, answer)) {
+      if (AnswerMediaSection(asec, proto, mid_label_map, c, params, answer)) {
         if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
           answer = "fail to create audio producer";
           return false;
@@ -360,7 +368,7 @@ a=msid-semantic: WMS
     }
     if (FindMediaSection("video", vsec)) {
       auto &params = section_params.emplace_back();
-      if (AnswerMediaSection(vsec, proto, c, params, answer)) {
+      if (AnswerMediaSection(vsec, proto, mid_label_map, c, params, answer)) {
         if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
           answer = "fail to create video producer";
           return false;

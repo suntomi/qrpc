@@ -61,7 +61,7 @@ class QRPClient {
   }
   async #syscallMessageHandler(s, event) {
     const data = JSON.parse(event.data);
-    if (!data.args.msgid) {
+    if (!data.msgid) {
       if (data.fn === "close") {
         console.log("shutdown by server");
         this.close();
@@ -87,9 +87,13 @@ class QRPClient {
           promise.reject(new Error(`invalid response: no ssrc_label_map: ${JSON.stringify(data.args)}`));
           return;
         }
-        for (const pair of data.args.ssrc_label_map) {
+        for (const pair of data.args.ssrc_label_map || []) {
           this.ssrcLabelMap[pair[0]] = pair[1];
         }
+        for (const pair of data.args.mid_label_map || []) {
+          this.midLabelMap[pair[0]] = pair[1];
+        }
+        console.log("midLabelMap => ", this.midLabelMap);
         console.log("ssrc_label_map => ", this.ssrcLabelMap);
         promise.resolve(data.args.sdp);
       } else if (data.fn == "produce") {
@@ -99,6 +103,10 @@ class QRPClient {
           promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
           return;
         }
+        for (const pair of data.args.mid_label_map || []) {
+          this.midLabelMap[pair[0]] = pair[1];
+        }
+        console.log("midLabelMap => ", this.midLabelMap);
         promise.resolve(data.args.sdp);
       }
     }
@@ -191,7 +199,7 @@ class QRPClient {
         return;
       }
       this.#setupStream(s, h);
-    };
+    }
 
     // Listen addition of media tracks
     pc.ontrack = async (event) => {
@@ -206,6 +214,8 @@ class QRPClient {
         if (!label) {
           console.log(`No label is defined for mid = ${event.transceiver.mid}`);
         }
+      } else {
+        console.log("event has no transceiver");
       }
       if (!label && receiver) {
         // RTCRtpReceiverの統計情報を取得
@@ -264,7 +274,7 @@ class QRPClient {
     // Listen for state change events
     pc.oniceconnectionstatechange = (event) => {
       console.log("ICE connection state change", pc.iceConnectionState);
-    };
+    }
     pc.onconnectionstatechange = (event) =>{
       console.log("Connection state change", pc.connectionState);
       switch(pc.connectionState) {
@@ -308,14 +318,17 @@ class QRPClient {
     pc.createDataChannel("dummy");
     for (const t of tracks) {
       t.open(pc);
+    }
+    const localOffer = await pc.createOffer();
+    await pc.setLocalDescription(localOffer);
+    for (const t of tracks) {
       // now, mid is decided. mid (in server remote offer) probably changes 
       // after it processes on server side, but because of client mid also decided
       // by server remote offer, changes causes no problem.
       midLabelMap[t.mid] = t.label;
     }
-    const offer = pc.createOffer();
     pc.close();
-    return {offer, midLabelMap};
+    return {localOffer, midLabelMap};
   }
   async #setRemoteOffer(remoteOffer) {
     console.log("remote offer sdp", remoteOffer)
@@ -342,8 +355,8 @@ class QRPClient {
       this.context = await this.onopen();
     }
     // Create new SDP offer without initializing actual peer connection
-    const {localOffer, midLabelMap} = await this.#createOffer(this.sentTracks);
-    console.log("local offer sdp", localOffer.sdp);
+    const {localOffer, midLabelMap: localMidLabelMap} = await this.#createOffer(this.sentTracks);
+    console.log("local offer sdp", localOffer.sdp, localMidLabelMap);
     // const oldSdp = this.pc.localDescription;
     // // (re)Set local description
     // await this.pc.setLocalDescription(offer);
@@ -358,7 +371,8 @@ class QRPClient {
       body: JSON.stringify({
         sdp:localOffer.sdp,
         cname:this.cname,
-        rtp:Object.assign(this.#rtpPayload(),{midLabelMap})
+        rtp:this.#rtpPayload(),
+        midLabelMap: localMidLabelMap
       }),
       headers: {
         "Content-Type": "application/json"
@@ -369,13 +383,24 @@ class QRPClient {
     }
 
     //Get the SDP answer
-    const remoteOffer = await fetched.text();
-    this.sdpGen++;
+    let text = undefined;
+    try {
+      text = await fetched.text();
+      const {sdp: remoteOffer, mid_label_map: midLabelMap} = JSON.parse(text);
+      for (const k in midLabelMap || {}) {
+        this.midLabelMap[k] = midLabelMap[k];
+      }
+      console.log("midLabelMap =>", this.midLabelMap);
+      this.sdpGen++;
 
-    this.id = remoteOffer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
-    console.log("id", this.id);
+      this.id = remoteOffer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
+      console.log("id", this.id);
 
-    await this.#setRemoteOffer(remoteOffer);
+      await this.#setRemoteOffer(remoteOffer);
+    } catch (e) {
+      console.log("error in handling whip response:" + e.message + "|" + (text || "no response"));
+      throw e;
+    }
   }
   close() {
     if (!this.pc) {
@@ -456,16 +481,16 @@ class QRPClient {
     const tracks = [];
     stream.getTracks().forEach(t => {
       this.trackIdLabelMap[t.id] = label;
-      const t = new QRPCTrack(label, stream, t, encodings, onopen, onclose);
+      const track = new QRPCTrack(label, stream, t, encodings, onopen, onclose);
       console.log("createMedia: add track for", track.key);
-      this.tracks[t.key] = t;
-      this.sendTracks.push(t);
-      tracks.push(t);
+      this.tracks[track.key] = track;
+      this.sentTracks.push(track);
+      tracks.push(track);
     });
     if (this.#handshaked()) {
       // already handshaked, so renegotiate for new produced tracks.
       const {localOffer, midLabelMap} = await this.#createOffer(tracks, label);
-      console.log("createMedia: local offer", localOffer.sdp);
+      console.log("createMedia: local offer", localOffer.sdp, midLabelMap);
       const remoteOffer = await this.syscall("produce", { 
         label, sdp: localOffer.sdp, options: (audio || video) ? { audio, video } : undefined, midLabelMap
       });
@@ -479,11 +504,11 @@ class QRPClient {
     });
     const tracks = [];
     for (const kind of ["video", "audio"]) {
-      const t = new QRPCTrack(label, null, null, undefined, onopen, onclose);
+      const track = new QRPCTrack(label, null, null, undefined, onopen, onclose);
       const key = QRPCTrack.key(label, kind);
       console.log("openMedia: add track for", key);
-      this.tracks[key] = t;
-      tracks.push(t);
+      this.tracks[key] = track;
+      tracks.push(track);
     }
     await this.#setRemoteOffer(remoteOffer);
     return tracks;

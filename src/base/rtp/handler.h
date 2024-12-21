@@ -62,6 +62,7 @@ namespace rtp {
     public:
       virtual const std::string &rtp_id() const = 0;
       virtual const std::string &cname() const = 0;
+      virtual const std::string GenerateMid() = 0;
       virtual void RecvStreamClosed(uint32_t ssrc) = 0;
       virtual void SendStreamClosed(uint32_t ssrc) = 0;
       virtual bool IsConnected() const = 0;
@@ -81,11 +82,12 @@ namespace rtp {
     typedef Listener::onSendCallback onSendCallback;
   public:
     Handler(Listener &l) : RTC::Transport(&shared(), l.rtp_id(), &router(), TransportOptions(l.GetRtpConfig())),
-      listener_(l), producer_factory_(*this), consumer_factory_(*this), mid_seed_(0), medias_(),
+      listener_(l), producer_factory_(*this), consumer_factory_(*this), medias_(),
       rid_label_map_(), trackid_label_map_(), ssrc_trackid_map_(), rid_scalability_mode_map_() {}
     inline Listener &listener() { return listener_; }
     inline const std::string &rtp_id() const { return listener_.rtp_id(); }
     inline const std::string &cname() const { return listener_.cname(); }
+    inline const std::map<Media::Mid, Media::Id> mid_label_map() const { return mid_label_map_; }
     static inline RTC::Shared &shared() { return shared_.get(); }
     static inline RTC::Router &router() { return router_; }
     static inline Channel::ChannelSocket &socket() { return shared_.socket(); }
@@ -100,11 +102,7 @@ namespace rtp {
       auto it = rid_scalability_mode_map_.find(rid);
       return it != rid_scalability_mode_map_.end() ? it->second : "";
     }
-    inline std::string GenerateMid() {
-      auto mid = mid_seed_++;
-      if (mid_seed_ > 1000000000) { ASSERT(false); mid_seed_ = 0; } 
-      return std::to_string(mid);
-    }
+    inline std::string GenerateMid() { return listener_.GenerateMid(); }
     qrpc_time_t OnTimer(qrpc_time_t now);
     template <typename BodyOffset>
     static Channel::ChannelRequest CreateRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) {
@@ -131,6 +129,10 @@ namespace rtp {
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     void UpdateMidLabelMap(const std::map<Media::Mid,Media::Id> &map) {
       for (const auto& kv : map) { mid_label_map_[kv.first] = kv.second; }
+			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",mid_label_map_}});
+    }
+    void UpdateMidLabelMap(const std::string &mid, const std::string &label) {
+      mid_label_map_[mid] = label;
 			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",mid_label_map_}});
     }
     const std::string &FindLabelByMid(const std::string &mid) const {
@@ -173,7 +175,6 @@ namespace rtp {
     Listener &listener_;
     ProducerFactory producer_factory_; // should be declared prior to Producer* and Consumer* containers
     ConsumerFactory consumer_factory_;
-    uint32_t mid_seed_;
     std::map<Media::Id, std::shared_ptr<Media>> medias_;
     std::map<Media::Rid, Media::Id> rid_label_map_;
     std::map<Media::TrackId, Media::Id> trackid_label_map_;

@@ -85,7 +85,7 @@ namespace webrtc {
         factory_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
         dtls_transport_(nullptr), sctp_association_(nullptr), srtp_send_(nullptr), srtp_recv_(nullptr),
         rtp_handler_(nullptr), streams_(), syscall_(), stream_id_factory_(),
-        alarm_id_(AlarmProcessor::INVALID_ID), sctp_connected_(false), closed_(false) {
+        alarm_id_(AlarmProcessor::INVALID_ID), mid_seed_(0), sctp_connected_(false), closed_(false) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case RTC::DtlsTransport::Role::CLIENT:
@@ -140,6 +140,7 @@ namespace webrtc {
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void SetCname(const std::string &cname);
+      void RegisterCname();
       void InitRTP();
       void Fin();
       void Touch(qrpc_time_t now) { last_active_ = now; }
@@ -240,6 +241,11 @@ namespace webrtc {
       // implements rtp::Handler::Listener
       const std::string &rtp_id() const override { return ufrag(); }
       const std::string &cname() const override { return cname_; }
+      const std::string GenerateMid() override {
+        auto mid = mid_seed_++;
+        if (mid_seed_ > 1000000000) { ASSERT(false); mid_seed_ = 0; } 
+        return std::to_string(mid);
+      }
       void RecvStreamClosed(uint32_t ssrc) override;
       void SendStreamClosed(uint32_t ssrc) override; 
       bool IsConnected() const override;
@@ -272,6 +278,7 @@ namespace webrtc {
       std::string cname_;
       std::shared_ptr<Connection> consumer_connection_;
       std::vector<rtp::Handler::MediaStreamConfig> media_stream_configs_; // stream configs with keeping creation order
+      uint32_t mid_seed_;
       bool sctp_connected_, closed_;
     };
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
@@ -353,7 +360,7 @@ namespace webrtc {
       }
     }
   protected:
-    void Register(const std::string &cname, std::shared_ptr<Connection> &c) {
+    void RegisterCname(const std::string &cname, std::shared_ptr<Connection> &c) {
       cnmap_.emplace(cname, c);
     }
     std::shared_ptr<Connection> Create(
@@ -550,7 +557,7 @@ namespace webrtc {
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
   public:
-    int Accept(const std::string &client_sdp, std::string &server_sdp);
+    int Accept(const std::string &client_sdp, json &response);
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
     void Fin();
     bool Listen(

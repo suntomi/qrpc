@@ -391,17 +391,20 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
         return QRPC_OK;
       }
-      c.rtp_handler().UpdateMidLabelMap(mlmit->second.get<std::map<Media::Mid,Media::Id>>());
       const auto msgid = mit->second.get<uint64_t>();
       auto label = lit->second.get<std::string>();
       SDP sdp(sdpit->second.get<std::string>());
       std::string answer;
-      if (sdp.Answer(c, answer)) {
+      if (!sdp.Answer(mlmit->second.get<std::map<std::string,std::string>>(), c, answer)) {
         QRPC_LOGJ(error, {{"ev","fail to produce"},{"label",label}});
-        Call("consume_ack",{{"msgid",msgid},{"error","fail to prepare consume"}});
+        Call("produce_ack",{{"msgid",msgid},{"error","fail to prepare consume"}});
         return QRPC_OK;
       }
-      Call("consume_ack",{{"msgid",msgid},{"sdp",answer}});            
+      if (!c.rtp_enabled()) {
+        Call("produce_ack",{{"msgid",msgid},{"error","nothing produced"}});
+        return QRPC_OK;
+      }
+      Call("produce_ack",{{"msgid",msgid},{"sdp",answer},{"mid_label_map",c.rtp_handler().mid_label_map()}});
     } else if (fn == "consume") {
       const auto ait = data.find("args");
       if (ait == data.end()) {
@@ -441,7 +444,10 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         Call("consume_ack",{{"msgid",msgid},{"error","fail to prepare consume"}});
         return QRPC_OK;
       }
-      Call("consume_ack",{{"msgid",msgid},{"ssrc_label_map",ssrc_label_map},{"sdp",sdp}});
+      Call("consume_ack",{
+        {"msgid",msgid},{"ssrc_label_map",ssrc_label_map},
+        {"mid_label_map",c.rtp_handler().mid_label_map()},{"sdp",sdp}
+      });
     } else {
       QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
       ASSERT(false);
@@ -491,6 +497,7 @@ bool ConnectionFactory::Connection::PrepareConsume(
   auto h = factory().FindHandler(parsed[0]);
   auto mscs = media_stream_configs();
   std::vector<uint32_t> generated_ssrcs;
+  InitRTP();
   if (rtp_handler().PrepareConsume(*h, parsed, options_map, mscs, generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = media_path;
@@ -593,6 +600,8 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
 void ConnectionFactory::Connection::SetCname(const std::string &cname) {
   ASSERT(cname_.empty());
   cname_ = cname;
+}
+void ConnectionFactory::Connection::RegisterCname() {
   // we need to use existing std::shared_ptr. because if we insert `this` to ConnectionFactory::cnmap_ directly,
   // 2 different family of std::shared_ptr (another one is ConnectionFactory::connections_) try to free `this` independently.
   auto c = factory().FindFromUfrag(ufrag());
@@ -601,7 +610,7 @@ void ConnectionFactory::Connection::SetCname(const std::string &cname) {
     return;
   }
   // TODO: valiate cname before register to cname map
-  factory().Register(cname_, c);
+  factory().RegisterCname(cname_, c);
 }
 std::shared_ptr<Stream> ConnectionFactory::Connection::NewStream(
   const Stream::Config &c, const StreamFactory &sf
@@ -1661,18 +1670,19 @@ bool Listener::Listen(
   }
   router_.Route(std::regex(path), [this](HttpSession &s, std::cmatch &) {
     int r;
-    std::string sdp;
-    if ((r = Accept(s.fsm().body(), sdp)) < 0) {
+    json response_json;
+    if ((r = Accept(s.fsm().body(), response_json)) < 0) {
         logger::error("fail to create connection");
         s.ServerError("server error %d", r);
         return nullptr;
     }
-    std::string sdplen = std::to_string(sdp.length());
+    std::string response = response_json.dump();
+    std::string resplen = std::to_string(response.length());
     HttpHeader h[] = {
-        {.key = "Content-Type", .val = "application/sdp"},
-        {.key = "Content-Length", .val = sdplen.c_str()}
+        {.key = "Content-Type", .val = "application/json"},
+        {.key = "Content-Length", .val = resplen.c_str()}
     };
-    s.Respond(HRC_OK, h, 2, sdp.c_str(), sdp.length());
+    s.Respond(HRC_OK, h, 2, response.c_str(), response.length());
     return nullptr;
   });
   if (!http_listener_.Listen(signaling_port, router_)) {
@@ -1681,7 +1691,7 @@ bool Listener::Listen(
   }
   return true;
 }
-int Listener::Accept(const std::string &client_req_body, std::string &server_sdp) {
+int Listener::Accept(const std::string &client_req_body, json &response) {
   try {
     auto client_req = json::parse(client_req_body);
     logger::info({{"ev","new server connection"},{"client_req", client_req}});
@@ -1696,6 +1706,11 @@ int Listener::Accept(const std::string &client_req_body, std::string &server_sdp
       logger::error({{"ev","fail to find value for key 'cname'"},{"req",client_req}});
       return QRPC_EINVAL;
     }
+    const auto mlmit = client_req.find("midLabelMap");
+    if (mlmit == client_req.end()) {
+      logger::error({{"ev","fail to find value for key 'midLabelMap'"},{"req",client_req}});
+      return QRPC_OK;
+    }
     // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
     // even if sdp anwser ask to do it.
     std::string ufrag, pwd;
@@ -1704,18 +1719,25 @@ int Listener::Accept(const std::string &client_req_body, std::string &server_sdp
       logger::error({{"ev","fail to allocate connection"}});
       return QRPC_EALLOC;
     }
+    c->SetCname(cnit->get<std::string>());
     const auto rtpit = client_req.find("rtp");
     if (rtpit != client_req.end()) {
       c->InitRTP();
       c->rtp_handler().SetNegotiationArgs(rtpit->get<std::map<std::string,json>>());
     }
     SDP sdp(client_sdp);
-    if (!sdp.Answer(*c, server_sdp)) {
+    std::string server_sdp;
+    if (!sdp.Answer(mlmit->get<std::map<std::string, std::string>>(), *c, server_sdp)) {
       logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
-      return QRPC_EINVAL;
+      return QRPC_EINVAL; // if return from here, c will be freed because no anchor exists
     }
     connections_.emplace(std::move(ufrag), c);
-    c->SetCname(cnit->get<std::string>());
+    c->RegisterCname();
+    // generate response
+    response.emplace("sdp", std::move(server_sdp));
+    if (c->rtp_enabled()) {
+      response.emplace("mid_label_map",c->rtp_handler().mid_label_map());
+    }
   } catch (const std::exception &e) {
     QRPC_LOGJ(error, {{"ev","malform request"},{"reason",e.what()},{"req",client_req_body}});
     return QRPC_EINVAL;

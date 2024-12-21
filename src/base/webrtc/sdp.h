@@ -21,7 +21,8 @@ namespace webrtc {
     ~SDP() {}
   public:
     // connection is not const reference because it might be configured with SDP
-    bool Answer(ConnectionFactory::Connection &c, std::string &answer) const;
+    bool Answer(const std::map<std::string, std::string> mid_label_map,
+      ConnectionFactory::Connection &c, std::string &answer) const;
     static int Offer(const ConnectionFactory::Connection &c, 
       const std::string &ufrag, const std::string &pwd, std::string &offer);
   public:
@@ -30,8 +31,8 @@ namespace webrtc {
   protected:
     bool GetRemoteFingerPrint(const json &section, std::string &answer, RTC::DtlsTransport::Fingerprint &ret) const;
     bool AnswerMediaSection(
-      const json &section, const std::string &proto, ConnectionFactory::Connection &c,
-      rtp::Handler::MediaStreamConfig &params, std::string &errmsg) const;
+      const json &section, const std::string &proto, const std::map<std::string, std::string> mid_label_map,
+      ConnectionFactory::Connection &c, rtp::Handler::MediaStreamConfig &params, std::string &errmsg) const;
   public:
     static bool GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,

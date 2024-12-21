@@ -240,10 +240,6 @@ namespace rtp {
 			rid_scalability_mode_map_ = rsmit->second.get<std::map<Media::Rid,Media::ScalabilityMode>>();
 			QRPC_LOGJ(info, {{"ev","new rid scalability mode map"},{"map",*rsmit}});
 		}
-		const auto midit = args.find("midLabelMap");
-		if (midit != args.end()) {
-			UpdateMidLabelMap(midit->second.get<std::map<Media::Mid,Media::Id>>());
-		}
 	}
 	std::shared_ptr<Media> Handler::FindFrom(const std::string &label) {
 		auto mit = medias_.find(label);
