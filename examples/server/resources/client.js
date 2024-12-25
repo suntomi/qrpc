@@ -8,7 +8,6 @@ class QRPCTrack {
     this.onclose = onclose;
     this.track = track
     this.direction = track ? "send" : "recv";
-    this.lastPC = null;
   }
   get id() { return this.track.id; }
   get key() { return QRPCTrack.key(this.label, this.track.kind); }
@@ -16,26 +15,53 @@ class QRPCTrack {
   get raw() { return this.track; }
   get mid() { return this.transceiver.mid; }
   get active() { return this.track != null; }
-  open(pc) {
-    if (this.direction !== "send") {
+  async open(pc, midLabelKindMap) {
+    if (this.direction !== "send" || this.track == null) {
       throw new Error("open is only needed for send tracks");
     }
-    if (this.lastPC === pc && this.transceiver) {
-      this.transceiver.sender.replaceTrack(this.track);
-    } else if (this.track.kind === "video") {
-      this.transceiver = pc.addTransceiver(
-        this.track,
-        {direction: 'sendonly', sendEncodings: this.encodings, streams: [this.stream]}
-      );
-    } else if (this.track.kind === "audio") {
-      this.transceiver = pc.addTransceiver(
-        this.track,
-        {direction: 'sendonly', streams: [this.stream]}
-      );
+    if (midLabelKindMap) { // want to put tracks to actual peer connection (not for generating localOffer for producing)
+      let transceiver;
+      for (const t of pc.getTransceivers()) {
+        if (t.sender == null) {
+          console.log("ignore receiver transceiver", t.sender.track);
+          continue;
+        }
+        const label = midLabelKindMap[t.mid];
+        if (!label) {
+          console.log("no label/kind for mid:", t.mid, midLabelKindMap);
+          continue;
+        }
+        if (label === `${this.label}/${this.track.kind}`) {
+          transceiver = t;
+          break;
+        }
+      }
+      if (!transceiver) {
+        throw new Error("no correspond transceiver:" + this.label + "|" + this.track.kind);
+      }
+      console.log("found transceiver for", this.label, this.kind, transceiver);
+      transceiver.direction = "sendonly";
+      if (this.kind === "video") {
+        const params = transceiver.sender.getParameters();
+        await transceiver.sender.setParameters(Object.assign(params,{encodings:this.encodings}));
+      }
+      await transceiver.sender.replaceTrack(this.track);
+      this.transceiver = transceiver;
     } else {
-      throw new Error(`invalid track kind ${this.track.kind}`);
+      if (this.track.kind === "video") {
+        this.transceiver = pc.addTransceiver(
+          this.track,
+          {direction: 'sendonly', sendEncodings: this.encodings, streams: [this.stream]}
+        );
+      } else if (this.track.kind === "audio") {
+        this.transceiver = pc.addTransceiver(
+          this.track,
+          {direction: 'sendonly', streams: [this.stream]}
+        );
+      } else {
+        throw new Error(`invalid track kind ${this.track.kind}`);
+      }
     }
-    this.lastPC = pc;
   }
   close() {
     if (this.track) {
@@ -90,11 +116,11 @@ class QRPClient {
         for (const pair of data.args.ssrc_label_map || []) {
           this.ssrcLabelMap[pair[0]] = pair[1];
         }
-        for (const pair of data.args.mid_label_map || []) {
-          this.midLabelMap[pair[0]] = pair[1];
+        for (const pair of data.args.mid_label_kind_map || []) {
+          this.midLabelKindMap[pair[0]] = pair[1];
         }
-        console.log("midLabelMap => ", this.midLabelMap);
-        console.log("ssrc_label_map => ", this.ssrcLabelMap);
+        console.log("midLabelKindMap => ", this.midLabelKindMap);
+        console.log("ssrcLabelMap => ", this.ssrcLabelMap);
         promise.resolve(data.args.sdp);
       } else if (data.fn == "produce") {
         throw new Error("currently, publish to other peer is not suported");
@@ -103,10 +129,10 @@ class QRPClient {
           promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
           return;
         }
-        for (const pair of data.args.mid_label_map || []) {
-          this.midLabelMap[pair[0]] = pair[1];
+        for (const pair of data.args.mid_label_kind_map || []) {
+          this.midLabelKindMap[pair[0]] = pair[1];
         }
-        console.log("midLabelMap => ", this.midLabelMap);
+        console.log("midLabelKindMap => ", this.midLabelKindMap);
         promise.resolve(data.args.sdp);
       }
     }
@@ -124,7 +150,7 @@ class QRPClient {
     this.sentTracks = [];
     this.trackIdLabelMap = {};
     this.ridLabelMap = {};
-    this.midLabelMap = {};
+    this.midLabelKindMap = {};
     this.ssrcLabelMap = {};
     this.ridScalabilityModeMap = {};
     this.rpcPromises = {};
@@ -207,13 +233,14 @@ class QRPClient {
       const track = event.track;
       const tid = track.id;
       const receiver = event.receiver;
-      // TODO: unify this step by using event.transceiver.mid and this.midLabelMap
+      // TODO: unify this step by using event.transceiver.mid and this.midLabelKindMap
       let label = undefined;
       if (event.transceiver) {
-        label = this.midLabelMap[event.transceiver.mid];
-        if (!label) {
+        const labelKind = this.midLabelKindMap[event.transceiver.mid];
+        if (!labelKind) {
           console.log(`No label is defined for mid = ${event.transceiver.mid}`);
         }
+        label = labelKind.split("/")[0];
       } else {
         console.log("event has no transceiver");
       }
@@ -317,7 +344,7 @@ class QRPClient {
     // emurate creating stream to generate correct sdp
     pc.createDataChannel("dummy");
     for (const t of tracks) {
-      t.open(pc);
+      await t.open(pc);
     }
     const localOffer = await pc.createOffer();
     await pc.setLocalDescription(localOffer);
@@ -331,15 +358,17 @@ class QRPClient {
     return {localOffer, midLabelMap};
   }
   async #setRemoteOffer(remoteOffer) {
-    console.log("remote offer sdp", remoteOffer)
+    // remoteOffer = remoteOffer.replace(/a=sendrecv/g, "a=recvonly");
+    console.log("remote offer sdp", remoteOffer);
     //set remote description
     await this.pc.setRemoteDescription({type:"offer",sdp:remoteOffer});
     //set tracks to actual peer connection
     for (const t of this.sentTracks) {
-      t.open(this.pc);
+      await t.open(this.pc, this.midLabelKindMap);
     }
     //Create the answer
     const answer = await this.pc.createAnswer();
+    answer.sdp = answer.sdp.replace(/a=recvonly/g, "a=sendonly");
     console.log("local answer sdp", answer.sdp);
     await this.pc.setLocalDescription(answer);
   }
@@ -386,11 +415,11 @@ class QRPClient {
     let text = undefined;
     try {
       text = await fetched.text();
-      const {sdp: remoteOffer, mid_label_map: midLabelMap} = JSON.parse(text);
-      for (const k in midLabelMap || {}) {
-        this.midLabelMap[k] = midLabelMap[k];
+      const {sdp: remoteOffer, mid_label_kind_map: midLabelKindMap} = JSON.parse(text);
+      for (const k in midLabelKindMap || {}) {
+        this.midLabelKindMap[k] = midLabelKindMap[k];
       }
-      console.log("midLabelMap =>", this.midLabelMap);
+      console.log("midLabelKindMap =>", this.midLabelKindMap);
       this.sdpGen++;
 
       this.id = remoteOffer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
@@ -430,12 +459,6 @@ class QRPClient {
     }
     if (this.pc.connectionState != "failed") {
       this.pc.close();
-    }
-    if (this.cpc) {
-      if (this.cpc.connectionState != "failed") {
-        this.cpc.close();
-      }
-      this.cpc = null;
     }
     this.pc = null;
     this.#clear();
@@ -543,7 +566,7 @@ class QRPClient {
     delete this.streams[label];
   }
   async syscall(fn, args) {
-    return await new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const msgid = this.#newMsgId();
       this.syscallStream.send(JSON.stringify({fn, args, msgid}));
       this.rpcPromises[msgid] = { resolve, reject };

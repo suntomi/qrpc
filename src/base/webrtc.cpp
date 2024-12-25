@@ -388,7 +388,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       }
       const auto mlmit = args.find("midLabelMap");
       if (mlmit == args.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
+        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'midLabelMap'"}});
         return QRPC_OK;
       }
       const auto msgid = mit->second.get<uint64_t>();
@@ -404,7 +404,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         Call("produce_ack",{{"msgid",msgid},{"error","nothing produced"}});
         return QRPC_OK;
       }
-      Call("produce_ack",{{"msgid",msgid},{"sdp",answer},{"mid_label_map",c.rtp_handler().mid_label_map()}});
+      Call("produce_ack",{{"msgid",msgid},{"sdp",answer},{"mid_label_kind_map",c.rtp_handler().mid_label_kind_map()}});
     } else if (fn == "consume") {
       const auto ait = data.find("args");
       if (ait == data.end()) {
@@ -446,7 +446,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       }
       Call("consume_ack",{
         {"msgid",msgid},{"ssrc_label_map",ssrc_label_map},
-        {"mid_label_map",c.rtp_handler().mid_label_map()},{"sdp",sdp}
+        {"mid_label_kind_map",c.rtp_handler().mid_label_kind_map()},{"sdp",sdp}
       });
     } else {
       QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
@@ -1736,7 +1736,7 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
     // generate response
     response.emplace("sdp", std::move(server_sdp));
     if (c->rtp_enabled()) {
-      response.emplace("mid_label_map",c->rtp_handler().mid_label_map());
+      response.emplace("mid_label_kind_map",c->rtp_handler().mid_label_kind_map());
     }
   } catch (const std::exception &e) {
     QRPC_LOGJ(error, {{"ev","malform request"},{"reason",e.what()},{"req",client_req_body}});
