@@ -276,7 +276,6 @@ namespace webrtc {
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_;
       std::string cname_;
-      std::shared_ptr<Connection> consumer_connection_;
       std::vector<rtp::Handler::MediaStreamConfig> media_stream_configs_; // stream configs with keeping creation order
       uint32_t mid_seed_;
       bool sctp_connected_, closed_;
