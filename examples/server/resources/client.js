@@ -337,6 +337,35 @@ class QRPClient {
       }
     }
   }
+  parseLocalOffer(localOffer) {
+    console.log("parseLocalOffer", localOffer);
+    const result = {}
+    let currentMid, currentSsrc;
+    const lines = localOffer.split(/\r?\n/);
+    lines.push("m=dummy"); // ensure last section processed
+    for (const l of lines) {
+      if (l.startsWith("m=")) {
+        currentMid = undefined;
+        currentSsrc = undefined;
+      } else if (l.startsWith("a=mid:")) {
+        if (!currentMid) {
+          // a=mid:$mid_value
+          currentMid = l.slice(6).trim();
+          if (currentSsrc) {
+            result[currentMid] = currentSsrc;
+          }
+        } else {
+          throw new Error(`invalid find a=mid line twice before reset by m= line ${currentMid},${l.slice(6)}`);
+        }
+      } else if (l.startsWith("a=ssrc:")) {
+        currentSsrc = l.slice(7).split(/\s/,1)[0].trim();
+        if (currentMid) {
+          result[currentMid] = currentSsrc;
+        }
+      }
+    }
+    return result;
+  }
   async #createOffer(tracks) {
     const midLabelMap = {};
     // create dummy peer connection to generate sdp
@@ -348,27 +377,80 @@ class QRPClient {
     }
     const localOffer = await pc.createOffer();
     await pc.setLocalDescription(localOffer);
+    const midSsrcMap = this.parseLocalOffer(localOffer.sdp);
+    console.log("midSsrcMap", midSsrcMap);
     for (const t of tracks) {
       // now, mid is decided. mid (in server remote offer) probably changes 
       // after it processes on server side, but because of client mid also decided
       // by server remote offer, changes causes no problem.
       midLabelMap[t.mid] = t.label;
+      t.ssrc = midSsrcMap[t.mid] || undefined;
+      console.log(`${t.label}/${t.kind},mid=${t.mid} ssrc = ${t.ssrc}`);
     }
     pc.close();
     return {localOffer, midLabelMap};
   }
+  modifyLocalAnswer(localAnswer, midSsrcMap) {
+    console.log("modifyLocalAnswer", midSsrcMap);
+    const chunks = [];
+    let chunk = [];
+    const lines = localAnswer.split(/\r?\n/);
+    lines.push("m=dummy"); // ensure last section processed
+    let currentMid;
+    for (const l of lines) {
+      if (l.startsWith("m=")) {
+        if (!currentMid) {
+          if (chunks.length > 0) {
+            throw new Error(`only first chunk allowed without mid`);
+          }
+          chunks.push({mid: null, chunk});
+        } else {
+          if (chunk.length <= 0) {
+            throw new Error(`should have chunk for ${currentMid}`);
+          }
+          chunks.push({mid: currentMid, chunk});
+        }
+        chunk = [l];
+        currentMid = undefined;
+        continue;
+      }
+      chunk.push(l);
+      if (l.startsWith("a=mid:")) {
+        if (!currentMid) {
+          // a=mid:$mid_value
+          currentMid = l.slice(6);
+        } else {
+          throw new Error(`invalid find a=mid line twice before reset by m= line ${currentMid},${l}`);
+        }
+      }
+    }
+    const sdp = [];
+    for (const c of chunks) {
+      const ssrc = c.mid !== null ? midSsrcMap[c.mid] : null;
+      if (ssrc) {
+        const text = c.chunk.join("\n");
+        sdp.push(text.replace(/a=ssrc:[0-9]+/g, `a=ssrc:${ssrc}`));
+      } else {
+        sdp.push(c.chunk.join("\n"));
+      }
+    }
+    return sdp.join("\n");
+  }
   async #setRemoteOffer(remoteOffer) {
-    // remoteOffer = remoteOffer.replace(/a=sendrecv/g, "a=recvonly");
     console.log("remote offer sdp", remoteOffer);
     //set remote description
     await this.pc.setRemoteDescription({type:"offer",sdp:remoteOffer});
     //set tracks to actual peer connection
+    const midSsrcMap = {};
     for (const t of this.sentTracks) {
       await t.open(this.pc, this.midLabelKindMap);
+      if (t.ssrc) {
+        midSsrcMap[t.mid] = t.ssrc;
+      }
     }
     //Create the answer
     const answer = await this.pc.createAnswer();
-    answer.sdp = answer.sdp.replace(/a=recvonly/g, "a=sendonly");
+    answer.sdp = this.modifyLocalAnswer(answer.sdp, midSsrcMap);
     console.log("local answer sdp", answer.sdp);
     await this.pc.setLocalDescription(answer);
   }
