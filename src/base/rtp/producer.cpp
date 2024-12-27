@@ -19,7 +19,7 @@ namespace rtp {
 			}
 			for (auto &receivable_codec : consumer_params.codec_capabilities) {
 				if (consumable_codec.mimeType == receivable_codec.mimeType) {
-					p.codecs.emplace_back(receivable_codec);
+					p.codecs.emplace_back(consumable_codec);
 				}
 			}
 		}

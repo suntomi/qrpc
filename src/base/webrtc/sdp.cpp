@@ -195,9 +195,18 @@ a=max-message-size:%u)cands",
         return false;
       }
     }
+    auto msid = p.media_stream_id();
+    if (msid.empty()) {
+      answer = "invalid media_path:" + p.media_path;
+      ASSERT(false);
+      return false;
+    }
+    // a=msid line is mandatory to avoid safari's error
+    // "Media section has more than one track specified with a=ssrc lines which is not supported with Unified Plan"
     answer = str::Format(16 * 1024, R"sdp_section(m=%s %llu %s%s
 c=IN IP4 0.0.0.0
 a=mid:%s
+a=msid:%s %s
 a=sendrecv
 a=ice-ufrag:%s
 a=ice-pwd:%s
@@ -208,6 +217,7 @@ a=setup:active
 )sdp_section",
       p.MediaKindName().c_str(), p.network.port, p.RtpProtocol().c_str(), p.Payloads().c_str(),
       p.mid.c_str(),
+      msid.c_str(), p.media_stream_track_id().c_str(),
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       p.receiver() ? "trickle" : "renomination",

@@ -46,6 +46,22 @@ namespace rtp {
       MediaStreamConfig(const Parameters &p, Direction d) : Parameters(p), direction(d) {}
       inline bool sender() const { return direction == Direction::SEND; }
       inline bool receiver() const { return direction == Direction::RECV; }
+      inline bool probator() const { return mid == RTC::RtpProbationGenerator::GetMidValue(); }
+      inline const std::string media_stream_track_id() const {
+        return probator() ? mid : media_path;
+      }
+      inline const std::string media_stream_id() const {
+        if (probator()) { return mid; }
+        auto cs = str::Split(media_path, "/");
+        if (cs.size() == 3) {
+          return cs[0] + "/" + cs[1];
+        } else if (cs.size() == 2) {
+          return cs[0];
+        } else {
+          ASSERT(false);
+          return "";
+        }
+      }
       bool GenerateCN(std::string &cname) const;
       std::string media_path;
       Direction direction{ Direction::RECV };
