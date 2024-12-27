@@ -8,6 +8,7 @@ class QRPCTrack {
     this.onclose = onclose;
     this.track = track
     this.direction = track ? "send" : "recv";
+    this.opened = false;
   }
   get id() { return this.track.id; }
   get key() { return QRPCTrack.key(this.label, this.track.kind); }
@@ -70,6 +71,7 @@ class QRPCTrack {
       this.track = null;
       this.transceiver = null;
       this.lastPC = null;
+      this.opened = false;
     }
   }
 }
@@ -294,11 +296,14 @@ class QRPClient {
         t.transceiver = event.transceiver;
         t.stream = event.streams[0];
       }
-      const r = t.onopen(t);
-      if (r === false || r === null) {
-        console.log(`close media by application ${label}/${track.kind}`);
-        this.closeMedia(label, track.kind);
-        return;
+      if (!t.opened) {
+        const r = t.onopen(t);
+        if (r === false || r === null) {
+          console.log(`close media by application ${label}/${track.kind}`);
+          this.closeMedia(label, track.kind);
+          return;
+        }
+        t.opened = true;
       }
     }
     
