@@ -5,60 +5,51 @@
   </head>
   <body>
     <div id="cname"></div>
-    <input type="text" id="idedit" placeholder="input connection id of other peer and press Enter"/>
+    <div id="subscribe">
+      <input type="text" id="idedit" placeholder="input connection id of other peer"/>
+      <input type="text" id="label_sub" placeholder="input label name" value="webcam"/>
+      <button id="sub">subscribe</button>
+    </div>
+    <div id="publish">
+      <input type="text" id="label_pub" placeholder="input label name" value="webcam2"/>
+      <button id="pub">publish</button>
+    </div>
+    <div>published tracks</div>
+    <div id="pubsList"></div>
+    <div>subscribed tracks</div>
+    <div id="subsList"></div>
 
     <script src="http://localhost:8888/client.js"></script>
     <script>
-      showMedia = (t) => {
+      const pubsList = document.getElementById('pubsList');
+      const subsList = document.getElementById('subsList');
+      const pub = document.getElementById('pub');
+      const sub = document.getElementById('sub');
+      createMediaHandler = (dom) => {
+        return {
+          onopen: (track)=>{
+            console.log("media open", track.stream.id, track.id);
+            showMedia(track, dom);
+          },
+          onclose: (track)=>{
+            console.log("media close", track.id, track.kind);
+            document.getElementById(`${track.kind}-${track.id}`).remove();
+          },
+        };
+      }
+      showMedia = (t, dom) => {
         // console.log(`play ${t.kind}`, t.label);
         let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
         if (!mediaElement) {
           mediaElement = document.createElement(t.kind);
           mediaElement.id = `${t.kind}-${t.id}`;
           mediaElement.autoplay = true;
-          document.body.appendChild(mediaElement);
+          dom.appendChild(mediaElement);
         }
         mediaElement.srcObject = t.stream;
       }
-      onIDEdit = async (event) => {
-        if (event.key === 'Enter') {
-          const id = event.target.value;
-          console.log(`input id = ${id}`);
-          await c.openMedia(`${id}/webcam`, webcamMediaHandler);
-        }
-      }
-      setupUI = (c) => {
-        // このconnectionのidを表示
-        let idElement = document.getElementById("cname");
-        if (idElement) {
-          idElement.innerText = c.cname;
-        }
-        // 編集ボックスのEnterキーイベントリスナーを追加
-        document.getElementById('idedit').addEventListener('keydown', onIDEdit);         
-      }
-      cleanupUI = (c) => {
-        document.getElementById('idedit').removeEventListener('keydown', onIDEdit);
-      }
-      //Create whip client
-      const url = "http://localhost:8888/qrpc";
-      const c = new QRPClient(url);
-      const context = {};
-      const MAX_RECONNECT = 1;
-      let closed = 0;
-      const webcamMediaHandler = {
-        onopen: (track)=>{
-          console.log("media open", track.stream.id, track.id);
-          showMedia(track);
-        },
-        onclose: (track)=>{
-          console.log("media close", track.id, track.kind);
-          document.getElementById(`${track.kind}-${track.id}`).remove();
-        },
-      };
-      c.onopen = async () => {
-        console.log("client onopen called");
-        setupUI(c);
-        await c.createMedia("webcam", Object.assign({}, webcamMediaHandler, {
+      createMedia = async (path, handler) => {
+        await c.createMedia(path, Object.assign({}, handler, {
           stream: await navigator.mediaDevices.getUserMedia({
             video: {width: {ideal: 1280}, height: {ideal: 720}},
             audio: true
@@ -71,7 +62,43 @@
             // 100kbps ?
             {rid: 'l1', maxBitrate: 500000, active: true, scaleResolutionDownBy: 4.0}
           ],
-        }));
+        }));        
+      }
+      onPublish = async (event) => {
+        const path = document.getElementById('label_pub').value;
+        console.log(`publish: input path = ${path}`);
+        await createMedia(path, createMediaHandler(pubsList));
+      }
+      onSubscribe = async (event) => {
+        const id = document.getElementById('idedit').value;
+        const label = document.getElementById('label_sub').value;
+        const path = `${id}/${label}`;
+        console.log(`subscribe: input path = ${path}`);
+        await c.openMedia(path, createMediaHandler(subsList));
+      }
+      setupUI = (c) => {
+        // このconnectionのidを表示
+        let idElement = document.getElementById("cname");
+        if (idElement) {
+          idElement.innerText = c.cname;
+        }
+        pub.addEventListener('click', onPublish);
+        sub.addEventListener('click', onSubscribe);
+      }
+      cleanupUI = (c) => {
+        pub.removeEventListener('click', onPublish);
+        sub.removeEventListener('click', onSubscribe);
+      }
+      //Create whip client
+      const url = "http://localhost:8888/qrpc";
+      const c = new QRPClient(url);
+      const context = {};
+      const MAX_RECONNECT = 1;
+      let closed = 0;
+      c.onopen = async () => {
+        console.log("client onopen called");
+        setupUI(c);
+        await createMedia("webcam", createMediaHandler(pubsList));
         return context;
       };
       c.onclose = () => {
