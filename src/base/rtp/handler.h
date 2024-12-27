@@ -87,7 +87,7 @@ namespace rtp {
     inline Listener &listener() { return listener_; }
     inline const std::string &rtp_id() const { return listener_.rtp_id(); }
     inline const std::string &cname() const { return listener_.cname(); }
-    inline const std::map<Media::Mid, Media::Id> mid_label_kind_map() const { return mid_label_kind_map_; }
+    inline const std::map<Media::Mid, Media::Id> mid_media_path_map() const { return mid_media_path_map_; }
     static inline RTC::Shared &shared() { return shared_.get(); }
     static inline RTC::Router &router() { return router_; }
     static inline Channel::ChannelSocket &socket() { return shared_.socket(); }
@@ -127,22 +127,25 @@ namespace rtp {
     bool Consume(Handler &peer, const std::string &label, const MediaStreamConfig &config);
     bool SetExtensionId(uint8_t id, const std::string &uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
-    void UpdateMidLabelKindMap(const std::string &mid, const std::string &label, rtp::Parameters::MediaKind kind) {
-      mid_label_kind_map_[mid] = label + "/" + rtp::Parameters::FromMediaKind(kind);
-			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",mid_label_kind_map_}});
+    void UpdateMidMediaPathMap(const std::string &mid, const std::string &path) {
+      mid_media_path_map_[mid] = path;
+			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",mid_media_path_map_}});
     }
     std::string FindLabelByMid(const std::string &mid) const {
-      auto it = mid_label_kind_map_.find(mid);
-      if (it == mid_label_kind_map_.end()) {
+      auto it = mid_media_path_map_.find(mid);
+      if (it == mid_media_path_map_.end()) {
         return "";
       }
       auto label_kind = str::Split(it->second, "/");
-      if (label_kind.size() != 2) {
+      if (label_kind.size() == 3) {
+        return label_kind[1];
+      } else if (label_kind.size() == 2) {
+        return label_kind[0];
+      } else {
         QRPC_LOGJ(error, {{"ev","invalid label_kind"},{"label_kind",label_kind}});
         ASSERT(false);
         return "";
       }
-      return label_kind[0];
     }
     std::shared_ptr<Media> FindFrom(const Parameters &p);
     std::shared_ptr<Media> FindFrom(const std::string &label);
@@ -183,7 +186,7 @@ namespace rtp {
     std::map<Media::Id, std::shared_ptr<Media>> medias_;
     std::map<Media::Rid, Media::Id> rid_label_map_;
     std::map<Media::TrackId, Media::Id> trackid_label_map_;
-    std::map<Media::Mid, std::string> mid_label_kind_map_;
+    std::map<Media::Mid, std::string> mid_media_path_map_;
     std::map<Media::Ssrc, Media::TrackId> ssrc_trackid_map_;
     std::map<Media::Rid, Media::ScalabilityMode> rid_scalability_mode_map_;
   };

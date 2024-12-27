@@ -188,6 +188,8 @@ namespace rtp {
 			if (k == Parameters::MediaKind::VIDEO && ccit == media_stream_configs.end()) {
 				media_stream_configs.emplace_back(MediaStreamConfig(config.ToProbator(), MediaStreamConfig::Direction::SEND));
 			}
+			// update mid label map
+			UpdateMidMediaPathMap(config.mid, media_path);
 		}
 		QRPC_LOGJ(info, {{"ev","set consume configs"},{"configs",media_stream_configs.size()}});
 		return true;

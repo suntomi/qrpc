@@ -378,11 +378,6 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       }
       const auto msgid = mit->get<uint64_t>();
       if (fn == "produce") {
-        const auto lit = args.find("label");
-        if (lit == args.end()) {
-          QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
-          return QRPC_OK;
-        }
         const auto sdpit = args.find("sdp");
         if (sdpit == args.end()) {
           QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'sdp'"}});
@@ -393,19 +388,18 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'midLabelMap'"}});
           return QRPC_OK;
         }
-        auto label = lit->second.get<std::string>();
         SDP sdp(sdpit->second.get<std::string>());
         std::string answer;
         if (!sdp.Answer(mlmit->second.get<std::map<std::string,std::string>>(), c, answer)) {
-          QRPC_LOGJ(error, {{"ev","fail to produce"},{"label",label}});
-          Call("produce_ack",{{"msgid",msgid},{"error","fail to prepare consume"}});
+          QRPC_LOGJ(error, {{"ev","fail to produce"},{"midLabelMap",mlmit->second.get<std::map<std::string,std::string>>()}});
+          Call("produce_ack",msgid,{{"error","fail to prepare consume"}});
           return QRPC_OK;
         }
         if (!c.rtp_enabled()) {
-          Call("produce_ack",{{"msgid",msgid},{"error","nothing produced"}});
+          Call("produce_ack",msgid,{{"error","nothing produced"}});
           return QRPC_OK;
         }
-        Call("produce_ack",{{"msgid",msgid},{"sdp",answer},{"mid_label_kind_map",c.rtp_handler().mid_label_kind_map()}});
+        Call("produce_ack",msgid,{{"sdp",answer},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
       } else if (fn == "consume") {
         const auto lit = args.find("label");
         if (lit == args.end()) {
@@ -430,12 +424,12 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         std::map<uint32_t,std::string> ssrc_label_map;
         if (!c.PrepareConsume(label, options_map, sdp, ssrc_label_map)) {
           QRPC_LOGJ(error, {{"ev","fail to consume"},{"label",label}});
-          Call("consume_ack",{{"msgid",msgid},{"error","fail to prepare consume"}});
+          Call("consume_ack",msgid,{{"error","fail to prepare consume"}});
           return QRPC_OK;
         }
-        Call("consume_ack",{
-          {"msgid",msgid},{"ssrc_label_map",ssrc_label_map},
-          {"mid_label_kind_map",c.rtp_handler().mid_label_kind_map()},{"sdp",sdp}
+        Call("consume_ack",msgid,{
+          {"ssrc_label_map",ssrc_label_map},
+          {"mid_media_path_map",c.rtp_handler().mid_media_path_map()},{"sdp",sdp}
         });
       } else {
         QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
@@ -454,6 +448,10 @@ int ConnectionFactory::SyscallStream::Call(const char *fn) {
 }
 int ConnectionFactory::SyscallStream::Call(const char *fn, const json &j) {
   return Send({{"fn",fn},{"args",j}});
+}
+int ConnectionFactory::SyscallStream::Call(const char *fn, uint32_t msgid, const json &j) {
+  QRPC_LOGJ(info, {{"ev","syscall response"},{"fn",fn},{"msgid",msgid},{"args",j}})
+  return Send({{"fn",fn},{"msgid",msgid},{"args",j}});
 }
 
 /* ConnectionFactory::Connection */
@@ -1730,7 +1728,7 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
     // generate response
     response.emplace("sdp", std::move(server_sdp));
     if (c->rtp_enabled()) {
-      response.emplace("mid_label_kind_map",c->rtp_handler().mid_label_kind_map());
+      response.emplace("mid_media_path_map",c->rtp_handler().mid_media_path_map());
     }
   } catch (const std::exception &e) {
     QRPC_LOGJ(error, {{"ev","malform request"},{"reason",e.what()},{"req",client_req_body}});

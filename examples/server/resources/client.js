@@ -15,20 +15,20 @@ class QRPCTrack {
   get raw() { return this.track; }
   get mid() { return this.transceiver.mid; }
   get active() { return this.track != null; }
-  async open(pc, midLabelKindMap) {
+  async open(pc, midMediaPathMap) {
     if (this.direction !== "send" || this.track == null) {
       throw new Error("open is only needed for send tracks");
     }
-    if (midLabelKindMap) { // want to put tracks to actual peer connection (not for generating localOffer for producing)
+    if (midMediaPathMap) { // want to put tracks to actual peer connection (not for generating localOffer for producing)
       let transceiver;
       for (const t of pc.getTransceivers()) {
         if (t.sender == null) {
           console.log("ignore receiver transceiver", t.sender.track);
           continue;
         }
-        const label = midLabelKindMap[t.mid];
+        const label = midMediaPathMap[t.mid];
         if (!label) {
-          console.log("no label/kind for mid:", t.mid, midLabelKindMap);
+          console.log("no label/kind for mid:", t.mid, midMediaPathMap);
           continue;
         }
         if (label === `${this.label}/${this.track.kind}`) {
@@ -116,10 +116,8 @@ class QRPClient {
         for (const pair of data.args.ssrc_label_map || []) {
           this.ssrcLabelMap[pair[0]] = pair[1];
         }
-        for (const pair of data.args.mid_label_kind_map || []) {
-          this.midLabelKindMap[pair[0]] = pair[1];
-        }
-        console.log("midLabelKindMap => ", this.midLabelKindMap);
+        Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
+        console.log("midMediaPathMap => ", this.midMediaPathMap);
         console.log("ssrcLabelMap => ", this.ssrcLabelMap);
         promise.resolve(data.args.sdp);
       } else if (data.fn == "produce") {
@@ -129,10 +127,8 @@ class QRPClient {
           promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
           return;
         }
-        for (const pair of data.args.mid_label_kind_map || []) {
-          this.midLabelKindMap[pair[0]] = pair[1];
-        }
-        console.log("midLabelKindMap => ", this.midLabelKindMap);
+        Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
+        console.log("midMediaPathMap => ", this.midMediaPathMap);
         promise.resolve(data.args.sdp);
       }
     }
@@ -150,7 +146,7 @@ class QRPClient {
     this.sentTracks = [];
     this.trackIdLabelMap = {};
     this.ridLabelMap = {};
-    this.midLabelKindMap = {};
+    this.midMediaPathMap = {};
     this.ssrcLabelMap = {};
     this.ridScalabilityModeMap = {};
     this.rpcPromises = {};
@@ -233,14 +229,22 @@ class QRPClient {
       const track = event.track;
       const tid = track.id;
       const receiver = event.receiver;
-      // TODO: unify this step by using event.transceiver.mid and this.midLabelKindMap
+      // TODO: unify this step by using event.transceiver.mid and this.midMediaPathMap
       let label = undefined;
       if (event.transceiver) {
-        const labelKind = this.midLabelKindMap[event.transceiver.mid];
-        if (!labelKind) {
-          console.log(`No label is defined for mid = ${event.transceiver.mid}`);
+        const mediaPath = this.midMediaPathMap[event.transceiver.mid];
+        if (!mediaPath) {
+          console.log(`No mediaPath is defined for mid = ${event.transceiver.mid}`);
+        } else {
+          const parsed = mediaPath.split("/");
+          if (parsed.length < 2) {
+            throw new Error(`malformed media_path ${mediaPath}`)
+          } else if (parsed.length == 3) {
+            label = parsed[0] + "/" + parsed[1];
+          } else {
+            label = parsed[0];
+          }
         }
-        label = labelKind.split("/")[0];
       } else {
         console.log("event has no transceiver");
       }
@@ -338,7 +342,6 @@ class QRPClient {
     }
   }
   parseLocalOffer(localOffer) {
-    console.log("parseLocalOffer", localOffer);
     const result = {}
     let currentMid, currentSsrc;
     const lines = localOffer.split(/\r?\n/);
@@ -443,7 +446,7 @@ class QRPClient {
     //set tracks to actual peer connection
     const midSsrcMap = {};
     for (const t of this.sentTracks) {
-      await t.open(this.pc, this.midLabelKindMap);
+      await t.open(this.pc, this.midMediaPathMap);
       if (t.ssrc) {
         midSsrcMap[t.mid] = t.ssrc;
       }
@@ -497,11 +500,11 @@ class QRPClient {
     let text = undefined;
     try {
       text = await fetched.text();
-      const {sdp: remoteOffer, mid_label_kind_map: midLabelKindMap} = JSON.parse(text);
-      for (const k in midLabelKindMap || {}) {
-        this.midLabelKindMap[k] = midLabelKindMap[k];
+      const {sdp: remoteOffer, mid_media_path_map: midMediaPathMap} = JSON.parse(text);
+      for (const k in midMediaPathMap || {}) {
+        this.midMediaPathMap[k] = midMediaPathMap[k];
       }
-      console.log("midLabelKindMap =>", this.midLabelKindMap);
+      console.log("midMediaPathMap =>", this.midMediaPathMap);
       this.sdpGen++;
 
       this.id = remoteOffer.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
@@ -568,7 +571,28 @@ class QRPClient {
     }
     return undefined;
   }
+  #canonicalizeLabel(label, type) {
+    const parsed = label.split('/');
+    if (type == "create") {
+      if (parsed.length == 2) {
+        return parsed[1];
+      } else if (parsed.length == 1) {
+        return label;
+      } else {
+        throw new Error(`invalid label: ${label}`);
+      }
+    } else if (type == "open") {
+      if (parsed.length == 2) {
+        return label;
+      } else {
+        throw new Error(`invalid label: ${label}`);
+      }
+    } else {
+      throw new Error(`invalid type: ${type}`);
+    }
+  }
   async createMedia(label, {stream, encodings, onopen, onclose}) {
+    label = this.#canonicalizeLabel(label, "create");
     console.log("createMedia", label, stream, encodings);
     if (!encodings) {
       throw new Error("encoding is mandatory");
@@ -593,17 +617,18 @@ class QRPClient {
       tracks.push(track);
     });
     if (this.#handshaked()) {
-      // already handshaked, so renegotiate for new produced tracks.
-      const {localOffer, midLabelMap} = await this.#createOffer(tracks, label);
+      // already handshaked, so renegotiate for newly produced tracks.
+      const {localOffer, midLabelMap} = await this.#createOffer(tracks);
       console.log("createMedia: local offer", localOffer.sdp, midLabelMap);
       const remoteOffer = await this.syscall("produce", { 
-        label, sdp: localOffer.sdp, options: (audio || video) ? { audio, video } : undefined, midLabelMap
+        sdp: localOffer.sdp, options: (audio || video) ? { audio, video } : undefined, midLabelMap
       });
       await this.#setRemoteOffer(remoteOffer);
     }
     return tracks;
   }
   async openMedia(label, {onopen, onclose, audio, video}) {
+    label = this.#canonicalizeLabel(label, "open");
     const remoteOffer = await this.syscall("consume", { 
       label, options: (audio || video) ? { audio, video } : undefined
     });

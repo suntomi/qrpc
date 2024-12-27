@@ -69,6 +69,7 @@ namespace webrtc {
         AdhocStream(c, config, std::move(Handler(Nop())), std::move(ConnectHandler(Nop())), std::move(ShutdownHandler(Nop()))) {}
       ~SyscallStream() {}
       int OnRead(const char *p, size_t sz) override;
+      int Call(const char *fn, uint32_t msgid, const json &j);
       int Call(const char *fn, const json &j);
       int Call(const char *fn);
     };

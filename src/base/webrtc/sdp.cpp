@@ -302,10 +302,10 @@ a=msid-semantic: WMS
         return false;
       }
       // TODO: move this logic to one place, say, MediaPath class
-      params.media_path = c.cname() + "/" + lit->second + "/" + params.MediaKindName();
+      params.media_path = lit->second + "/" + params.MediaKindName();
       // assign actual mid and update label map
       params.mid = c.rtp_handler().GenerateMid();
-      c.rtp_handler().UpdateMidLabelKindMap(params.mid, lit->second, params.kind);
+      c.rtp_handler().UpdateMidMediaPathMap(params.mid, params.media_path);
     }
     params.direction = rtp::Handler::MediaStreamConfig::Direction::RECV;
     return true;

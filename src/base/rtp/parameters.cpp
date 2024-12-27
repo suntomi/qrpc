@@ -167,7 +167,6 @@ namespace rtp {
   std::optional<RTC::RtpHeaderExtensionUri::Type> Parameters::FromUri(const std::string &uri) {
     auto it = g_map.find(uri);
     if (it == g_map.end()) {
-      ASSERT(false);
       return std::nullopt;
     }
     return std::optional(it->second);
@@ -279,21 +278,19 @@ namespace rtp {
     }
     for (auto it = extmit->begin(); it != extmit->end(); it++) {
       FIND_OR_RAISE(uit, it, "uri");
-      FIND_OR_RAISE(vit, it, "value");
       auto uri = uit->get<std::string>();
-      auto id = vit->get<uint8_t>();
-      if (!h.SetExtensionId(id, uri)) {
-        continue;
-      }
-      auto &p = this->headerExtensions.emplace_back();
-      p.id = id;
       auto t = FromUri(uri);
       if (t.has_value()) {
+        auto id = static_cast<uint8_t>(t.value());
+        if (!h.SetExtensionId(id, uri)) {
+          continue; // not supported uri
+        }
+        auto &p = this->headerExtensions.emplace_back();
+        p.id = id;
         p.type = t.value();
       } else {
-        answer = "rtpmap: no uri type for '" + uri + "'";
-        ASSERT(false);
-        return false;
+        // unknown uri
+        continue;
       }
     }
     // parse fmtp
@@ -648,12 +645,7 @@ namespace rtp {
         ASSERT(false);
         continue;
       }
-      if (!cname.empty()) {
-        // for consuming connection, rtp layer uses hs[i].type parameter as its id
-        sdplines += str::Format("\na=extmap:%u %s", hs[i].type, urit->second.c_str());
-      } else {
-        sdplines += str::Format("\na=extmap:%u %s", hs[i].id, urit->second.c_str());
-      }
+      sdplines += str::Format("\na=extmap:%u %s", hs[i].type, urit->second.c_str());
     }
     for (size_t i = 0; i < this->codecs.size(); i++) {
       auto &c = this->codecs[i];
