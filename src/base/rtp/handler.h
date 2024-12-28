@@ -78,6 +78,7 @@ namespace rtp {
     public:
       virtual const std::string &rtp_id() const = 0;
       virtual const std::string &cname() const = 0;
+      virtual const std::map<Parameters::MediaKind, Capability> &capabilities() const = 0;
       virtual const std::string GenerateMid() = 0;
       virtual void RecvStreamClosed(uint32_t ssrc) = 0;
       virtual void SendStreamClosed(uint32_t ssrc) = 0;
@@ -114,7 +115,8 @@ namespace rtp {
     }
     static void ConfigureLogging(const std::string &log_level, const std::vector<std::string> &log_tags);
     static const FBS::Transport::Options* TransportOptions(const Config &c);
-    inline std::string FindScalabilityMode(const std::string &rid) {
+    static const std::vector<Parameters::MediaKind> &SupportedMediaKind();
+    inline const std::string &FindScalabilityMode(const std::string &rid) const {
       auto it = rid_scalability_mode_map_.find(rid);
       return it != rid_scalability_mode_map_.end() ? it->second : "";
     }
@@ -141,12 +143,13 @@ namespace rtp {
       const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
       MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
     bool Consume(Handler &peer, const std::string &label, const MediaStreamConfig &config);
-    bool SetExtensionId(uint8_t id, const std::string &uri);
+    bool SetExtensionId(uint8_t id, RTC::RtpHeaderExtensionUri::Type uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     void UpdateMidMediaPathMap(const std::string &mid, const std::string &path) {
       mid_media_path_map_[mid] = path;
 			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",mid_media_path_map_}});
     }
+    void UpdateByCapability(const Capability &cap);
     std::string FindLabelByMid(const std::string &mid) const {
       auto it = mid_media_path_map_.find(mid);
       if (it == mid_media_path_map_.end()) {
@@ -166,8 +169,14 @@ namespace rtp {
     std::shared_ptr<Media> FindFrom(const Parameters &p);
     std::shared_ptr<Media> FindFrom(const std::string &label);
     Producer *FindProducer(const std::string &label, Parameters::MediaKind kind) const;
-    inline Producer *FindProducer(const std::string& producerId) const { return reinterpret_cast<Producer *>(GetProducerById(producerId)); }
-    inline Consumer *FindConsumer(const std::string &consumerId) const { return reinterpret_cast<Consumer *>(GetConsumerById(consumerId)); }
+    inline Producer *FindProducer(const std::string& producerId) const {
+      try { return reinterpret_cast<Producer *>(GetProducerById(producerId)); }
+      catch (std::exception &) { return nullptr; }
+    }
+    inline Consumer *FindConsumer(const std::string &consumerId) const {
+      try { return reinterpret_cast<Consumer *>(GetConsumerById(consumerId)); }
+      catch (std::exception &) { return nullptr; }
+    }
   public:
     void ReceiveRtpPacket(RTC::RtpPacket* packet) { RTC::Transport::ReceiveRtpPacket(packet); }
     void ReceiveRtcpPacket(RTC::RTCP::Packet* packet) { RTC::Transport::ReceiveRtcpPacket(packet); }

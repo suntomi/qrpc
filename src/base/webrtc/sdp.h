@@ -23,7 +23,7 @@ namespace webrtc {
     // connection is not const reference because it might be configured with SDP
     bool Answer(const std::map<std::string, std::string> mid_label_map,
       ConnectionFactory::Connection &c, std::string &answer) const;
-    static int Offer(const ConnectionFactory::Connection &c, 
+    static int Offer(const ConnectionFactory::Connection &c,
       const std::string &ufrag, const std::string &pwd, std::string &offer);
   public:
     std::vector<Candidate> Candidates() const;

@@ -462,6 +462,14 @@ class QRPClient {
     console.log("local answer sdp", answer.sdp);
     await this.pc.setLocalDescription(answer);
   }
+  async #capability() {
+    const pc = new RTCPeerConnection();
+    pc.addTransceiver("audio");
+    pc.addTransceiver("video");
+    const offer = await pc.createOffer({offerToReceiveAudio: true, offerToReceiveVideo: true});
+    console.log("capability sdp", offer.sdp);
+    return offer.sdp;
+  }
   async #handshake() {
     if (this.#handshaked()) {
       throw new Error("handshake only called once in session");
@@ -491,7 +499,8 @@ class QRPClient {
         sdp:localOffer.sdp,
         cname:this.cname,
         rtp:this.#rtpPayload(),
-        midLabelMap: localMidLabelMap
+        midLabelMap: localMidLabelMap,
+        capability: await this.#capability()
       }),
       headers: {
         "Content-Type": "application/json"
@@ -596,7 +605,7 @@ class QRPClient {
       throw new Error(`invalid type: ${type}`);
     }
   }
-  async createMedia(label, {stream, encodings, onopen, onclose}) {
+  async createMedia(label, {stream, encodings, options, onopen, onclose}) {
     label = this.#canonicalizeLabel(label, "create");
     console.log("createMedia", label, stream, encodings);
     if (!encodings) {
@@ -626,7 +635,7 @@ class QRPClient {
       const {localOffer, midLabelMap} = await this.#createOffer(tracks);
       console.log("createMedia: local offer", localOffer.sdp, midLabelMap);
       const remoteOffer = await this.syscall("produce", { 
-        sdp: localOffer.sdp, options: (audio || video) ? { audio, video } : undefined, midLabelMap
+        sdp: localOffer.sdp, options, midLabelMap
       });
       await this.#setRemoteOffer(remoteOffer);
     }

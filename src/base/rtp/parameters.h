@@ -11,6 +11,7 @@
 namespace base {
 namespace rtp {
   class Handler;
+  class Capability;
   class Parameters : public RTC::RtpParameters {
   public:
     struct NetworkParameters {
@@ -30,7 +31,7 @@ namespace rtp {
     };
   public:
     Parameters() : RTC::RtpParameters(), ssrc_seed(GenerateSsrc()) {}
-    bool Parse(Handler &h, const json &section, std::string &answer);
+    bool Parse(const json &section, Capability &cap, std::string &answer, const Handler *h = nullptr);
     std::string Answer(const std::string &cname = "") const;
     std::string Payloads() const {
       if (kind == rtp::Parameters::MediaKind::APP) {
@@ -46,7 +47,6 @@ namespace rtp {
     static std::string FromMediaKind(MediaKind k);
     inline const std::string &RtpProtocol() const { return rtp_proto; }
     inline std::string MediaKindName() const { return FromMediaKind(kind); }
-    RTC::RtpCodecParameters *CodecByPayloadType(uint64_t pt);
     void AddEncoding(
       const std::string &rid, uint64_t pt, uint64_t rtxpt, bool dtx,
       const std::string &scalability_mode);
@@ -77,7 +77,6 @@ namespace rtp {
     uint32_t ssrc_seed;         // affect consumer sdp generation only
     std::map<uint32_t, SsrcParameter> ssrcs;                  // affect producer sdp generation only
     SimulcastParameter simulcast;                             // affect producer sdp generation only
-    std::vector<RTC::RtpCodecParameters> codec_capabilities;  // affect nothing for sdp generation
   };
 }
 }

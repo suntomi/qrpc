@@ -141,6 +141,7 @@ namespace webrtc {
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void SetCname(const std::string &cname);
+      bool SetRtpCapability(const std::string &cap_sdp, std::string &answer);
       void RegisterCname();
       void InitRTP();
       void Fin();
@@ -242,6 +243,8 @@ namespace webrtc {
       // implements rtp::Handler::Listener
       const std::string &rtp_id() const override { return ufrag(); }
       const std::string &cname() const override { return cname_; }
+      const std::map<rtp::Parameters::MediaKind, rtp::Capability> &
+        capabilities() const override { return capabilities_; }
       const std::string GenerateMid() override {
         auto mid = mid_seed_++;
         if (mid_seed_ > 1000000000) { ASSERT(false); mid_seed_ = 0; } 
@@ -277,6 +280,7 @@ namespace webrtc {
       IdFactory<Stream::Id> stream_id_factory_;
       AlarmProcessor::Id alarm_id_;
       std::string cname_;
+      std::map<rtp::Parameters::MediaKind, rtp::Capability> capabilities_;
       std::vector<rtp::Handler::MediaStreamConfig> media_stream_configs_; // stream configs with keeping creation order
       uint32_t mid_seed_;
       bool sctp_connected_, closed_;

@@ -466,6 +466,9 @@ bool ConnectionFactory::Connection::connected() const {
 void ConnectionFactory::Connection::InitRTP() {
   if (rtp_handler_ == nullptr) {
     rtp_handler_ = std::make_shared<rtp::Handler>(*this);
+    for (const auto &kv : capabilities_) {
+      rtp_handler_->UpdateByCapability(kv.second);
+    }
   }
 }
 bool ConnectionFactory::Connection::PrepareConsume(
@@ -593,6 +596,26 @@ void ConnectionFactory::Connection::SetCname(const std::string &cname) {
   ASSERT(cname_.empty());
   cname_ = cname;
 }
+bool ConnectionFactory::Connection::SetRtpCapability(const std::string &cap_sdp, std::string &answer) {
+  SDP sdp(cap_sdp);
+  for (const auto k : rtp::Handler::SupportedMediaKind()) {
+    json section;
+    if (!sdp.FindMediaSection(rtp::Parameters::FromMediaKind(k), section)) {
+      answer = "capability should contain all media infromation";
+      QRPC_LOGJ(error, {{"ev","cap_sdp parse error"},{"error",answer},{"sdp",cap_sdp}});
+      return false;
+    }
+    auto &cap = capabilities_.emplace(k, std::move(rtp::Capability())).first->second;
+    rtp::Parameters params;
+    if (!params.Parse(section, cap, answer)) {
+      answer = "ail to parse section";
+      QRPC_LOGJ(error, {{"ev","section parse error"},{"error",answer},{"section",section}});
+      return false;
+    }
+  }
+  return true;
+}
+
 void ConnectionFactory::Connection::RegisterCname() {
   // we need to use existing std::shared_ptr. because if we insert `this` to ConnectionFactory::cnmap_ directly,
   // 2 different family of std::shared_ptr (another one is ConnectionFactory::connections_) try to free `this` independently.
@@ -1703,6 +1726,11 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
       logger::error({{"ev","fail to find value for key 'midLabelMap'"},{"req",client_req}});
       return QRPC_OK;
     }
+    const auto capit = client_req.find("capability");
+    if (capit == client_req.end()) {
+      QRPC_LOGJ(error, {{"ev","fail to find value for key 'capability'"},{"req",client_req}});
+      return QRPC_OK;
+    }
     // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
     // even if sdp anwser ask to do it.
     std::string ufrag, pwd;
@@ -1711,6 +1739,12 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
       logger::error({{"ev","fail to allocate connection"}});
       return QRPC_EALLOC;
     }
+    std::string answer;
+    auto cap_sdp = capit->get<std::string>();
+    if (!c->SetRtpCapability(cap_sdp, answer)) {
+      QRPC_LOGJ(error, {{"ev","fail to parse capability"},{"capability_sdp",cap_sdp}});
+      return QRPC_OK;
+    }
     c->SetCname(cnit->get<std::string>());
     const auto rtpit = client_req.find("rtp");
     if (rtpit != client_req.end()) {
@@ -1718,15 +1752,14 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
       c->rtp_handler().SetNegotiationArgs(rtpit->get<std::map<std::string,json>>());
     }
     SDP sdp(client_sdp);
-    std::string server_sdp;
-    if (!sdp.Answer(mlmit->get<std::map<std::string, std::string>>(), *c, server_sdp)) {
-      logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",server_sdp}});
+    if (!sdp.Answer(mlmit->get<std::map<std::string, std::string>>(), *c, answer)) {
+      logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",answer}});
       return QRPC_EINVAL; // if return from here, c will be freed because no anchor exists
     }
     connections_.emplace(std::move(ufrag), c);
     c->RegisterCname();
     // generate response
-    response.emplace("sdp", std::move(server_sdp));
+    response.emplace("sdp", std::move(answer));
     if (c->rtp_enabled()) {
       response.emplace("mid_media_path_map",c->rtp_handler().mid_media_path_map());
     }

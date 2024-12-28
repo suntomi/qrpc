@@ -474,9 +474,9 @@ a=rtpmap:116 red/90000
 a=rtpmap:117 rtx/90000
 a=fmtp:117 apt=116
 a=rtpmap:118 ulpfec/90000
-a=rid:h1 send
-a=rid:m1 send
-a=rid:l1 send
+a=rid:h1 send max-bitrate=500000;scalability-mode=L1T3
+a=rid:m1 send max-bitrate=500000;scalability-mode=L1T3
+a=rid:l1 send max-bitrate=500000;scalability-mode=L1T3
 a=simulcast:send h1;m1;l1
 m=audio 9 UDP/TLS/RTP/SAVPF 111 63 9 0 8 13 110 126
 c=IN IP4 0.0.0.0

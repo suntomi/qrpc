@@ -122,16 +122,19 @@ namespace rtp {
 		);
 		return ::flatbuffers::GetRoot<FBS::Transport::Options>(fbb.GetBufferPointer());
 	}
+	const std::vector<Parameters::MediaKind> &Handler::SupportedMediaKind() {
+		static const std::vector<Parameters::MediaKind> kinds = {
+			Parameters::MediaKind::AUDIO, Parameters::MediaKind::VIDEO
+		};
+		return kinds;
+	}
 	bool Handler::PrepareConsume(
       Handler &peer, const std::vector<std::string> &parsed_media_path,
 			const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
 			MediaStreamConfigs &media_stream_configs, std::vector<uint32_t> &generated_ssrcs
 	) {
-		static const std::vector<Parameters::MediaKind> kinds = {
-			Parameters::MediaKind::AUDIO, Parameters::MediaKind::VIDEO
-		};
 		const auto &label = parsed_media_path[1];
-		for (const auto k : kinds) {
+		for (const auto k : SupportedMediaKind()) {
 			auto media_path = parsed_media_path[0] + "/" + label + "/" + Parameters::FromMediaKind(k);
 			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
 				return c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
@@ -144,12 +147,13 @@ namespace rtp {
 				});
 				continue;
 			}
-			auto local_producer = FindProducer(label, k);
-			if (local_producer == nullptr) {
+			auto capit = listener_.capabilities().find(k);
+			if (capit == listener_.capabilities().end()) {
 				QRPC_LOGJ(info, {
-					{"ev","ignore media because corresponding producer not found"},
+					{"ev","ignore media type which is not supported"},
 					{"label",label},{"kind",Parameters::FromMediaKind(k)}
 				});
+				ASSERT(false);
 				continue;
 			}
 			auto consumed_producer = peer.FindProducer(label, k);
@@ -171,7 +175,7 @@ namespace rtp {
 			config.rtp_proto = consumed_producer->params().rtp_proto;
 			config.ssrc_seed = consumed_producer->params().ssrc_seed;
 			// generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
-			if (!local_producer->consumer_params(consumed_producer->params(), config)) {
+			if (!Producer::consumer_params(consumed_producer->params(), capit->second, config)) {
 				QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
 				ASSERT(false);
 				continue;
@@ -309,49 +313,49 @@ namespace rtp {
 		// puts(Dump<FBS::Producer::DumpResponse>("producer", "FBS.Producer.DumpResponse", fbb).c_str());
 		return producer != nullptr ? QRPC_OK : QRPC_EINVAL;
 	}
-	bool Handler::SetExtensionId(uint8_t id, const std::string &uri) {
-		if (uri == "urn:ietf:params:rtp-hdrext:toffset") {
+	void Handler::UpdateByCapability(const Capability &cap) {
+		for (const auto &he : cap.headerExtensions) {
+			SetExtensionId(he.id, he.type);
+		}
+	}
+	bool Handler::SetExtensionId(uint8_t id, RTC::RtpHeaderExtensionUri::Type uri) {
+		if (uri == RTC::RtpHeaderExtensionUri::Type::TOFFSET) {
 			ext_ids().toffset = id;
-		} else if (uri == "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME) {
 			ext_ids().absSendTime = id;
-		} else if (uri == "urn:3gpp:video-orientation") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::VIDEO_ORIENTATION) {
 			ext_ids().videoOrientation = id;
-		} else if (uri == "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::TRANSPORT_WIDE_CC_01) {
 			ext_ids().transportWideCc01 = id;
-		} else if (uri == "urn:ietf:params:rtp-hdrext:sdes:mid") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::MID) {
 			ext_ids().mid = id;
-		} else if (uri == "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::RTP_STREAM_ID) {
 			ext_ids().rid = id;
-		} else if (uri == "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::REPAIRED_RTP_STREAM_ID) {
 			ext_ids().rrid = id;
-		} else if (uri == "urn:ietf:params:rtp-hdrext:ssrc-audio-level") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::SSRC_AUDIO_LEVEL) {
 			ext_ids().ssrcAudioLevel = id;
-		} else if (uri == "http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::FRAME_MARKING_07) {
 			ext_ids().frameMarking07 = id;
-		} else if (uri == "urn:ietf:params:rtp-hdrext:framemarking") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::FRAME_MARKING) {
 			ext_ids().frameMarking = id;
-		} else if (uri == "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time") {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME) {
 			ext_ids().absCaptureTime = id;
 		} else if (
-			uri == "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay"
+			uri == RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY
 		) {
 			// mediasoup ignored but supported (why?)
 			return true;
-		} else if (
-			uri == "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type" ||
-			uri == "http://www.webrtc.org/experiments/rtp-hdrext/video-timing" ||
-			uri == "http://www.webrtc.org/experiments/rtp-hdrext/color-space" ||
-			uri == "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension" ||
-			uri == "http://www.webrtc.org/experiments/rtp-hdrext/video-layers-allocation00"
-		) {
-			// ignored and not supported
-			return false;
 		} else {
+			// "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type"
+			// "http://www.webrtc.org/experiments/rtp-hdrext/video-timing"
+			// "http://www.webrtc.org/experiments/rtp-hdrext/color-space"
+			// "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension"
+			// "http://www.webrtc.org/experiments/rtp-hdrext/video-layers-allocation00"
 			QRPC_LOGJ(warn, {{"ev","unknown extmap uri"},{"uri", uri}});
 			ASSERT(false);
 			return false;
 		}
-		return true;
 	}
 }
 }

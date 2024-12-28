@@ -301,8 +301,9 @@ a=msid-semantic: WMS
       params.media_path = c.cname() + "/qrpc/app";
       params.mid = c.GenerateMid();
     } else {
+      rtp::Capability cap;
       c.InitRTP();
-      if (!params.Parse(c.rtp_handler(), section, errmsg)) {
+      if (!params.Parse(section, cap, errmsg, &c.rtp_handler())) {
         return false;
       }
       auto lit = mid_label_map.find(params.mid);

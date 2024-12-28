@@ -62,14 +62,6 @@ namespace rtp {
     return current_candidate;
   }
 
-  RTC::RtpCodecParameters *Parameters::CodecByPayloadType(uint64_t pt) {
-    for (auto &c : codec_capabilities) {
-      if (c.payloadType == pt) {
-        return &c;
-      }
-    }
-    return nullptr;
-  }
   std::string Parameters::FromMediaKind(MediaKind k) {
     switch (k) {
       case MediaKind::AUDIO: return "audio";
@@ -224,7 +216,7 @@ namespace rtp {
     return p;
   }
 
-  bool Parameters::Parse(Handler &h, const json &section, std::string &answer)  {
+  bool Parameters::Parse(const json &section, Capability &cap, std::string &answer, const Handler *h)  {
     auto midit = section.find("mid");
     if (midit == section.end()) {
       answer = "section: no value for key 'mid'";
@@ -282,9 +274,6 @@ namespace rtp {
       auto t = FromUri(uri);
       if (t.has_value()) {
         auto id = static_cast<uint8_t>(t.value());
-        if (!h.SetExtensionId(id, uri)) {
-          continue; // not supported uri
-        }
         auto &p = this->headerExtensions.emplace_back();
         p.id = id;
         p.type = t.value();
@@ -371,7 +360,7 @@ namespace rtp {
         }
         auto encit = it->find("encoding");
         try {
-          auto &c = this->codec_capabilities.emplace_back();
+          auto &c = cap.codecs.emplace_back();
           c.mimeType.SetMimeType(str::Format("%s/%s", FBS::RtpParameters::EnumNamesMediaKind()[kind], codec.c_str()));
           c.channels = encit == it->end() ? 0 : std::stoul(encit->get<std::string>().c_str());
           c.payloadType = pt;
@@ -431,7 +420,7 @@ namespace rtp {
         try {
           auto pt = std::stoul(plit->get<std::string>());
           // TODO: if it too heavy, process only selected payload type, may work (including processed with consumer)
-          c = CodecByPayloadType(pt);
+          c = cap.CodecByPayloadType(pt);
           if (c == nullptr) {
             continue;
           }
@@ -462,7 +451,7 @@ namespace rtp {
       ASSERT(false);
       return false;
     }
-    auto selected_codec = CodecByPayloadType(selected_pt);
+    auto selected_codec = cap.CodecByPayloadType(selected_pt);
     if (selected_codec == nullptr) {
         answer = str::Format("rtpmap: selected pt not found: %llu", selected_pt);
         ASSERT(false);
@@ -474,7 +463,7 @@ namespace rtp {
     auto rtx_pt = 0;
     if (rtxit != rtxmap.end()) {
       rtx_pt = rtxit->second;
-      auto rtx_codec = CodecByPayloadType(rtx_pt);
+      auto rtx_codec = cap.CodecByPayloadType(rtx_pt);
       if (rtx_codec == nullptr) {
         answer = str::Format("rtpmap: rtx pt not found: %llu", rtx_pt);
         ASSERT(false);
@@ -599,7 +588,7 @@ namespace rtp {
       auto &rids = dir1 == "send" ? simulcast.send_rids : simulcast.recv_rids;
       rids = lit->get<std::string>();
       for (auto &rid : str::Split(rids, ";")) {
-        auto scalability_mode = h.FindScalabilityMode(rid);
+        auto scalability_mode = h != nullptr ? h->FindScalabilityMode(rid) : "";
         AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
       }
       auto d2it = scit->find("dir2");
@@ -609,11 +598,13 @@ namespace rtp {
         auto &rids = dir2 == "send" ? simulcast.send_rids : simulcast.recv_rids;
         rids = l2it->get<std::string>();
         for (auto &rid : str::Split(rids, ";")) {
-          auto scalability_mode = h.FindScalabilityMode(rid);
+          auto scalability_mode = h != nullptr ? h->FindScalabilityMode(rid) : "";
           AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
         }
       }
     }
+    // cap also need headerExtensions parameter for checking which header extension supported
+    cap.headerExtensions = this->headerExtensions;
     return true;
   }
   std::string Parameters::Answer(const std::string &cname) const {

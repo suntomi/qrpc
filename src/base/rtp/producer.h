@@ -2,6 +2,7 @@
 
 #include "base/defs.h"
 #include "base/media.h"
+#include "base/rtp/capability.h"
 #include "base/rtp/parameters.h"
 
 #include "RTC/Producer.hpp"
@@ -22,11 +23,8 @@ namespace rtp {
     ) : RTC::Producer(s, id, l, p), params_(original_params), media_(m) {}
     ~Producer() override {}
     static bool consumer_params(
-      const RTC::RtpParameters &consumed_producer_params, const Parameters &consumer_params, Parameters &p
+      const RTC::RtpParameters &consumed_producer_params, const Capability &consumer_capability, Parameters &p
     );
-    bool consumer_params(const RTC::RtpParameters &consumed_producer_params, Parameters &p) const {
-      return consumer_params(consumed_producer_params, params_, p);
-    }
     const Parameters &params() const { return params_; }
   protected:
     Parameters params_;

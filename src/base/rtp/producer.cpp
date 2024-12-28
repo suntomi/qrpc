@@ -5,7 +5,9 @@
 
 namespace base {
 namespace rtp {
-	bool Producer::consumer_params(const RTC::RtpParameters &consumed_producer_params, const Parameters &consumer_params, Parameters &p) {
+	bool Producer::consumer_params(
+		const RTC::RtpParameters &consumed_producer_params,
+		const Capability &consumer_capability, Parameters &p) {
 		// p.mid will be set by Handler::PrepareConsume
 		// choose codecs from consumed_producer_params.codecs that matched params_.codec_capabilities
 		std::map<int32_t, const RTC::RtpCodecParameters *> rtxmap;
@@ -17,7 +19,7 @@ namespace rtp {
 				}
 				continue;
 			}
-			for (auto &receivable_codec : consumer_params.codec_capabilities) {
+			for (auto &receivable_codec : consumer_capability.codecs) {
 				if (consumable_codec.mimeType == receivable_codec.mimeType) {
 					p.codecs.emplace_back(consumable_codec);
 				}
@@ -35,7 +37,7 @@ namespace rtp {
 		// extensions are remained
 		bool transport_wide_cc = false, goog_remb = false;
 		for (auto &ext : consumed_producer_params.headerExtensions) {
-			for (auto &ext2 : consumer_params.headerExtensions) {
+			for (auto &ext2 : consumer_capability.headerExtensions) {
 				if (ext.id == ext2.id && ext.type == ext2.type) {
 					p.headerExtensions.emplace_back(ext2);
 					if (ext2.type == RTC::RtpHeaderExtensionUri::Type::TRANSPORT_WIDE_CC_01) {
