@@ -70,7 +70,7 @@ class QRPCTrack {
       this.track.stop();
       this.track = null;
       this.transceiver = null;
-      this.lastPC = null;
+      this.stream = null;
       this.opened = false;
     }
   }
@@ -93,7 +93,7 @@ class QRPClient {
       if (data.fn === "close") {
         console.log("shutdown by server");
         this.close();
-      } 
+      }
     } else {
       const promise = this.#fetchPromise(data.msgid);
       if (!promise) {
@@ -132,6 +132,10 @@ class QRPClient {
         Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
         console.log("midMediaPathMap => ", this.midMediaPathMap);
         promise.resolve(data.args.sdp);
+      } else if (
+        data.fn == "resume_ack" || data.fn == "pause_ack"
+      ) {
+        promise.resolve();
       }
     }
   }
@@ -656,6 +660,14 @@ class QRPClient {
     }
     await this.#setRemoteOffer(remoteOffer);
     return tracks;
+  }
+  async pauseMedia(label) {
+    console.log("pause", label);
+    await this.syscall("pause", { label });
+  }
+  async resumeMedia(label) {
+    console.log("resume", label);
+    await this.syscall("resume", { label });
   }
   closeMedia(label, kind) {
     const kinds = kind ? [kind] : ["video", "audio"];

@@ -226,6 +226,67 @@ namespace rtp {
 		// puts(Dump<FBS::Consumer::DumpResponse>("consumer", "FBS.Consumer.DumpResponse", fbb).c_str());
 		return true;
 	}
+	struct ControlSet {
+		static const FBS::Request::Method DOES_NOT_SUPPORT = FBS::Request::Method::WORKER_CLOSE;
+		FBS::Request::Method producer_method, consumer_method;
+	};
+	static std::map<std::string, ControlSet> g_controls = {
+		{"pause", {.producer_method = FBS::Request::Method::PRODUCER_PAUSE, .consumer_method = FBS::Request::Method::CONSUMER_PAUSE}},
+		{"resume", {.producer_method = FBS::Request::Method::PRODUCER_RESUME, .consumer_method = FBS::Request::Method::CONSUMER_RESUME}}
+	};
+	bool Handler::ControlStream(const std::string &label, const std::string &control) {
+		auto cit = g_controls.find(control);
+		if (cit == g_controls.end()) {
+			QRPC_LOGJ(error, {{"ev","undefined control"},{"control",control}});
+			ASSERT(false);
+			return false;
+		}
+		auto parsed = str::Split(label, "/");
+		if (parsed.size() == 2) { // $label/(audio|video)
+			if (cit->second.producer_method == ControlSet::DOES_NOT_SUPPORT) {
+				QRPC_LOGJ(info, {{"ev","control for producer does not supported"},{"control",control},{"id",id}});
+				return false;
+			}
+			auto id = ProducerFactory::GenerateId(rtp_id(), parsed[0], Parameters::ToMediaKind(parsed[1]));
+			auto producer = FindProducer(id);
+			if (producer == nullptr) {
+				QRPC_LOGJ(info, {{"ev","no producer found for pause"},{"id",id}});
+				return false;
+			}
+			try {
+				auto req = CreateRequest<void>(GetFBB(), cit->second.producer_method);
+				producer->HandleRequest(&req);
+			} catch (std::exception &e) {
+				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",control},{"id",id},{"error",e.what()}});
+				return false;
+			}
+			return true;
+		} else if (parsed.size() == 3) {
+			if (cit->second.consumer_method == ControlSet::DOES_NOT_SUPPORT) {
+				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",control},{"id",id}});
+				return false;
+			}
+			const auto &peer_rtp_id = listener_.FindRtpIdFrom(parsed[0]);
+			if (peer_rtp_id.empty()) {
+				QRPC_LOGJ(error, {{"ev","no connection with the cname found"},{"cname",parsed[0]}});
+				return false;
+			}
+			auto id = ConsumerFactory::GenerateId(rtp_id(), peer_rtp_id, parsed[1], Parameters::ToMediaKind(parsed[2]));
+			auto consumer = FindConsumer(id);
+			if (consumer == nullptr) {
+				QRPC_LOGJ(info, {{"ev","no producer found for pause"},{"id",id}});
+				return false;
+			}
+			try {
+				auto req = CreateRequest<void>(GetFBB(), cit->second.consumer_method);
+				consumer->HandleRequest(&req);
+			} catch (std::exception &e) {
+				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",control},{"id",id},{"error",e.what()}});
+				return false;
+			}
+			return true;
+		}
+	}
 	Producer *Handler::FindProducer(const std::string &label, Parameters::MediaKind kind) const {
 		auto gid = ProducerFactory::GenerateId(rtp_id(), label, kind);
 		return FindProducer(gid);
@@ -296,6 +357,11 @@ namespace rtp {
 		// if label is found from rid or ssrc, find media from medias_ by using label
 		// otherwise, return empty shared_ptr
 		return nullptr;
+	}
+	void Handler::Close() {
+		// close all producer (and consumer) to notice consumers that streams are closed
+		// then consumers try to re-subscribe same produced stream and connect to new connection
+		RTC::Transport::CloseProducersAndConsumers();
 	}
 	int Handler::Produce(const std::string &id, const Parameters &p) {
 		auto l = FindLabelByMid(p.mid);

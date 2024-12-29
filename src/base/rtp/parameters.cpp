@@ -71,6 +71,19 @@ namespace rtp {
     ASSERT(false);
     return "";
   }
+  Parameters::MediaKind Parameters::ToMediaKind(std::string &kind) {
+    if (kind == "audio") {
+      return MediaKind::AUDIO;
+    } else if (kind == "video") {
+      return MediaKind::VIDEO;
+    } else if (kind == "app") {
+      return MediaKind::APP;
+    } else {
+      ASSERT(false);
+      return MediaKind::APP;
+    }
+  }
+
   std::vector<::flatbuffers::Offset<FBS::RtpParameters::CodecMapping>>
   Parameters::PackCodecMapping(::flatbuffers::FlatBufferBuilder &fbb) const {
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::CodecMapping>> r;

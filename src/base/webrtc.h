@@ -245,6 +245,7 @@ namespace webrtc {
       const std::string &cname() const override { return cname_; }
       const std::map<rtp::Parameters::MediaKind, rtp::Capability> &
         capabilities() const override { return capabilities_; }
+      const std::string &FindRtpIdFrom(std::string &cname) override;
       const std::string GenerateMid() override {
         auto mid = mid_seed_++;
         if (mid_seed_ > 1000000000) { ASSERT(false); mid_seed_ = 0; } 
@@ -364,9 +365,7 @@ namespace webrtc {
       }
     }
   protected:
-    void RegisterCname(const std::string &cname, std::shared_ptr<Connection> &c) {
-      cnmap_.emplace(cname, c);
-    }
+    void RegisterCname(const std::string &cname, std::shared_ptr<Connection> &c);
     std::shared_ptr<Connection> Create(
       RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd, bool do_entry = false);
     void CloseConnection(Connection &c);

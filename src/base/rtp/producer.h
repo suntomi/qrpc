@@ -22,10 +22,11 @@ namespace rtp {
       const FBS::Transport::ProduceRequest *p, std::shared_ptr<Media> m
     ) : RTC::Producer(s, id, l, p), params_(original_params), media_(m) {}
     ~Producer() override {}
+    const Parameters &params() const { return params_; }
+  public:
     static bool consumer_params(
       const RTC::RtpParameters &consumed_producer_params, const Capability &consumer_capability, Parameters &p
     );
-    const Parameters &params() const { return params_; }
   protected:
     Parameters params_;
     std::shared_ptr<Media> media_;

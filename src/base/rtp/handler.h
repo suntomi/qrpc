@@ -79,6 +79,7 @@ namespace rtp {
       virtual const std::string &rtp_id() const = 0;
       virtual const std::string &cname() const = 0;
       virtual const std::map<Parameters::MediaKind, Capability> &capabilities() const = 0;
+      virtual const std::string &FindRtpIdFrom(std::string &cname) = 0;
       virtual const std::string GenerateMid() = 0;
       virtual void RecvStreamClosed(uint32_t ssrc) = 0;
       virtual void SendStreamClosed(uint32_t ssrc) = 0;
@@ -122,27 +123,31 @@ namespace rtp {
     }
     inline std::string GenerateMid() { return listener_.GenerateMid(); }
     qrpc_time_t OnTimer(qrpc_time_t now);
-    template <typename BodyOffset>
-    static Channel::ChannelRequest CreateRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) {
+    template <typename Body>
+    static Channel::ChannelRequest CreateRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs = 0) {
       auto btit = payload_map_.find(m);
       if (btit == payload_map_.end()) {
         ASSERT(false);
         return;
       }
       fbb.Finish(FBS::Request::CreateRequestDirect(
-        fbb, 0, m, "dummy", btit->second, flatbuffers::Offset<void>(ofs.o)
+        fbb, 0, m, "dummy", btit->second, ::flatbuffers::Offset<void>(ofs.o)
       ));
-      return Channel::ChannelRequest(&socket(), flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()));
+      return Channel::ChannelRequest(&socket(), ::flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()));
     }
-    template <typename BodyOffset> void HandleRequest(FBB &fbb, FBS::Request::Method m, BodyOffset ofs) { 
+    template <typename Body> void HandleRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs) { 
       RTC::Transport::HandleRequest(&Handler::CreateRequest(fbb, m, ofs));
     }
+    void Close();
     int Produce(const std::string &id, const Parameters &p);
     bool PrepareConsume(
       Handler &peer, const std::vector<std::string> &parsed_media_path, 
       const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
       MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
     bool Consume(Handler &peer, const std::string &label, const MediaStreamConfig &config);
+    bool ControlStream(const std::string &label, const std::string &control);
+    bool Pause(const std::string &label) { return ControlStream(label, "pause"); }
+    bool Resume(const std::string &label) { return ControlStream(label, "resume"); }
     bool SetExtensionId(uint8_t id, RTC::RtpHeaderExtensionUri::Type uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     void UpdateMidMediaPathMap(const std::string &mid, const std::string &path) {

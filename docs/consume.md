@@ -25,3 +25,12 @@ test
 - consumeできる
 - 同じやつを２回consumeしても大丈夫(変化なし)
 - 3つ以上consumeできる
+
+
+pause/resume
+- labelからproducer/consumerを探して操作する
+- producer/consumerのidはconnection idを使っている(cnameではない)
+- cname => connection idの検索が必要
+- cnameを使わない理由は、cnameが一緒だったとしても、その中身のストリームはもはや一緒ではなく、中身が変わった段階で、それをみているクライアントは新しいストリームに繋ぎ直す必要があるため。
+- 再接続時に古いconnectionを探して切断する。その際に切断の通知が各みているクライアントに届くはず。それをみて適切にconsumeしなおせば問題ない
+- cnameのエントリーがすでに存在している場合に

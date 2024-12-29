@@ -116,6 +116,16 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
   }
   return it->second;
 }
+void ConnectionFactory::RegisterCname(
+  const std::string &cname, std::shared_ptr<Connection> &c) {
+  auto prevcit = cnmap_.find(cname);
+  if (prevcit != cnmap_.end() && prevcit->second->ufrag() != c->ufrag()) {
+    QRPC_LOGJ(info, {{"ev","previous connection exists"},{"prev",prevcit->second->ufrag()},{"now",c->ufrag()}});
+    // cleanup old one
+    prevcit->second->Close();
+  }
+  cnmap_.emplace(cname, c);
+}
 std::shared_ptr<rtp::Handler>
 ConnectionFactory::FindHandler(const std::string &cname) {
   auto it = cnmap_.find(cname);
@@ -431,6 +441,26 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           {"ssrc_label_map",ssrc_label_map},
           {"mid_media_path_map",c.rtp_handler().mid_media_path_map()},{"sdp",sdp}
         });
+      } else if (fn == "pause") {
+        const auto lit = args.find("label");
+        if (lit == args.end()) {
+          QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
+          return QRPC_OK;
+        }
+        if (c.rtp_handler().Pause(lit->second.get<std::string>())) {
+          Call("consume_ack",msgid,{{"error","fail to pause track"}});
+          return QRPC_OK;
+        }
+      } else if (fn == "resume") {
+        const auto lit = args.find("label");
+        if (lit == args.end()) {
+          QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
+          return QRPC_OK;
+        }
+        if (c.rtp_handler().Resume(lit->second.get<std::string>())) {
+          Call("consume_ack",msgid,{{"error","fail to pause track"}});
+          return QRPC_OK;
+        }
       } else {
         QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
         ASSERT(false);
@@ -605,7 +635,7 @@ bool ConnectionFactory::Connection::SetRtpCapability(const std::string &cap_sdp,
       QRPC_LOGJ(error, {{"ev","cap_sdp parse error"},{"error",answer},{"sdp",cap_sdp}});
       return false;
     }
-    auto &cap = capabilities_.emplace(k, std::move(rtp::Capability())).first->second;
+    auto &cap = capabilities_.emplace(k, rtp::Capability()).first->second;
     rtp::Parameters params;
     if (!params.Parse(section, cap, answer)) {
       answer = "ail to parse section";
@@ -729,6 +759,10 @@ void ConnectionFactory::Connection::OnFinalize() {
 void ConnectionFactory::Connection::Close() {
   if (closed()) {
     return;
+  }
+  if (rtp_enabled()) {
+    QRPC_LOGJ(info, {{"ev","close rtp handler"},{"id",rtp_handler().rtp_id()}});
+    rtp_handler().Close();
   }
   if (syscall_ == nullptr) {
     syscall_ = std::dynamic_pointer_cast<SyscallStream>(OpenStream({
@@ -1296,6 +1330,14 @@ void ConnectionFactory::Connection::OnSctpAssociationBufferedAmount(
 }
 
 // implements rtp::Handler::Listener
+const std::string &ConnectionFactory::Connection::FindRtpIdFrom(std::string &cname) {
+  static std::string empty;
+  auto h = factory().FindHandler(cname);
+  if (h == nullptr) {
+    return empty;
+  }
+  return h->rtp_id();
+}
 void ConnectionFactory::Connection::RecvStreamClosed(uint32_t ssrc) {
   if (srtp_recv_ != nullptr) {
     srtp_recv_->RemoveStream(ssrc);
