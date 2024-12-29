@@ -447,20 +447,24 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
           return QRPC_OK;
         }
-        if (c.rtp_handler().Pause(lit->second.get<std::string>())) {
-          Call("consume_ack",msgid,{{"error","fail to pause track"}});
+        std::string reason;
+        if (!c.rtp_handler().Pause(lit->second.get<std::string>(), reason)) {
+          Call("pause_ack",msgid,{{"error","fail to pause track:" + reason}});
           return QRPC_OK;
         }
+        Call("pause_ack",msgid,{});
       } else if (fn == "resume") {
         const auto lit = args.find("label");
         if (lit == args.end()) {
           QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'label'"}});
           return QRPC_OK;
         }
-        if (c.rtp_handler().Resume(lit->second.get<std::string>())) {
-          Call("consume_ack",msgid,{{"error","fail to pause track"}});
+        std::string reason;
+        if (!c.rtp_handler().Resume(lit->second.get<std::string>(), reason)) {
+          Call("resume_ack",msgid,{{"error","fail to pause track:" + reason}});
           return QRPC_OK;
         }
+        Call("resume_ack",msgid,{});
       } else {
         QRPC_LOGJ(error, {{"ev","syscall is not supported"},{"fn",fn}});
         ASSERT(false);

@@ -67,58 +67,54 @@
       }
       createMediaClickHandler = (t) => {
         return async (event) => {
-          if (t.kind !== "video") {
-            throw new Error(`only video element should have the callback but ${t.kind}`);
-          }
-          const audioLabel = t.label.replace("video","audio");
           const paused = pausedElements[t.id];
-          if (paused) {
-            console.log("resume", t.label, audioLabel);
-            await c.resumeMedia(t.label);
-            await c.resumeMedia(audioLabel);
-            delete pausedElements[t.id];
-          } else {
-            console.log("pause", t.label, audioLabel);
-            await c.pauseMedia(t.label);
-            await c.resumeMedia(audioLabel);
-            pausedElements[t.id] = true;
+          try {
+            if (paused) {
+              console.log("resume", t.label);
+              await c.resumeMedia(t.label + "/video");
+              await c.resumeMedia(t.label + "/audio");
+              delete pausedElements[t.id];
+            } else {
+              console.log("pause", t.label);
+              await c.pauseMedia(t.label + "/video");
+              await c.pauseMedia(t.label + "/audio");
+              pausedElements[t.id] = true;
+            }
+          } catch (e) {
+            console.error(e);
           }
         }
       }
-      createMediaElement = (t, is_publish) => {
+      createMediaElement = (t, dom) => {
+        console.log("createMediaElement", t.label);
         const container_id = `media-${t.label.replace(/\//g, '-')}`;
         let container = document.getElementById(container_id);
         if (!container) {
           container = document.createElement('div');
           container.className = 'media-container';
           container.id = container_id;
+          const overlay = document.createElement('div');
+          overlay.className = 'overlay';
+          overlay.textContent = t.label;
+          container.appendChild(overlay);
+          console.log("click handler for", container_id);
+          container.addEventListener('click', createMediaClickHandler(t));
+          dom.appendChild(container);
         }
         let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
         if (!mediaElement) {
           mediaElement = document.createElement(t.kind);
           mediaElement.id = `${t.kind}-${t.id}`;
           mediaElement.autoplay = true;
-          /* now only published element can pause/resume (and I think its enough) */
-          if (t.kind === 'video' && is_publish) {
-              mediaElement.addEventListener('click', createMediaClickHandler(t));
-          }
+          container.appendChild(mediaElement);
         }
         mediaElement.srcObject = t.stream;
-
-        container.appendChild(mediaElement);
-        if (t.kind === 'video') {
-          const overlay = document.createElement('div');
-          overlay.className = 'overlay';
-          overlay.textContent = t.label;
-          container.appendChild(overlay);
-        }
         return container;
       }
-      showMedia = (t, dom, is_publish) => {
+      showMedia = (t, dom) => {
         let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
         if (!mediaElement) {
-          mediaElement = createMediaElement(t, is_publish)
-          dom.appendChild(mediaElement);
+          createMediaElement(t, dom);
         }
       }
       createMedia = async (path, handler) => {
@@ -140,7 +136,7 @@
       onPublish = async (event) => {
         const path = document.getElementById('label_pub').value;
         console.log(`publish: input path = ${path}`);
-        await createMedia(path, createMediaHandler(pubsList));
+        await createMedia(path, createMediaHandler(pubsList, true));
       }
       onSubscribe = async (event) => {
         const id = document.getElementById('idedit').value;
@@ -170,7 +166,7 @@
       c.onopen = async () => {
         console.log("client onopen called");
         setupUI(c);
-        await createMedia("webcam", createMediaHandler(pubsList));
+        await createMedia("webcam", createMediaHandler(pubsList, true));
         return context;
       };
       c.onclose = () => {

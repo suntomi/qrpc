@@ -81,6 +81,7 @@ class QRPClient {
   static MAX_MSGID = Number.MAX_SAFE_INTEGER;
   constructor(url, cname) {
     this.url = url;
+    this.cert = null;
     const bytes = new Uint8Array(8);
     this.cname = cname || this.#genCN();
     console.log("QRPClient", this.cname, url);
@@ -100,7 +101,7 @@ class QRPClient {
         console.log(`promises for msgid:${data.msgid} does not exist`);
         return;
       }
-      if (data.args.error) {
+      if (data.args && data.args.error) {
         promise.reject(new Error(data.args.error));
         return;
       }
@@ -205,7 +206,7 @@ class QRPClient {
         namedCurve: 'P-256'
       });
     }
-    // create dummy peer connection to generate sdp
+    // always uses same cert for peer connection
     return new RTCPeerConnection({
       iceServers: [],
       certificates: [this.cert]

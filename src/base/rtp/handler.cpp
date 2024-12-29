@@ -234,9 +234,10 @@ namespace rtp {
 		{"pause", {.producer_method = FBS::Request::Method::PRODUCER_PAUSE, .consumer_method = FBS::Request::Method::CONSUMER_PAUSE}},
 		{"resume", {.producer_method = FBS::Request::Method::PRODUCER_RESUME, .consumer_method = FBS::Request::Method::CONSUMER_RESUME}}
 	};
-	bool Handler::ControlStream(const std::string &label, const std::string &control) {
+	bool Handler::ControlStream(const std::string &label, const std::string &control, std::string &error) {
 		auto cit = g_controls.find(control);
 		if (cit == g_controls.end()) {
+			error = "undefined control:" + control;
 			QRPC_LOGJ(error, {{"ev","undefined control"},{"control",control}});
 			ASSERT(false);
 			return false;
@@ -244,12 +245,14 @@ namespace rtp {
 		auto parsed = str::Split(label, "/");
 		if (parsed.size() == 2) { // $label/(audio|video)
 			if (cit->second.producer_method == ControlSet::DOES_NOT_SUPPORT) {
+				error = "producer does not support the control:" + control;
 				QRPC_LOGJ(info, {{"ev","control for producer does not supported"},{"control",control},{"id",id}});
 				return false;
 			}
 			auto id = ProducerFactory::GenerateId(rtp_id(), parsed[0], Parameters::ToMediaKind(parsed[1]));
 			auto producer = FindProducer(id);
 			if (producer == nullptr) {
+				error = "no producer found:" + id;
 				QRPC_LOGJ(info, {{"ev","no producer found for pause"},{"id",id}});
 				return false;
 			}
@@ -257,12 +260,13 @@ namespace rtp {
 				auto req = CreateRequest<void>(GetFBB(), cit->second.producer_method);
 				producer->HandleRequest(&req);
 			} catch (std::exception &e) {
+				error = "request failure:" + std::string(e.what());
 				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",control},{"id",id},{"error",e.what()}});
 				return false;
 			}
-			return true;
 		} else if (parsed.size() == 3) {
 			if (cit->second.consumer_method == ControlSet::DOES_NOT_SUPPORT) {
+				error = "consumer does not support the control:" + control;
 				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",control},{"id",id}});
 				return false;
 			}
@@ -274,6 +278,7 @@ namespace rtp {
 			auto id = ConsumerFactory::GenerateId(rtp_id(), peer_rtp_id, parsed[1], Parameters::ToMediaKind(parsed[2]));
 			auto consumer = FindConsumer(id);
 			if (consumer == nullptr) {
+				error = "no consumer found:" + id;
 				QRPC_LOGJ(info, {{"ev","no producer found for pause"},{"id",id}});
 				return false;
 			}
@@ -281,11 +286,12 @@ namespace rtp {
 				auto req = CreateRequest<void>(GetFBB(), cit->second.consumer_method);
 				consumer->HandleRequest(&req);
 			} catch (std::exception &e) {
+				error = "request failure:" + std::string(e.what());
 				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",control},{"id",id},{"error",e.what()}});
 				return false;
 			}
-			return true;
 		}
+		return true;
 	}
 	Producer *Handler::FindProducer(const std::string &label, Parameters::MediaKind kind) const {
 		auto gid = ProducerFactory::GenerateId(rtp_id(), label, kind);
@@ -407,11 +413,8 @@ namespace rtp {
 			ext_ids().frameMarking = id;
 		} else if (uri == RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME) {
 			ext_ids().absCaptureTime = id;
-		} else if (
-			uri == RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY
-		) {
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY) {
 			// mediasoup ignored but supported (why?)
-			return true;
 		} else {
 			// "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type"
 			// "http://www.webrtc.org/experiments/rtp-hdrext/video-timing"
@@ -422,6 +425,7 @@ namespace rtp {
 			ASSERT(false);
 			return false;
 		}
+		return true;
 	}
 }
 }

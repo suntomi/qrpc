@@ -127,12 +127,13 @@ namespace rtp {
     static Channel::ChannelRequest CreateRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs = 0) {
       auto btit = payload_map_.find(m);
       if (btit == payload_map_.end()) {
-        ASSERT(false);
-        return;
+        ASSERT(ofs.o == 0);
+        fbb.Finish(FBS::Request::CreateRequestDirect(fbb, 0, m, "dummy"));
+      } else {
+        fbb.Finish(FBS::Request::CreateRequestDirect(
+          fbb, 0, m, "dummy", btit->second, ::flatbuffers::Offset<void>(ofs.o)
+        ));
       }
-      fbb.Finish(FBS::Request::CreateRequestDirect(
-        fbb, 0, m, "dummy", btit->second, ::flatbuffers::Offset<void>(ofs.o)
-      ));
       return Channel::ChannelRequest(&socket(), ::flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()));
     }
     template <typename Body> void HandleRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs) { 
@@ -145,9 +146,9 @@ namespace rtp {
       const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
       MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
     bool Consume(Handler &peer, const std::string &label, const MediaStreamConfig &config);
-    bool ControlStream(const std::string &label, const std::string &control);
-    bool Pause(const std::string &label) { return ControlStream(label, "pause"); }
-    bool Resume(const std::string &label) { return ControlStream(label, "resume"); }
+    bool ControlStream(const std::string &label, const std::string &control, std::string &error);
+    bool Pause(const std::string &label, std::string &error) { return ControlStream(label, "pause", error); }
+    bool Resume(const std::string &label, std::string &error) { return ControlStream(label, "resume", error); }
     bool SetExtensionId(uint8_t id, RTC::RtpHeaderExtensionUri::Type uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     void UpdateMidMediaPathMap(const std::string &mid, const std::string &path) {
