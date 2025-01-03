@@ -351,6 +351,7 @@ namespace webrtc {
     std::shared_ptr<Connection> FindFromUfrag(const IceUFrag &ufrag);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
     void ScheduleClose(Connection &c) {
+      if (c.closed_) { return; }
       c.closed_ = true;
       c.alarm_id_ = alarm_processor().Set([this, &c]() {
         c.alarm_id_ = AlarmProcessor::INVALID_ID; // prevent AlarmProcessor::Cancel to be called

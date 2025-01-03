@@ -11,6 +11,7 @@
       .media-container {
         position: relative;
         width: 50vw; /* ビューポートの幅の50% */
+        display: flex; /* 子要素の高さに合わせる */        
       }
       .overlay {
         position: absolute;
@@ -60,6 +61,7 @@
     <div id="pubsList" class="media-list-container"></div>
     <div>subscribed tracks</div>
     <div id="subsList" class="media-list-container"></div>
+    <button id="reconnect">reconnect</button>
 
     <script src="http://localhost:8888/client.js"></script>
     <script>
@@ -67,14 +69,15 @@
       const subsList = document.getElementById('subsList');
       const pub = document.getElementById('pub');
       const sub = document.getElementById('sub');
+      const reconnect = document.getElementById('reconnect');
       const pausedElements = {};
       createOverlayElement = () => {
         const overlay = document.createElement('div');
         overlay.className = 'overlay';
         const icon = document.createElement('div');
         icon.className = 'icon';
-        icon.innerHTML = '&#10074;&#10074;'; // 一時停止アイコン（||）
-        overlay.appendChild(icon);        
+        icon.innerHTML = '&#9654;';
+        overlay.appendChild(icon);
         return overlay;
       }
       createMediaHandler = (dom) => {
@@ -88,19 +91,25 @@
           onclose: (track)=>{
             console.log("media close", track.stream.id, track.kind);
             const container_id = `media-${track.label.replace(/\//g, '-')}`;
-            document.getElementById(container_id).remove();
+            document.getElementById(container_id)?.remove();
           },
           onpause: (track)=>{
             console.log("media pause", track.stream.id, track.kind);
             const container_id = `media-${track.label.replace(/\//g, '-')}`;
-            document.getElementById(container_id).appendChild(createOverlayElement());
+            const container = document.getElementById(container_id);
+            const overlays = container?.getElementsByClassName('overlay');
+            if (overlays?.length == 0) {
+              document.getElementById(container_id).appendChild(createOverlayElement());
+            }
           },
           onresume: (track)=>{
             console.log("media resume", track.stream.id, track.kind);
             const container_id = `media-${track.label.replace(/\//g, '-')}`;
             const container = document.getElementById(container_id);
-            const overlay = container.getElementsByClassName('overlay')[0];
-            container.removeChild(overlay);
+            const overlays = container?.getElementsByClassName('overlay');
+            if (overlays?.length > 0) {
+              container.removeChild(overlays[0]);
+            }
           },
         };
       }
@@ -185,6 +194,10 @@
         console.log(`subscribe: input path = ${path}`);
         await c.openMedia(path, createMediaHandler(subsList));
       }
+      onReconnect = (event) => {
+        console.log("shutdown by UI");
+        c.close();
+      }
       setupUI = (c) => {
         let idElement = document.getElementById("cname");
         if (idElement) {
@@ -192,10 +205,12 @@
         }
         pub.addEventListener('click', onPublish);
         sub.addEventListener('click', onSubscribe);
+        reconnect.addEventListener('click', onReconnect);
       }
       cleanupUI = (c) => {
         pub.removeEventListener('click', onPublish);
         sub.removeEventListener('click', onSubscribe);
+        reconnect.removeEventListener('click', onReconnect);
       }
       //Create whip client
       const url = "http://localhost:8888/qrpc";

@@ -102,6 +102,7 @@ namespace rtp {
     Handler(Listener &l) : RTC::Transport(&shared(), l.rtp_id(), &router(), TransportOptions(l.GetRtpConfig())),
       listener_(l), producer_factory_(*this), consumer_factory_(*this), medias_(),
       rid_label_map_(), trackid_label_map_(), ssrc_trackid_map_(), rid_scalability_mode_map_() {}
+    ~Handler() override { RTC::Transport::CloseProducersAndConsumers(); }
     inline Listener &listener() { return listener_; }
     inline const std::string &rtp_id() const { return listener_.rtp_id(); }
     inline const std::string &cname() const { return listener_.cname(); }

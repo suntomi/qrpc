@@ -373,11 +373,18 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       return QRPC_OK;
     }
     const auto &fn = fnit->get<std::string>();
+    const auto mit = data.find("msgid");
+    if (mit == data.end()) {
+      QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
+      return QRPC_OK;
+    }
+    const auto msgid = mit->get<uint64_t>();
     auto &c = dynamic_cast<Connection &>(connection());
-    QRPC_LOGJ(info, {{"ev", "recv from syscall stream"},{"fn",fn}});
+    QRPC_LOGJ(info, {{"ev", "recv from syscall stream"},{"fn",fn},{"msgid",msgid}});
     if (fn == "close") {
       QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
       c.factory().ScheduleClose(c);
+      Call("close_ack",msgid,{});
     } else {
       const auto ait = data.find("args");
       if (ait == data.end()) {
@@ -385,12 +392,6 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         return QRPC_OK;
       }
       const auto &args = ait->get<std::map<std::string,json>>();
-      const auto mit = data.find("msgid");
-      if (mit == data.end()) {
-        QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
-        return QRPC_OK;
-      }
-      const auto msgid = mit->get<uint64_t>();
       if (fn == "produce") {
         const auto sdpit = args.find("sdp");
         if (sdpit == args.end()) {
@@ -1353,6 +1354,7 @@ void ConnectionFactory::Connection::RecvStreamClosed(uint32_t ssrc) {
 }
 void ConnectionFactory::Connection::SendStreamClosed(uint32_t ssrc) {
   if (srtp_send_ != nullptr) {
+    QRPC_LOGJ(info, {{"ev","send stream closed"},{"ssrc",ssrc},{"cname",cname_}});
     srtp_send_->RemoveStream(ssrc);
   }
 }

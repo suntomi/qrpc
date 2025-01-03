@@ -95,7 +95,18 @@ class QRPClient {
     if (!data.msgid) {
       if (data.fn === "close") {
         console.log("shutdown by server");
-        this.close();
+        this.#close();
+      } else if (data.fn === "close_track") {
+        for (const label of data.args.labels) {
+          const t = this.tracks[label];
+          if (t) {
+            console.log("peer closes track", label);
+            t.close();
+            delete this.tracks[label];
+          } else {
+            console.log("no track for label", label);
+          }
+        }
       }
     } else {
       const promise = this.#fetchPromise(data.msgid);
@@ -136,7 +147,7 @@ class QRPClient {
         console.log("midMediaPathMap => ", this.midMediaPathMap);
         promise.resolve(data.args.sdp);
       } else if (
-        data.fn == "resume_ack" || data.fn == "pause_ack"
+        data.fn == "resume_ack" || data.fn == "pause_ack" || data.fn == "close_ack"
       ) {
         promise.resolve();
       }
@@ -318,7 +329,7 @@ class QRPClient {
     pc.oniceconnectionstatechange = (event) => {
       console.log("ICE connection state change", pc.iceConnectionState);
     }
-    pc.onconnectionstatechange = (event) =>{
+    pc.onconnectionstatechange = async (event) =>{
       console.log("Connection state change", pc.connectionState);
       switch(pc.connectionState) {
         case "connected":
@@ -327,7 +338,7 @@ class QRPClient {
         case "disconnected":
         case "failed":
           // One or more transports has terminated unexpectedly or in an error
-          this.close();
+          await this.#close();
           break;
         case "closed":
           // The connection has been closed
@@ -537,10 +548,17 @@ class QRPClient {
       throw e;
     }
   }
-  close() {
+  async close() {
+    await this.#close(true);
+  }
+  async #close(fromLocal) {
     if (!this.pc) {
       // Already stopped
       return
+    }
+    if (fromLocal) {
+      // send close message to server
+      await this.syscall("close", {});
     }
     let reconnectionWaitMS;
     if (this.onclose) {
