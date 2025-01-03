@@ -1,11 +1,13 @@
 class QRPCTrack {
   static key(label, kind) { return label + "/" + kind; }
-  constructor(label, stream, track, encodings, onopen, onclose) {
+  constructor(label, stream, track, encodings, {onopen, onclose, onpause, onresume}) {
     this.label = label;
     this.stream = stream;
     this.encodings = encodings;
     this.onopen = onopen;
     this.onclose = onclose;
+    this.onpause = onpause;
+    this.onresume = onresume;
     this.track = track
     this.direction = track ? "send" : "recv";
     this.opened = false;
@@ -610,7 +612,7 @@ class QRPClient {
       throw new Error(`invalid type: ${type}`);
     }
   }
-  async createMedia(label, {stream, encodings, options, onopen, onclose}) {
+  async createMedia(label, {stream, encodings, options, onopen, onclose, onpause, onresume}) {
     label = this.#canonicalizeLabel(label, "create");
     console.log("createMedia", label, stream, encodings);
     if (!encodings) {
@@ -629,7 +631,7 @@ class QRPClient {
     const tracks = [];
     stream.getTracks().forEach(t => {
       this.trackIdLabelMap[t.id] = label;
-      const track = new QRPCTrack(label, stream, t, encodings, onopen, onclose);
+      const track = new QRPCTrack(label, stream, t, encodings, {onopen, onclose, onpause, onresume});
       console.log("createMedia: add track for", track.key);
       this.tracks[track.key] = track;
       this.sentTracks.push(track);
@@ -646,14 +648,15 @@ class QRPClient {
     }
     return tracks;
   }
-  async openMedia(label, {onopen, onclose, audio, video}) {
+  async openMedia(label, {onopen, onclose, onpause, onresume, audio, video}) {
     label = this.#canonicalizeLabel(label, "open");
     const remoteOffer = await this.syscall("consume", { 
       label, options: (audio || video) ? { audio, video } : undefined
     });
     const tracks = [];
     for (const kind of ["video", "audio"]) {
-      const track = new QRPCTrack(label, null, null, undefined, onopen, onclose);
+      const track = new QRPCTrack(
+        label, null, null, undefined, {onopen, onclose, onpause, onresume});
       const key = QRPCTrack.key(label, kind);
       console.log("openMedia: add track for", key);
       this.tracks[key] = track;
@@ -662,13 +665,25 @@ class QRPClient {
     await this.#setRemoteOffer(remoteOffer);
     return tracks;
   }
-  async pauseMedia(label) {
-    console.log("pause", label);
-    await this.syscall("pause", { label });
+  async pauseMedia(media_path) {
+    console.log("pause", media_path);
+    const t = this.tracks[media_path];
+    if (t) {
+      await this.syscall("pause", { label: media_path });
+      t.onpause && t.onpause(t);
+    } else {
+      throw new Error("pauseMedia: no media for " + media_path);
+    }
   }
-  async resumeMedia(label) {
-    console.log("resume", label);
-    await this.syscall("resume", { label });
+  async resumeMedia(media_path) {
+    console.log("resume", media_path);
+    const t = this.tracks[media_path];
+    if (t) {
+      await this.syscall("resume", { label: media_path });
+      t.onresume && t.onresume(t);
+    } else {
+      throw new Error("resumeMedia: no media for " + media_path);
+    }
   }
   closeMedia(label, kind) {
     const kinds = kind ? [kind] : ["video", "audio"];

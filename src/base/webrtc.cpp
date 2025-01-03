@@ -307,6 +307,10 @@ int ConnectionFactory::Config::Derive() {
         ifaddrs.push_back(a.hostip());
       }
     }
+    if (ifaddrs.size() <= 0) {
+      logger::die({{"ev","no if address detected"},{"in6",in6}});
+      return QRPC_EDEPS;
+    }
   } else {
     logger::info({{"ev","add configured ip"},{"ip",ip}});
     ifaddrs.push_back(ip);
