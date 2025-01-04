@@ -1,7 +1,7 @@
 class QRPCTrack {
-  static key(label, kind) { return label + "/" + kind; }
-  constructor(label, stream, track, encodings, {onopen, onclose, onpause, onresume}) {
-    this.label = label;
+  static path(parent_path, kind) { return parent_path + "/" + kind; }
+  constructor(path, stream, track, encodings, {onopen, onclose, onpause, onresume}) {
+    this.path = path;
     this.stream = stream;
     this.encodings = encodings;
     this.onopen = onopen;
@@ -13,9 +13,9 @@ class QRPCTrack {
     this.opened = false;
   }
   get id() { return this.track.id; }
-  get key() { return QRPCTrack.key(this.label, this.track.kind); }
   get kind() { return this.track.kind; }
   get raw() { return this.track; }
+  get directory() { return this.path.split("/").slice(0, -1).join("/"); }
   get mid() { return this.transceiver.mid; }
   get active() { return this.track != null; }
   async open(pc, midMediaPathMap) {
@@ -29,20 +29,20 @@ class QRPCTrack {
           console.log("ignore receiver transceiver", t.sender.track);
           continue;
         }
-        const label = midMediaPathMap[t.mid];
-        if (!label) {
-          console.log("no label/kind for mid:", t.mid, midMediaPathMap);
+        const path = midMediaPathMap[t.mid];
+        if (!path) {
+          console.log("no path for mid:", t.mid, midMediaPathMap);
           continue;
         }
-        if (label === `${this.label}/${this.track.kind}`) {
+        if (path == this.path) {
           transceiver = t;
           break;
         }
       }
       if (!transceiver) {
-        throw new Error("no correspond transceiver:" + this.label + "|" + this.track.kind);
+        throw new Error("no correspond transceiver:" + this.path);
       }
-      console.log("found transceiver for", this.label, this.kind, transceiver);
+      console.log("found transceiver for", this.path, transceiver);
       transceiver.direction = "sendonly";
       if (this.kind === "video") {
         const params = transceiver.sender.getParameters();
@@ -97,15 +97,9 @@ class QRPClient {
         console.log("shutdown by server");
         this.#close();
       } else if (data.fn === "close_track") {
-        for (const label of data.args.labels) {
-          const t = this.tracks[label];
-          if (t) {
-            console.log("peer closes track", label);
-            t.close();
-            delete this.tracks[label];
-          } else {
-            console.log("no track for label", label);
-          }
+        for (const path of data.args.paths) {
+          console.log("close track", path);
+          this.closeMedia(path);
         }
       }
     } else {
@@ -227,16 +221,17 @@ class QRPClient {
   }
   #setupCallbacks(pc) {
     // Listen for data channels
-    pc.ondatachannel = (event) => {            
+    pc.ondatachannel = (event) => {       
       const s = event.channel;
-      console.log(`accept stream ${s.label}`);
+      const path = s.label;
+      console.log(`accept stream ${path}`);
       if (!this.onstream) {
         s.close();
         throw new Error("QRPClient.onstream is mandatory");
       }
       const h = this.onstream(s);
       if (!h) {
-        console.log(`No stream callbacks for label [${s.label}]`);
+        console.log(`No stream callbacks for path [${path}]`);
         s.close();
         return;
       }
@@ -250,62 +245,18 @@ class QRPClient {
       const tid = track.id;
       const receiver = event.receiver;
       // TODO: unify this step by using event.transceiver.mid and this.midMediaPathMap
-      let label = undefined;
+      let path = undefined;
       if (event.transceiver) {
-        const mediaPath = this.midMediaPathMap[event.transceiver.mid];
-        if (!mediaPath) {
-          console.log(`No mediaPath is defined for mid = ${event.transceiver.mid}`);
-        } else {
-          const parsed = mediaPath.split("/");
-          if (parsed.length < 2) {
-            throw new Error(`malformed media_path ${mediaPath}`)
-          } else if (parsed.length == 3) {
-            label = parsed[0] + "/" + parsed[1];
-          } else {
-            label = parsed[0];
-          }
+        path = this.midMediaPathMap[event.transceiver.mid];
+        if (!path) {
+          throw new Error(`No path is defined for mid = ${event.transceiver.mid}`);
         }
       } else {
-        console.log("event has no transceiver");
+        throw new Error("event has no transceiver");
       }
-      if (!label && receiver) {
-        // RTCRtpReceiverの統計情報を取得
-        const stats = await receiver.getStats();
-        for (const report of stats.values()) {
-          if (report.type === 'inbound-rtp') {
-            console.log(`track id: ${tid}, SSRC: ${report.ssrc}`);
-            label = this.ssrcLabelMap[report.ssrc];
-            if (!label) {
-              console.log(`No label is defined for ssrc = ${report.ssrc}`, this.ssrcLabelMap);
-            }
-            break;
-          }
-        }
-      }
-      if (!label) {
-        label = this.trackIdLabelMap[tid];
-        if (!label) {
-          // if local track, event.transceiver.sender.track may be registered
-          if (event.transceiver) {
-            if (event.transceiver.mid == "probator") {
-              console.log("ignore probator");
-              return;
-            }
-            console.log("event.transceiver.sender.track", event.transceiver.sender.track);
-            if (event.transceiver.sender.track != null) {
-              label = this.trackIdLabelMap[event.transceiver.sender.track.id];
-            }
-          }
-          if (!label) {
-            console.log(`No label is defined for tid = ${tid}`);
-            track.stop();
-            return;
-          }
-        }
-      }
-      let t = this.tracks[QRPCTrack.key(label, track.kind)];
+      let t = this.tracks[path];
       if (!t) {
-        console.log(`No media for label ${label}/${track.kind}`);
+        console.log(`No media for path ${path}`);
         track.stop();
         return;
       }
@@ -317,8 +268,8 @@ class QRPClient {
       if (!t.opened) {
         const r = t.onopen(t);
         if (r === false || r === null) {
-          console.log(`close media by application ${label}/${track.kind}`);
-          this.closeMedia(label, track.kind);
+          console.log(`close media by application ${path}`);
+          this.closeMedia(path);
           return;
         }
         t.opened = true;
@@ -393,7 +344,7 @@ class QRPClient {
     return result;
   }
   async #createOffer(tracks) {
-    const midLabelMap = {};
+    const midPathMap = {};
     // create dummy peer connection to generate sdp
     const pc = await this.#createPeerConnection();
     // emurate creating stream to generate correct sdp
@@ -409,12 +360,12 @@ class QRPClient {
       // now, mid is decided. mid (in server remote offer) probably changes 
       // after it processes on server side, but because of client mid also decided
       // by server remote offer, changes causes no problem.
-      midLabelMap[t.mid] = t.label;
+      midPathMap[t.mid] = t.path;
       t.ssrc = midSsrcMap[t.mid] || undefined;
-      console.log(`${t.label}/${t.kind},mid=${t.mid} ssrc = ${t.ssrc}`);
+      console.log(`${t.path},mid=${t.mid} ssrc = ${t.ssrc}`);
     }
     pc.close();
-    return {localOffer, midLabelMap};
+    return {localOffer, midPathMap};
   }
   modifyLocalAnswer(localAnswer, midSsrcMap) {
     console.log("modifyLocalAnswer", midSsrcMap);
@@ -500,7 +451,7 @@ class QRPClient {
       this.context = await this.onopen();
     }
     // Create new SDP offer without initializing actual peer connection
-    const {localOffer, midLabelMap: localMidLabelMap} = await this.#createOffer(this.sentTracks);
+    const {localOffer, midPathMap: localMidLabelMap} = await this.#createOffer(this.sentTracks);
     console.log("local offer sdp", localOffer.sdp, localMidLabelMap);
     // const oldSdp = this.pc.localDescription;
     // // (re)Set local description
@@ -517,7 +468,7 @@ class QRPClient {
         sdp:localOffer.sdp,
         cname:this.cname,
         rtp:this.#rtpPayload(),
-        midLabelMap: localMidLabelMap,
+        midPathMap: localMidLabelMap,
         capability: await this.#capability()
       }),
       headers: {
@@ -610,29 +561,20 @@ class QRPClient {
     }
     return undefined;
   }
-  #canonicalizeLabel(label, type) {
-    const parsed = label.split('/');
-    if (type == "create") {
-      if (parsed.length == 2) {
-        return parsed[1];
-      } else if (parsed.length == 1) {
-        return label;
-      } else {
-        throw new Error(`invalid label: ${label}`);
-      }
-    } else if (type == "open") {
-      if (parsed.length == 2) {
-        return label;
-      } else {
-        throw new Error(`invalid label: ${label}`);
-      }
+  #canonicalOpenPath(path) {
+    const parsed = path.split('/');
+    if (parsed.length == 1) {
+      return path;
     } else {
-      throw new Error(`invalid type: ${type}`);
+      if (parsed[parsed.length - 1].length > 0) {
+        throw new Error(`invalid path: ${path}: should be ended with /`);
+      }
+      return path.slice(0, -1);
     }
   }
-  async createMedia(label, {stream, encodings, options, onopen, onclose, onpause, onresume}) {
-    label = this.#canonicalizeLabel(label, "create");
-    console.log("createMedia", label, stream, encodings);
+  async openMedia(path, {stream, encodings, options, onopen, onclose, onpause, onresume}) {
+    const cpath = this.#canonicalOpenPath(path);
+    console.log("openMedia", cpath, stream, encodings);
     if (!encodings) {
       throw new Error("encoding is mandatory");
     }
@@ -640,7 +582,7 @@ class QRPClient {
       if (!e.rid) { throw new Error("for each encodings, rid is mandatory"); }
       if (!e.maxBitrate) { throw new Error("for each encodings, maxBitrate is mandatory"); }
       e.scalabilityMode = e.scalabilityMode || QRPClient.DEFAULT_SCALABILITY_MODE;
-      this.ridLabelMap[e.rid] = label;
+      this.ridLabelMap[e.rid] = cpath;
       this.ridScalabilityModeMap[e.rid] = e.scalabilityMode;
     });
     // sort by maxBitrate asc, because server regards earlier encoding as lower quality,
@@ -648,89 +590,102 @@ class QRPClient {
     encodings.sort((a, b) => a.maxBitrate - b.maxBitrate);
     const tracks = [];
     stream.getTracks().forEach(t => {
-      this.trackIdLabelMap[t.id] = label;
-      const track = new QRPCTrack(label, stream, t, encodings, {onopen, onclose, onpause, onresume});
-      console.log("createMedia: add track for", track.key);
-      this.tracks[track.key] = track;
+      const path = QRPCTrack.path(cpath, t.kind);
+      this.trackIdLabelMap[t.id] = path;
+      const track = new QRPCTrack(path, stream, t, encodings, {onopen, onclose, onpause, onresume});
+      console.log("openMedia: add track for", track.path);
+      this.tracks[track.path] = track;
       this.sentTracks.push(track);
       tracks.push(track);
     });
     if (this.#handshaked()) {
       // already handshaked, so renegotiate for newly produced tracks.
-      const {localOffer, midLabelMap} = await this.#createOffer(tracks);
-      console.log("createMedia: local offer", localOffer.sdp, midLabelMap);
+      const {localOffer, midPathMap} = await this.#createOffer(tracks);
+      console.log("openMedia: local offer", localOffer.sdp, midPathMap);
       const remoteOffer = await this.syscall("produce", { 
-        sdp: localOffer.sdp, options, midLabelMap
+        sdp: localOffer.sdp, options, midPathMap
       });
       await this.#setRemoteOffer(remoteOffer);
     }
     return tracks;
   }
-  async openMedia(label, {onopen, onclose, onpause, onresume, audio, video}) {
-    label = this.#canonicalizeLabel(label, "open");
+  #canonicalViewPath(path) {
+    const parsed = path.split('/');
+    if (parsed.length < 2) {
+      throw new Error(`invalid path: ${path}: at least \${cname}/\${single_component_local_path} required`);
+    } else if (parsed.length == 2) {
+      return { cpath: path, kind: undefined };
+    } else {
+      const last_component = parsed[parsed.length - 1];
+      if (last_component.length > 0) {
+        if (last_component !== "audio" && last_component !== "video") {
+          throw new Error(`invalid path: ${path}: should be ended with / or /audio or /video`);
+        }
+        return {cpath: parsed.slice(0, -1).join("/"), kind: last_component};
+      }
+      return { cpath: path.slice(0, -1), kind: undefined };
+    }
+  }
+  async viewMedia(path, {onopen, onclose, onpause, onresume, audio, video}) {
+    const {cpath, kind } = this.#canonicalViewPath(path);
     const remoteOffer = await this.syscall("consume", { 
-      label, options: (audio || video) ? { audio, video } : undefined
+      path: cpath, options: (audio || video) ? { audio, video } : undefined
     });
     const tracks = [];
-    for (const kind of ["video", "audio"]) {
-      const track = new QRPCTrack(
-        label, null, null, undefined, {onopen, onclose, onpause, onresume});
-      const key = QRPCTrack.key(label, kind);
-      console.log("openMedia: add track for", key);
-      this.tracks[key] = track;
+    for (const k of (kind ? [kind] : ["video", "audio"])) {
+      const path = QRPCTrack.path(cpath, k);
+      const track = new QRPCTrack(path, null, null, undefined, {onopen, onclose, onpause, onresume});
+      console.log("viewMedia: add track for", path);
+      this.tracks[path] = track;
       tracks.push(track);
     }
     await this.#setRemoteOffer(remoteOffer);
     return tracks;
   }
-  async pauseMedia(media_path) {
-    console.log("pause", media_path);
-    const t = this.tracks[media_path];
+  async pauseMedia(path) {
+    console.log("pause", path);
+    const t = this.tracks[path];
     if (t) {
-      await this.syscall("pause", { label: media_path });
+      await this.syscall("pause", { path });
       t.onpause && t.onpause(t);
     } else {
-      throw new Error("pauseMedia: no media for " + media_path);
+      throw new Error("pauseMedia: no media for " + path);
     }
   }
-  async resumeMedia(media_path) {
-    console.log("resume", media_path);
-    const t = this.tracks[media_path];
+  async resumeMedia(path) {
+    console.log("resume", path);
+    const t = this.tracks[path];
     if (t) {
-      await this.syscall("resume", { label: media_path });
+      await this.syscall("resume", { path });
       t.onresume && t.onresume(t);
     } else {
-      throw new Error("resumeMedia: no media for " + media_path);
+      throw new Error("resumeMedia: no media for " + path);
     }
   }
-  closeMedia(label, kind) {
-    const kinds = kind ? [kind] : ["video", "audio"];
-    for (const kind of kinds) {
-      const key = QRPCTrack.key(label, kind);
-      const t = this.tracks[key];
-      if (t) {
-        t.close();
-        delete this.tracks[key];
-      }
+  closeMedia(path) {
+    const t = this.tracks[path];
+    if (t) {
+      t.close();
+      delete this.tracks[path];
     }
   }
   // options combines createDataChannel's option and RTCDataChannel event handler (onopen, onclose, onmessage)
-  openStream(label, options) {
-    if (this.streams[label]) {
-      return this.streams[label];
+  openStream(path, options) {
+    if (this.streams[path]) {
+      return this.streams[path];
     }
-    const s = this.pc.createDataChannel(label, options);
+    const s = this.pc.createDataChannel(path, options);
     this.#setupStream(s, options);
     return s;
   }
-  closeStream(label) {
-    const s = this.streams[label];
+  closeStream(path) {
+    const s = this.streams[path];
     if (!s) {
-      console.log(`No stream for label ${label}`);
+      console.log(`No stream for path ${path}`);
       return;
     }
     s.close();
-    delete this.streams[label];
+    delete this.streams[path];
   }
   async syscall(fn, args) {
     return new Promise((resolve, reject) => {
@@ -740,11 +695,12 @@ class QRPClient {
     });
   }
   #setupStream(s, h) {
+    const path = s.label;
     s.onopen = (h.onopen && ((event) => {
       const ctx = h.onopen(s, event);
       if (ctx === false || ctx === null) {
-        console.log(`close stream by application label=${s.label}`);
-        this.closeStream(s.label);
+        console.log(`close stream by application path=${path}`);
+        this.closeStream(path);
         return;
       } else {
         s.context = ctx;
@@ -754,6 +710,6 @@ class QRPClient {
       h.onclose(s, event);
     })) || ((event) => {});
     s.onmessage = (event) => h.onmessage(s, event);
-    this.streams[s.label] = s;
+    this.streams[path] = s;
   }
 };

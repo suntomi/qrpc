@@ -50,11 +50,11 @@
     <div id="cname"></div>
     <div id="subscribe">
       <input type="text" id="idedit" placeholder="input connection id of other peer"/>
-      <input type="text" id="label_sub" placeholder="input label name" value="webcam"/>
+      <input type="text" id="lpath_sub" placeholder="input local path" value="webcam"/>
       <button id="sub">subscribe</button>
     </div>
     <div id="publish">
-      <input type="text" id="label_pub" placeholder="input label name" value="webcam2"/>
+      <input type="text" id="lpath_pub" placeholder="input local path" value="webcam2"/>
       <button id="pub">publish</button>
     </div>
     <div>published tracks</div>
@@ -90,12 +90,12 @@
           },
           onclose: (track)=>{
             console.log("media close", track.stream.id, track.kind);
-            const container_id = `media-${track.label.replace(/\//g, '-')}`;
+            const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             document.getElementById(container_id)?.remove();
           },
           onpause: (track)=>{
             console.log("media pause", track.stream.id, track.kind);
-            const container_id = `media-${track.label.replace(/\//g, '-')}`;
+            const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             const container = document.getElementById(container_id);
             const overlays = container?.getElementsByClassName('overlay');
             if (overlays?.length == 0) {
@@ -104,7 +104,7 @@
           },
           onresume: (track)=>{
             console.log("media resume", track.stream.id, track.kind);
-            const container_id = `media-${track.label.replace(/\//g, '-')}`;
+            const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             const container = document.getElementById(container_id);
             const overlays = container?.getElementsByClassName('overlay');
             if (overlays?.length > 0) {
@@ -115,18 +115,19 @@
       }
       createMediaClickHandler = (t) => {
         return async (event) => {
-          const paused = pausedElements[t.id];
+          const d = t.directory;
+          const paused = pausedElements[d];
           try {
             if (paused) {
-              console.log("resume", t.label);
-              await c.resumeMedia(t.label + "/video");
-              await c.resumeMedia(t.label + "/audio");
-              delete pausedElements[t.id];
+              console.log("resume", d);
+              await c.resumeMedia(d + "/video");
+              await c.resumeMedia(d + "/audio");
+              delete pausedElements[d];
             } else {
-              console.log("pause", t.label);
-              await c.pauseMedia(t.label + "/video");
-              await c.pauseMedia(t.label + "/audio");
-              pausedElements[t.id] = true;
+              console.log("pause", d);
+              await c.pauseMedia(d + "/video");
+              await c.pauseMedia(d + "/audio");
+              pausedElements[d] = true;
             }
           } catch (e) {
             console.error(e);
@@ -134,8 +135,8 @@
         }
       }
       createMediaElement = (t, dom) => {
-        console.log("createMediaElement", t.label);
-        const container_id = `media-${t.label.replace(/\//g, '-')}`;
+        console.log("createMediaElement", t.path);
+        const container_id = `media-${t.directory.replace(/\//g, '-')}`;
         let container = document.getElementById(container_id);
         if (!container) {
           container = document.createElement('div');
@@ -144,7 +145,7 @@
           // label text element
           const label = document.createElement('div');
           label.className = 'label';
-          label.textContent = t.label;
+          label.textContent = t.path;
           container.appendChild(label);
           // click event
           container.addEventListener('click', createMediaClickHandler(t));
@@ -166,8 +167,8 @@
           createMediaElement(t, dom);
         }
       }
-      createMedia = async (path, handler) => {
-        await c.createMedia(path, Object.assign({}, handler, {
+      openMedia = async (path, handler) => {
+        await c.openMedia(path, Object.assign({}, handler, {
           stream: await navigator.mediaDevices.getUserMedia({
             video: {width: {ideal: 1280}, height: {ideal: 720}},
             audio: true
@@ -183,16 +184,16 @@
         }));        
       }
       onPublish = async (event) => {
-        const path = document.getElementById('label_pub').value;
-        console.log(`publish: input path = ${path}`);
-        await createMedia(path, createMediaHandler(pubsList, true));
+        const lpath = document.getElementById('lpath_pub').value;
+        console.log(`publish: input path = ${lpath}`);
+        await openMedia(lpath, createMediaHandler(pubsList, true));
       }
       onSubscribe = async (event) => {
         const id = document.getElementById('idedit').value;
-        const label = document.getElementById('label_sub').value;
-        const path = `${id}/${label}`;
+        const lpath = document.getElementById('lpath_sub').value;
+        const path = `${id}/${lpath}`;
         console.log(`subscribe: input path = ${path}`);
-        await c.openMedia(path, createMediaHandler(subsList));
+        await c.viewMedia(path, createMediaHandler(subsList));
       }
       onReconnect = (event) => {
         console.log("shutdown by UI");
@@ -221,7 +222,7 @@
       c.onopen = async () => {
         console.log("client onopen called");
         setupUI(c);
-        await createMedia("webcam", createMediaHandler(pubsList, true));
+        await openMedia("webcam", createMediaHandler(pubsList, true));
         return context;
       };
       c.onclose = () => {

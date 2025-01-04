@@ -262,7 +262,7 @@ a=msid-semantic: WMS
 
   bool SDP::AnswerMediaSection(
     const json &section, const std::string &proto,
-    const std::map<std::string, std::string> mid_label_map,
+    const std::map<std::string, std::string> mid_path_map,
     ConnectionFactory::Connection &c,
     rtp::Handler::MediaStreamConfig &params,
     std::string &errmsg
@@ -306,14 +306,13 @@ a=msid-semantic: WMS
       if (!params.Parse(section, cap, errmsg, &c.rtp_handler())) {
         return false;
       }
-      auto lit = mid_label_map.find(params.mid);
-      if (lit == mid_label_map.end()) {
+      auto pit = mid_path_map.find(params.mid);
+      if (pit == mid_path_map.end()) {
         errmsg = "find label from mid = " + params.mid;
         ASSERT(false);
         return false;
       }
-      // TODO: move this logic to one place, say, MediaPath class
-      params.media_path = lit->second + "/" + params.MediaKindName();
+      params.media_path = pit->second;
       // assign actual mid and update label map
       params.mid = c.rtp_handler().GenerateMid();
       c.rtp_handler().UpdateMidMediaPathMap(params.mid, params.media_path);
@@ -323,7 +322,7 @@ a=msid-semantic: WMS
   }
 
   bool SDP::Answer(
-    const std::map<std::string, std::string> mid_label_map, 
+    const std::map<std::string, std::string> mid_path_map,
     ConnectionFactory::Connection &c, std::string &answer
   ) const {
     json dsec, asec, vsec;
@@ -357,7 +356,7 @@ a=msid-semantic: WMS
       }
       c.dtls_transport().SetRemoteFingerprint(fp);
       auto &params = section_params.emplace_back();
-      if (!AnswerMediaSection(dsec, proto, mid_label_map, c, params, answer)) {
+      if (!AnswerMediaSection(dsec, proto, mid_path_map, c, params, answer)) {
         QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
         ASSERT(false);
         return false;
@@ -366,7 +365,7 @@ a=msid-semantic: WMS
     // TODO: should support multiple audio/video streams from same webrtc connection?
     if (FindMediaSection("audio", asec)) {
       auto &params = section_params.emplace_back();
-      if (AnswerMediaSection(asec, proto, mid_label_map, c, params, answer)) {
+      if (AnswerMediaSection(asec, proto, mid_path_map, c, params, answer)) {
         if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
           answer = "fail to create audio producer";
           return false;
@@ -379,7 +378,7 @@ a=msid-semantic: WMS
     }
     if (FindMediaSection("video", vsec)) {
       auto &params = section_params.emplace_back();
-      if (AnswerMediaSection(vsec, proto, mid_label_map, c, params, answer)) {
+      if (AnswerMediaSection(vsec, proto, mid_path_map, c, params, answer)) {
         if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
           answer = "fail to create video producer";
           return false;

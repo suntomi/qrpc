@@ -57,3 +57,7 @@ template <typename T, size_t N> char (&ArraySizeHelper(T (&array)[N]))[N];
 #include "hedley/hedley.h"
 #define LIKELY(expr) HEDLEY_LIKELY(expr)
 #define UNLIKELY(expr) HEDLEY_UNLIKELY(expr)
+
+#define STRINIFY(x) #x
+#define TOSTR(x) STRINIFY(x)
+#define LINESTR TOSTR(__LINE__)
