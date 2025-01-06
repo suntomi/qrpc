@@ -6,11 +6,12 @@ class QRPCTrack {
     this.encodings = encodings;
     this.onopen = onopen;
     this.onclose = onclose;
-    this.onpause = onpause;
-    this.onresume = onresume;
+    this.onpause = onpause || (() => {});
+    this.onresume = onresume || (() => {});
     this.track = track
     this.direction = track ? "send" : "recv";
     this.opened = false;
+    this.paused = false;
   }
   get id() { return this.track.id; }
   get kind() { return this.track.kind; }
@@ -80,6 +81,7 @@ class QRPCTrack {
 class QRPClient {
   static SYSCALL_STREAM = "$syscall";
   static DEFAULT_SCALABILITY_MODE = "L1T3";
+  static NO_INPUT_THRESHOLD = 1;
   static MAX_MSGID = Number.MAX_SAFE_INTEGER;
   constructor(url, cname) {
     this.url = url;
@@ -168,6 +170,8 @@ class QRPClient {
     this.msgidSeed = 1;
     this.id = null;
     this.syscallStream = null;
+    this.timer = null;
+    this.recvStats = {};
   }
   initIce() {
     //Ice properties
@@ -247,6 +251,7 @@ class QRPClient {
       // TODO: unify this step by using event.transceiver.mid and this.midMediaPathMap
       let path = undefined;
       if (event.transceiver) {
+        if (event.transceiver.mid === "probator") { console.log("ignore probator"); return; }
         path = this.midMediaPathMap[event.transceiver.mid];
         if (!path) {
           throw new Error(`No path is defined for mid = ${event.transceiver.mid}`);
@@ -314,6 +319,9 @@ class QRPClient {
         this.endOfcandidates = true;
       }
     }
+    this.timer = setInterval(async () => {
+      await this.#checkTrackInput();
+    }, 1000); // 1秒ごとにチェック
   }
   parseLocalOffer(localOffer) {
     const result = {}
@@ -342,6 +350,45 @@ class QRPClient {
       }
     }
     return result;
+  }
+  async #checkTrackInput() {
+    const recvStats = this.recvStats;
+    const stats = await this.pc.getStats();
+    for (const report of stats.values()) {
+      if (report.type !== 'inbound-rtp') {
+        continue;
+      }
+      const path = report.trackIdentifier;
+      const track = this.tracks[path];
+      if (!track || track.direction !== "recv") {
+        continue;
+      }
+      if (!recvStats[path]) {
+        recvStats[path] = { packetsReceived: 0, noInput: 0 };
+      }
+      const packetsReceived = report.packetsReceived;
+      const lastPacketsReceived = recvStats[path].packetsReceived;
+      const packetsPerSecond = packetsReceived - lastPacketsReceived;
+      if (packetsPerSecond <= 0) {
+        recvStats[path].noInput++;
+        if (recvStats[path].noInput > QRPClient.NO_INPUT_THRESHOLD) {
+          if (!track.paused) {
+            console.log(`no input for ${path} for ${QRPClient.NO_INPUT_THRESHOLD} seconds`);
+            track.paused = true;
+            track.onpause(track);
+          }
+        }
+      } else {
+        recvStats[path].noInput = 0;
+        if (track.paused) {
+          console.log(`input again for ${path}`);
+          track.paused = false;
+          track.onresume(track);
+        }
+      }
+      recvStats[path].packetsReceived = packetsReceived;
+      // console.log(`in packets received per second: ${id} = ${packetsPerSecond} (${recvStats[path].noInput})`);
+    }
   }
   async #createOffer(tracks) {
     const midPathMap = {};
@@ -531,6 +578,9 @@ class QRPClient {
     for (const k in this.streams) {
       console.log("close stream", k);
       this.streams[k].close();
+    }
+    if (this.timer) {
+      clearInterval(this.timer);
     }
     if (this.pc.connectionState != "failed") {
       this.pc.close();
