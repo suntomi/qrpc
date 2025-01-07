@@ -27,7 +27,24 @@
       .overlay .icon {
         font-size: 48px;
         color: white;
-      }      
+        display: flex;
+      }
+      .overlay .icon img {
+        width: 12.5vw;
+        height: auto;
+      }
+      .audio-switch {
+        width: 5vw;
+        height: 5vw;
+        position: absolute;
+        bottom: 0.5vh;
+        right: 0.5vw;
+        z-index: 1;
+      }
+      .audio-switch img {
+        width: 100%;
+        height: auto;
+      }
       .label {
         /* このクラスの下のテキストを白色にする */
         color: white;
@@ -71,20 +88,49 @@
       const sub = document.getElementById('sub');
       const reconnect = document.getElementById('reconnect');
       const pausedElements = {};
-      createOverlayElement = () => {
+      createOverlayElement = (manually) => {
         const overlay = document.createElement('div');
         overlay.className = 'overlay';
         const icon = document.createElement('div');
         icon.className = 'icon';
-        icon.innerHTML = '&#9654;';
+        if (manually) {
+          icon.innerHTML = '&#9654;';
+        } else {
+          const img = document.createElement('img');
+          img.src = './loading.gif'; // ローディングGIFのパスを指定
+          img.alt = 'Loading...';
+          icon.appendChild(img);          
+        }
         overlay.appendChild(icon);
         return overlay;
+      }
+      createAudioSwitchElement = (track) => {
+        const audioSwitch = document.createElement('div');
+        const mediaControlHandler = createMediaControlHandler(track);
+        audioSwitch.className = 'audio-switch';
+        const img = document.createElement('img');
+        img.src = './audio-on.svg';
+        img.alt = 'Loading...';
+        audioSwitch.appendChild(img);
+        audioSwitch.addEventListener('click', async (event) => {
+          console.log("audio switch", track.path, pausedElements[track.path] ? "paused" : "active");
+          event.stopPropagation(); // if it puts after await, not effective. I guess the callback is regarded as finished when await is happen.
+          await mediaControlHandler(event);
+          const img = document.createElement('img');
+          img.src = pausedElements[track.path] ? './audio-off.svg' : './audio-on.svg';
+          img.alt = 'Loading...';
+          audioSwitch.replaceChild(img, audioSwitch.firstChild);
+        });
+        return audioSwitch;
       }
       createMediaHandler = (dom) => {
         return {
           onopen: (track)=>{
             console.log("media open", track.stream.id, track.id);
-            showMedia(track, dom);
+            let mediaElement = document.getElementById(`${track.kind}-${track.id}`);
+            if (!mediaElement) {
+              createMediaElement(track, dom);
+            }
             // track.raw.onmute/onunmute behaviour is unstable for browsers,
             // use our callback onpause/onresume instead.
           },
@@ -93,17 +139,19 @@
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             document.getElementById(container_id)?.remove();
           },
-          onpause: (track)=>{
-            console.log("media pause", track.stream.id, track.kind);
+          onpause: (track, manually)=>{
+            console.log("media pause", track.stream.id, track.kind, manually);
+            if (track.kind !== "video") { return; }
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             const container = document.getElementById(container_id);
             const overlays = container?.getElementsByClassName('overlay');
             if (overlays?.length == 0) {
-              document.getElementById(container_id).appendChild(createOverlayElement());
+              document.getElementById(container_id).appendChild(createOverlayElement(manually));
             }
           },
-          onresume: (track)=>{
-            console.log("media resume", track.stream.id, track.kind);
+          onresume: (track, manually)=>{
+            console.log("media resume", track.stream.id, track.kind, manually);
+            if (track.kind !== "video") { return; }
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             const container = document.getElementById(container_id);
             const overlays = container?.getElementsByClassName('overlay');
@@ -113,21 +161,19 @@
           },
         };
       }
-      createMediaClickHandler = (t) => {
+      createMediaControlHandler = (t) => {
         return async (event) => {
-          const d = t.directory;
-          const paused = pausedElements[d];
+          const path = t.path;
+          const paused = pausedElements[path];
           try {
             if (paused) {
-              console.log("resume", d);
-              await c.resumeMedia(d + "/video");
-              await c.resumeMedia(d + "/audio");
-              delete pausedElements[d];
+              console.log("resume", path);
+              await c.resumeMedia(path);
+              delete pausedElements[path];
             } else {
-              console.log("pause", d);
-              await c.pauseMedia(d + "/video");
-              await c.pauseMedia(d + "/audio");
-              pausedElements[d] = true;
+              console.log("pause", path);
+              await c.pauseMedia(path);
+              pausedElements[path] = true;
             }
           } catch (e) {
             console.error(e);
@@ -145,10 +191,8 @@
           // label text element
           const label = document.createElement('div');
           label.className = 'label';
-          label.textContent = t.path;
+          label.textContent = t.directory;
           container.appendChild(label);
-          // click event
-          container.addEventListener('click', createMediaClickHandler(t));
           dom.appendChild(container);
         }
         let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
@@ -157,15 +201,16 @@
           mediaElement.id = `${t.kind}-${t.id}`;
           mediaElement.autoplay = true;
           container.appendChild(mediaElement);
+          if (t.kind === 'video') {
+            // attach pause/resume handler for entire container click event
+            container.addEventListener('click', createMediaControlHandler(t));
+          } else if (t.kind === 'audio') {
+            // attach pause/resume handler for audio switch elemnt click event
+            container.appendChild(createAudioSwitchElement(t));
+          }
         }
         mediaElement.srcObject = t.stream;
         return container;
-      }
-      showMedia = (t, dom) => {
-        let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
-        if (!mediaElement) {
-          createMediaElement(t, dom);
-        }
       }
       openMedia = async (path, handler) => {
         await c.openMedia(path, Object.assign({}, handler, {
@@ -213,7 +258,7 @@
         sub.removeEventListener('click', onSubscribe);
         reconnect.removeEventListener('click', onReconnect);
       }
-      //Create whip client
+      //Create client
       const url = "http://localhost:8888/qrpc";
       const c = new QRPClient(url);
       const context = {};

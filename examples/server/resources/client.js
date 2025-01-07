@@ -693,21 +693,19 @@ class QRPClient {
     return tracks;
   }
   async pauseMedia(path) {
-    console.log("pause", path);
     const t = this.tracks[path];
     if (t) {
       await this.syscall("pause", { path });
-      t.onpause && t.onpause(t);
+      t.onpause && t.onpause(t, true);
     } else {
       throw new Error("pauseMedia: no media for " + path);
     }
   }
   async resumeMedia(path) {
-    console.log("resume", path);
     const t = this.tracks[path];
     if (t) {
       await this.syscall("resume", { path });
-      t.onresume && t.onresume(t);
+      t.onresume && t.onresume(t, true);
     } else {
       throw new Error("resumeMedia: no media for " + path);
     }

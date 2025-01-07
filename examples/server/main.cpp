@@ -188,7 +188,8 @@ int main(int argc, char *argv[]) {
             {"jpeg", "image/jpeg"},
             {"gif", "image/gif"},
             {"ico", "image/x-icon"},
-            {"html", "text/html"}
+            {"html", "text/html"},
+            {"svg", "image/svg+xml"}
         };
         HttpHeader h[] = {
             {.key = "Content-Type", .val = ctypes[m[2].str()].c_str()},
