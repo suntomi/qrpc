@@ -184,6 +184,7 @@ namespace rtp {
       try { return reinterpret_cast<Consumer *>(GetConsumerById(consumerId)); }
       catch (std::exception &) { return nullptr; }
     }
+    void SendToConsumersOf(const std::string &path, const char *data, size_t len);
   public:
     void ReceiveRtpPacket(RTC::RtpPacket* packet) { RTC::Transport::ReceiveRtpPacket(packet); }
     void ReceiveRtcpPacket(RTC::RTCP::Packet* packet) { RTC::Transport::ReceiveRtcpPacket(packet); }

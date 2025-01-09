@@ -1,4 +1,10 @@
 class QRPCTrack {
+  static DAFAULT_TRACK_RECONNECTION_WAIT_MS = 5000;
+  static PAUSE_REASON = {
+    remote_close: "remote_close",
+    local_op: "local_op",
+    remote_op: "remote_op",
+  };
   static path(parent_path, kind) { return parent_path + "/" + kind; }
   constructor(path, stream, track, encodings, {onopen, onclose, onpause, onresume}) {
     this.path = path;
@@ -6,12 +12,12 @@ class QRPCTrack {
     this.encodings = encodings;
     this.onopen = onopen;
     this.onclose = onclose;
-    this.onpause = onpause || (() => {});
+    this.onpause = onpause || ((reason) => {});
     this.onresume = onresume || (() => {});
     this.track = track
     this.direction = track ? "send" : "recv";
     this.opened = false;
-    this.paused = false;
+    this.pausedReasons = [];
   }
   get id() { return this.track.id; }
   get kind() { return this.track.kind; }
@@ -19,6 +25,21 @@ class QRPCTrack {
   get directory() { return this.path.split("/").slice(0, -1).join("/"); }
   get mid() { return this.transceiver.mid; }
   get active() { return this.track != null; }
+  get paused() { return this.pausedReasons.length > 0; }
+  pausedBy(reason) {
+    return this.pausedReasons.indexOf(reason) >= 0;
+  }
+  pause(reason) {
+    this.pausedReasons.push(reason);
+    this.onpause && this.onpause(this, reason);
+  }
+  resume(reason) {
+    const i = this.pausedReasons.indexOf(reason);
+    if (i >= 0) {
+      this.pausedReasons.splice(i, 1);
+      this.onresume && this.onresume(this, reason);
+    }
+  }
   async open(pc, midMediaPathMap) {
     if (this.direction !== "send" || this.track == null) {
       throw new Error("open is only needed for send tracks");
@@ -70,11 +91,16 @@ class QRPCTrack {
   close() {
     if (this.track) {
       this.onclose(this);
+      // const reconnectionWaitMS = this.onclose(this) || 
+      //   QRPCTrack.DAFAULT_TRACK_RECONNECTION_WAIT_MS;
+      // if (reconnectionWaitMS) {
+      // }
       this.track.stop();
       this.track = null;
       this.transceiver = null;
       this.stream = null;
       this.opened = false;
+      this.pausedReasons = [];
     }
   }
 }
@@ -372,18 +398,16 @@ class QRPClient {
       if (packetsPerSecond <= 0) {
         recvStats[path].noInput++;
         if (recvStats[path].noInput > QRPClient.NO_INPUT_THRESHOLD) {
-          if (!track.paused) {
+          if (!track.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
             console.log(`no input for ${path} for ${QRPClient.NO_INPUT_THRESHOLD} seconds`);
-            track.paused = true;
-            track.onpause(track);
+            track.pause(QRPCTrack.PAUSE_REASON.remote_close);
           }
         }
       } else {
         recvStats[path].noInput = 0;
-        if (track.paused) {
+        if (track.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
           console.log(`input again for ${path}`);
-          track.paused = false;
-          track.onresume(track);
+          track.resume(QRPCTrack.PAUSE_REASON.remote_close);
         }
       }
       recvStats[path].packetsReceived = packetsReceived;
@@ -414,8 +438,8 @@ class QRPClient {
     pc.close();
     return {localOffer, midPathMap};
   }
-  modifyLocalAnswer(localAnswer, midSsrcMap) {
-    console.log("modifyLocalAnswer", midSsrcMap);
+  fixupLocalAnswer(localAnswer, midSsrcMap) {
+    console.log("fixupLocalAnswer", midSsrcMap);
     const chunks = [];
     let chunk = [];
     const lines = localAnswer.split(/\r?\n/);
@@ -474,7 +498,7 @@ class QRPClient {
     }
     //Create the answer
     const answer = await this.pc.createAnswer();
-    answer.sdp = this.modifyLocalAnswer(answer.sdp, midSsrcMap);
+    answer.sdp = this.fixupLocalAnswer(answer.sdp, midSsrcMap);
     console.log("local answer sdp", answer.sdp);
     await this.pc.setLocalDescription(answer);
   }
@@ -696,7 +720,7 @@ class QRPClient {
     const t = this.tracks[path];
     if (t) {
       await this.syscall("pause", { path });
-      t.onpause && t.onpause(t, true);
+      t.pause(QRPCTrack.PAUSE_REASON.local_op);
     } else {
       throw new Error("pauseMedia: no media for " + path);
     }
@@ -705,7 +729,7 @@ class QRPClient {
     const t = this.tracks[path];
     if (t) {
       await this.syscall("resume", { path });
-      t.onresume && t.onresume(t, true);
+      t.resume(QRPCTrack.PAUSE_REASON.local_op);
     } else {
       throw new Error("resumeMedia: no media for " + path);
     }

@@ -369,6 +369,13 @@ namespace rtp {
 		// then consumers try to re-subscribe same produced stream and connect to new connection
 		RTC::Transport::CloseProducersAndConsumers();
 	}
+	void Handler::SendToConsumersOf(const std::string &path, const char *data, size_t len) {
+		auto p = GetProducerById(ProducerFactory::GenerateId(rtp_id(), path, Parameters::MediaKind::VIDEO));
+		for (auto *c : router_.GetConsumersOf(p)) {
+			
+		}
+	}
+
 	int Handler::Produce(const std::string &id, const Parameters &p) {
 		auto l = FindLabelByMid(p.mid);
 		if (l.empty()) {

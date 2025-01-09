@@ -46,14 +46,11 @@
         height: auto;
       }
       .label {
-        /* このクラスの下のテキストを白色にする */
-        color: white;
+        color: white; /* このクラスの下のテキストを白色にする */
         position: absolute;
         bottom: 0;
         left: 0;
-        /* background-color: rgba(0, 0, 0, 0.5); */
-        /* 黒の縁取りをつける */
-        text-shadow: 1px 1px 1px black;
+        text-shadow: 1px 1px 1px black; /* 黒の縁取りをつける */
         padding: 0.2em;
         box-sizing: border-box;
       }
@@ -87,20 +84,30 @@
       const pub = document.getElementById('pub');
       const sub = document.getElementById('sub');
       const reconnect = document.getElementById('reconnect');
-      const pausedElements = {};
-      createOverlayElement = (manually) => {
+      mediaIcon = (track) => {
+        const parsed = track.path.split('/');
+        const kind = parsed[parsed.length - 1];
+        if (!track.paused) {
+          return `./${kind}-on.svg`;
+        } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.local_op)) {
+          return `./${kind}-play.svg`;
+        } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
+          return './loading.gif';
+        } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.remote_op)) {
+          return `./${kind}-off.svg`;
+        } else {
+          throw new Error(`unknown pause reasons ${pausedElements[path].join(',')}`);
+        }
+      }
+      createOverlayElement = (track) => {
         const overlay = document.createElement('div');
         overlay.className = 'overlay';
         const icon = document.createElement('div');
         icon.className = 'icon';
-        if (manually) {
-          icon.innerHTML = '&#9654;';
-        } else {
-          const img = document.createElement('img');
-          img.src = './loading.gif'; // ローディングGIFのパスを指定
-          img.alt = 'Loading...';
-          icon.appendChild(img);          
-        }
+        const img = document.createElement('img');
+        img.src = mediaIcon(track);
+        img.alt = 'Loading...';
+        icon.appendChild(img);          
         overlay.appendChild(icon);
         return overlay;
       }
@@ -113,11 +120,11 @@
         img.alt = 'Loading...';
         audioSwitch.appendChild(img);
         audioSwitch.addEventListener('click', async (event) => {
-          console.log("audio switch", track.path, pausedElements[track.path] ? "paused" : "active");
-          event.stopPropagation(); // if it puts after await, not effective. I guess the callback is regarded as finished when await is happen.
+          console.log("audio switch", track.path, track.pausedReasons);
+          event.stopPropagation(); // if it puts after await, not effective. I guess the callback is regarded as finished once await is happen.
           await mediaControlHandler(event);
           const img = document.createElement('img');
-          img.src = pausedElements[track.path] ? './audio-off.svg' : './audio-on.svg';
+          img.src = mediaIcon(track);
           img.alt = 'Loading...';
           audioSwitch.replaceChild(img, audioSwitch.firstChild);
         });
@@ -139,24 +146,43 @@
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             document.getElementById(container_id)?.remove();
           },
-          onpause: (track, manually)=>{
-            console.log("media pause", track.stream.id, track.kind, manually);
-            if (track.kind !== "video") { return; }
+          // there is 3 reason to pause/resume media.
+          // 1. local_op: user click pause button
+          // 2. remote_op: remote user click pause button
+          // 3. remote_close: remote peer seems to be closed or packet severly lost
+          // these events can occur simultaneously. that means, onpause/onresume can be called multiple times consecutively.
+          onpause: (track, reason)=>{
+            console.log("media pause", track.stream.id, track.kind, reason, track.pausedReasons);
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             const container = document.getElementById(container_id);
-            const overlays = container?.getElementsByClassName('overlay');
-            if (overlays?.length == 0) {
-              document.getElementById(container_id).appendChild(createOverlayElement(manually));
+            if (track.kind === "video") {
+              const overlays = container?.getElementsByClassName('overlay');
+              if (overlays?.length == 0) {
+                document.getElementById(container_id).appendChild(createOverlayElement(track));
+              }
+            } else if (track.kind === "audio") {
+              const audioIcon = container?.querySelector('.audio-switch img');
+              if (audioIcon) {
+                audioIcon.src = mediaIcon(track);
+              }
             }
           },
-          onresume: (track, manually)=>{
-            console.log("media resume", track.stream.id, track.kind, manually);
-            if (track.kind !== "video") { return; }
+          onresume: (track, reason)=>{
+            console.log("media resume", track.stream.id, track.kind, reason, track.pausedReasons);
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             const container = document.getElementById(container_id);
-            const overlays = container?.getElementsByClassName('overlay');
-            if (overlays?.length > 0) {
-              container.removeChild(overlays[0]);
+            if (track.kind === "video") {
+              const overlays = container?.getElementsByClassName('overlay');
+              if (overlays?.length > 0) {
+                container.removeChild(overlays[0]);
+              }
+            } else if (track.kind === "audio") {
+              const audioIcon = container?.querySelector('.audio-switch img');
+              if (audioIcon) {
+                audioIcon.src = mediaIcon(track);
+              } else {
+                throw new Error("audioIcon not found");
+              }
             }
           },
         };
@@ -164,16 +190,14 @@
       createMediaControlHandler = (t) => {
         return async (event) => {
           const path = t.path;
-          const paused = pausedElements[path];
+          const paused = t.pausedBy("local_op");
           try {
             if (paused) {
               console.log("resume", path);
               await c.resumeMedia(path);
-              delete pausedElements[path];
             } else {
               console.log("pause", path);
               await c.pauseMedia(path);
-              pausedElements[path] = true;
             }
           } catch (e) {
             console.error(e);
