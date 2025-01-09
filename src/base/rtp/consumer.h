@@ -12,17 +12,16 @@ namespace base {
 namespace rtp {
   class Handler;
   class Producer;
+  class MediaStreamConfig;
   typedef RTC::Consumer Consumer;
   class ConsumerFactory {
   public:
     ConsumerFactory(Handler &h) : handler_(h) {}
     virtual ~ConsumerFactory() {}
-    static std::string GenerateId(
-      const std::string &id, const std::string &peer_id, const std::string &label, Parameters::MediaKind kind);
+    static std::string GenerateId(const std::string &id, const std::string &path);
   public:
     Consumer *Create(
-      const Handler &peer, const std::string &label, Parameters::MediaKind kind,
-      const RTC::RtpParameters &consumer_params, bool paused, bool pipe
+      const Handler &peer, const MediaStreamConfig &config, bool pipe
     );
     flatbuffers::Offset<FBS::Consumer::DumpResponse>
     FillBuffer(Consumer *c, flatbuffers::FlatBufferBuilder& builder);

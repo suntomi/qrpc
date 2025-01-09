@@ -12,6 +12,7 @@ using json = nlohmann::json;
 namespace base {
 namespace rtp {
   class Parameters;
+  class MediaStreamConfig;
 }
 namespace webrtc {
   // for SDP example, see example/client/main.cpp test_sdp()
@@ -32,14 +33,14 @@ namespace webrtc {
     bool GetRemoteFingerPrint(const json &section, std::string &answer, RTC::DtlsTransport::Fingerprint &ret) const;
     bool AnswerMediaSection(
       const json &section, const std::string &proto, const std::map<std::string, std::string> mid_path_map,
-      ConnectionFactory::Connection &c, rtp::Handler::MediaStreamConfig &params, std::string &errmsg) const;
+      ConnectionFactory::Connection &c, rtp::MediaStreamConfig &params, std::string &errmsg) const;
   public:
     static bool GenerateAnswer(
       ConnectionFactory::Connection &c, const std::string &proto,
-      const rtp::Handler::MediaStreamConfigs &configs, std::string &answer
+      const rtp::MediaStreamConfigs &configs, std::string &answer
     );
     static inline bool GenerateSectionAnswer(ConnectionFactory::Connection &c, 
-      const std::string &proto, const rtp::Handler::MediaStreamConfig &p, std::string &answer);
+      const std::string &proto, const rtp::MediaStreamConfig &p, std::string &answer);
     static std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c);
     static uint32_t AssignPriority(uint32_t component_id);
   public:

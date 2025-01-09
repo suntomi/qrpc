@@ -20,27 +20,28 @@ namespace rtp {
   protected:
     std::shared_ptr<Media> media_;
   };
-	std::string ConsumerFactory::GenerateId(
-    const std::string &id, const std::string &peer_id, const std::string &label, Parameters::MediaKind kind) { 
-		return "/c/" + id + "/" + peer_id + "/" + label + "/" + Parameters::FromMediaKind(kind);
+	std::string ConsumerFactory::GenerateId(const std::string &id, const std::string &path) { 
+		return "/c/" + id + "/" + path;
 	}
   Consumer *ConsumerFactory::Create(
-    const Handler &peer, const std::string &label, Parameters::MediaKind kind,
-    const RTC::RtpParameters &consumer_params, bool paused, bool pipe
+    const Handler &peer, const MediaStreamConfig &config, bool pipe
   ) {
-		auto consumed_producer = peer.FindProducer(label, kind);
+    const auto &path = config.media_path;
+    const auto lpath = config.local_path();
+    const auto kind = config.kind;
+		auto consumed_producer = peer.FindProducerByPath(lpath);
 		if (consumed_producer == nullptr) {
-			QRPC_LOGJ(error, {{"ev","fail to find consumed producer"},{"l",label},{"kind",kind}});
+			QRPC_LOGJ(error, {{"ev","fail to find consumed producer"},{"path",path}});
 			ASSERT(false);
 			return nullptr;
 		}
     auto type = pipe ?
       RTC::RtpParameters::Type::PIPE :
       (consumed_producer->params().encodings.size() > 1 ? RTC::RtpParameters::Type::SIMULCAST : RTC::RtpParameters::Type::SIMPLE);
-    auto m = handler_.FindFrom(label);
+    auto m = handler_.FindFrom(path, true);
 		::flatbuffers::FlatBufferBuilder fbb;
     auto encodings = consumed_producer->params().PackConsumableEncodings(fbb);
-    auto id = GenerateId(handler_.rtp_id(), peer.rtp_id(), label, kind);
+    auto id = GenerateId(handler_.rtp_id(), path);
     auto &producer_id = consumed_producer->id;
     Handler::SetConsumerFactory([m](
 			RTC::RtpParameters::Type type,
@@ -65,7 +66,7 @@ namespace rtp {
 		try {
       handler_.HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CONSUME, FBS::Transport::CreateConsumeRequestDirect(
         fbb, id.c_str(), producer_id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
-        consumer_params.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings, 0, paused
+        config.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings, 0, config.options.pause
       ));
       return handler_.FindConsumer(id);
     } catch (std::exception &e) {

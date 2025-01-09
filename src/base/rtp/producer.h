@@ -13,6 +13,7 @@ namespace base {
 namespace rtp {
   class Handler;
   class Parameters;
+  class MediaStreamConfig;
   class Producer : public RTC::Producer {
     friend class ProducerFactory;
   public:
@@ -35,9 +36,9 @@ namespace rtp {
   public:
     ProducerFactory(Handler &h) : handler_(h) {}
     virtual ~ProducerFactory() {}
-    static std::string GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind);
+    static std::string GenerateId(const std::string &rtp_id, const std::string &path);
   public:
-    Producer *Create(const std::string &id, const Parameters &p);
+    Producer *Create(const MediaStreamConfig &p);
   protected:
     Handler &handler_;
   }; 

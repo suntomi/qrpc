@@ -184,7 +184,7 @@ a=max-message-size:%u)cands",
 
   bool SDP::GenerateSectionAnswer(
     ConnectionFactory::Connection &c, const std::string &proto,
-    const rtp::Handler::MediaStreamConfig &p, std::string &answer
+    const rtp::MediaStreamConfig &p, std::string &answer
   ) {
     std::string cname;
     if (p.sender()) {
@@ -230,7 +230,7 @@ a=setup:active
 
   bool SDP::GenerateAnswer(
     ConnectionFactory::Connection &c, const std::string &proto,
-    const rtp::Handler::MediaStreamConfigs &configs, std::string &answer
+    const rtp::MediaStreamConfigs &configs, std::string &answer
   ) {
     auto now = qrpc_time_now();
     auto bundle = std::string("a=group:BUNDLE");
@@ -264,7 +264,7 @@ a=msid-semantic: WMS
     const json &section, const std::string &proto,
     const std::map<std::string, std::string> mid_path_map,
     ConnectionFactory::Connection &c,
-    rtp::Handler::MediaStreamConfig &params,
+    rtp::MediaStreamConfig &params,
     std::string &errmsg
   ) const {
     auto tit = section.find("type");
@@ -315,9 +315,9 @@ a=msid-semantic: WMS
       params.media_path = pit->second;
       // assign actual mid and update label map
       params.mid = c.rtp_handler().GenerateMid();
-      c.rtp_handler().UpdateMidMediaPathMap(params.mid, params.media_path);
+      c.rtp_handler().UpdateMidMediaPathMap(params);
     }
-    params.direction = rtp::Handler::MediaStreamConfig::Direction::RECV;
+    params.direction = rtp::MediaStreamConfig::Direction::RECV;
     return true;
   }
 
@@ -366,7 +366,7 @@ a=msid-semantic: WMS
     if (FindMediaSection("audio", asec)) {
       auto &params = section_params.emplace_back();
       if (AnswerMediaSection(asec, proto, mid_path_map, c, params, answer)) {
-        if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
+        if (c.rtp_handler().Produce(params) != QRPC_OK) {
           answer = "fail to create audio producer";
           return false;
         }
@@ -379,7 +379,7 @@ a=msid-semantic: WMS
     if (FindMediaSection("video", vsec)) {
       auto &params = section_params.emplace_back();
       if (AnswerMediaSection(vsec, proto, mid_path_map, c, params, answer)) {
-        if (c.rtp_handler().Produce(c.rtp_id(), params) != QRPC_OK) {
+        if (c.rtp_handler().Produce(params) != QRPC_OK) {
           answer = "fail to create video producer";
           return false;
         }

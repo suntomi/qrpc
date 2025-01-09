@@ -447,7 +447,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         } else if (fn == "pause") {
           const auto pit = args.find("path");
           if (pit == args.end()) {
-            RAISE("no value for key 'label'");
+            RAISE("no value for key 'path'");
           }
           std::string reason;
           if (!c.rtp_handler().Pause(pit->second.get<std::string>(), reason)) {
@@ -513,16 +513,22 @@ bool ConnectionFactory::Connection::PrepareConsume(
   auto parsed = str::Split(media_path, "/");
   if (parsed.size() < 2) {
     // TODO: support self consume. this is useful for syhncronized audio/video in server side
-    // but using $my_cnam/$label for self consume might be enough
+    // but using $my_cnam/$path for self consume might be enough
     QRPC_LOGJ(error, {{"ev","invalid media_path"},{"media_path",media_path}});
     ASSERT(false);
     return false;
   }
   auto h = factory().FindHandler(parsed[0]);
+  if (h == nullptr) {
+    QRPC_LOGJ(error, {{"ev","peer not found"},{"cname",parsed[0]}});
+    ASSERT(false);
+    return false;
+  }
+  parsed.erase(parsed.begin());
   auto &mscs = media_stream_configs();
   std::vector<uint32_t> generated_ssrcs;
   InitRTP();
-  if (rtp_handler().PrepareConsume(*h, parsed, options_map, mscs, generated_ssrcs)) {
+  if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), options_map, mscs, generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = media_path;
     }
@@ -558,7 +564,7 @@ bool ConnectionFactory::Connection::Consume() {
   return true;
 }
 bool ConnectionFactory::Connection::ConsumeMedia(
-  const rtp::Handler::MediaStreamConfig &config
+  const rtp::MediaStreamConfig &config
 ) {
   if (config.mid == RTC::RtpProbationGenerator::GetMidValue()) {
     QRPC_LOGJ(debug, {{"ev","ignore probator"}});
@@ -583,7 +589,7 @@ bool ConnectionFactory::Connection::ConsumeMedia(
     return false;
   }
   std::vector<uint32_t> generated_ssrcs;
-  if (rtp_handler().Consume(*h, parsed[1], config)) {
+  if (rtp_handler().Consume(*h, config)) {
     return true;
   } else {
     return false;

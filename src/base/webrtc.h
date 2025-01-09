@@ -27,7 +27,7 @@ namespace webrtc {
   class ConnectionFactory {
   public:
     typedef std::string IceUFrag;
-    typedef rtp::Handler::MediaStreamConfig::ControlOptions ControlOptions;
+    typedef rtp::MediaStreamConfig::ControlOptions ControlOptions;
   public: // connection
     class Connection;
     template <class PS>
@@ -134,10 +134,10 @@ namespace webrtc {
       inline bool is_client() const { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
       inline bool is_consumer() const { 
         return std::find_if(media_stream_configs_.begin(), media_stream_configs_.end(), [](const auto &c) {
-          return c.direction == rtp::Handler::MediaStreamConfig::Direction::SEND;
+          return c.direction == rtp::MediaStreamConfig::Direction::SEND;
         }) != media_stream_configs_.end();
       }
-      inline std::vector<rtp::Handler::MediaStreamConfig> &media_stream_configs() { return media_stream_configs_; }
+      inline std::vector<rtp::MediaStreamConfig> &media_stream_configs() { return media_stream_configs_; }
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void SetCname(const std::string &cname);
@@ -151,7 +151,7 @@ namespace webrtc {
         const std::string &label, 
         const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map,
         std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map);
-      bool ConsumeMedia(const rtp::Handler::MediaStreamConfig &config);
+      bool ConsumeMedia(const rtp::MediaStreamConfig &config);
       bool Consume();
       inline void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();
@@ -282,7 +282,7 @@ namespace webrtc {
       AlarmProcessor::Id alarm_id_;
       std::string cname_;
       std::map<rtp::Parameters::MediaKind, rtp::Capability> capabilities_;
-      std::vector<rtp::Handler::MediaStreamConfig> media_stream_configs_; // stream configs with keeping creation order
+      std::vector<rtp::MediaStreamConfig> media_stream_configs_; // stream configs with keeping creation order
       uint32_t mid_seed_;
       bool sctp_connected_, closed_;
     };

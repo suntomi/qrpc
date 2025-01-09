@@ -3,15 +3,14 @@
   <head>
     <title>WebRTC with QRPC media</title>
     <style>
-      /* CSSでビデオ要素の幅と高さをビューポートの幅と高さのパーセンテージで設定 */
       .media-list-container {
         display: flex;
         justify-content: space-between;
       }
       .media-container {
         position: relative;
-        width: 50vw; /* ビューポートの幅の50% */
-        display: flex; /* 子要素の高さに合わせる */        
+        width: 50vw;
+        display: flex; /* fit with child height */        
       }
       .overlay {
         position: absolute;
@@ -46,11 +45,11 @@
         height: auto;
       }
       .label {
-        color: white; /* このクラスの下のテキストを白色にする */
+        color: white; /* text color is white */
         position: absolute;
         bottom: 0;
         left: 0;
-        text-shadow: 1px 1px 1px black; /* 黒の縁取りをつける */
+        text-shadow: 1px 1px 1px black; /* black outline for text */
         padding: 0.2em;
         box-sizing: border-box;
       }
@@ -159,6 +158,11 @@
               const overlays = container?.getElementsByClassName('overlay');
               if (overlays?.length == 0) {
                 document.getElementById(container_id).appendChild(createOverlayElement(track));
+              } else {
+                const videoIcon = overlays[0].querySelector('.icon img');
+                if (videoIcon) {
+                  videoIcon.src = mediaIcon(track);
+                }
               }
             } else if (track.kind === "audio") {
               const audioIcon = container?.querySelector('.audio-switch img');
@@ -174,7 +178,14 @@
             if (track.kind === "video") {
               const overlays = container?.getElementsByClassName('overlay');
               if (overlays?.length > 0) {
-                container.removeChild(overlays[0]);
+                if (track.paused) {
+                  const videoIcon = overlays[0].querySelector('.icon img');
+                  if (videoIcon) {
+                    videoIcon.src = mediaIcon(track);
+                  }
+                } else {
+                  overlays[0].remove();
+                }
               }
             } else if (track.kind === "audio") {
               const audioIcon = container?.querySelector('.audio-switch img');
