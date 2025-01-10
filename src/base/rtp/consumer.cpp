@@ -17,6 +17,7 @@ namespace rtp {
       std::shared_ptr<Media> m
     ) : C(s, id, producer_id, l, d), media_(m) {}
     ~Wrap() override {}
+    Handler &handler() { return *dynamic_cast<Handler *>(C::listener); }
   protected:
     std::shared_ptr<Media> media_;
   };
@@ -72,6 +73,16 @@ namespace rtp {
     } catch (std::exception &e) {
       QRPC_LOG(error, "failed to create consumer: %s", e.what());
       return nullptr;
+    }
+  }
+  Handler &ConsumerFactory::HandlerFrom(Consumer *c) {
+    switch (c->GetType()) {
+      case RTC::RtpParameters::Type::SIMPLE:
+        return dynamic_cast<Wrap<RTC::SimpleConsumer>*>(c)->handler();
+      case RTC::RtpParameters::Type::SIMULCAST:
+        return dynamic_cast<Wrap<RTC::SimulcastConsumer>*>(c)->handler();
+      case RTC::RtpParameters::Type::PIPE:
+        return dynamic_cast<Wrap<RTC::PipeConsumer>*>(c)->handler();
     }
   }
   flatbuffers::Offset<FBS::Consumer::DumpResponse>

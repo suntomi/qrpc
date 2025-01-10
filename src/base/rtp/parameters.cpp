@@ -71,7 +71,7 @@ namespace rtp {
     ASSERT(false);
     return "";
   }
-  Parameters::MediaKind Parameters::ToMediaKind(std::string &kind) {
+  std::optional<Parameters::MediaKind> Parameters::ToMediaKind(const std::string &kind) {
     if (kind == "audio") {
       return MediaKind::AUDIO;
     } else if (kind == "video") {
@@ -79,8 +79,8 @@ namespace rtp {
     } else if (kind == "app") {
       return MediaKind::APP;
     } else {
-      ASSERT(false);
-      return MediaKind::APP;
+      ASSERT(kind.empty());
+      return std::nullopt;
     }
   }
 

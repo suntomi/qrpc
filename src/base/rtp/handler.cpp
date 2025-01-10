@@ -1,6 +1,7 @@
 #include "base/rtp/handler.h"
 #include "base/webrtc/mpatch.h"
 #include "base/logger.h"
+#include "base/stream.h"
 #include "base/string.h"
 
 #include "base/webrtc/mpatch.h"
@@ -129,40 +130,42 @@ namespace rtp {
 		return kinds;
 	}
 	bool Handler::PrepareConsume(
-      Handler &peer, const std::string &lpath,
+      Handler &peer, const std::string &local_path, const std::optional<rtp::Parameters::MediaKind> &media_kind,
 			const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
 			MediaStreamConfigs &media_stream_configs, std::vector<uint32_t> &generated_ssrcs
 	) {
-		auto path = peer.cname() + "/" + lpath;
-		for (const auto k : SupportedMediaKind()) {
-			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&path](const auto &c) {
-				return c.media_path == path && c.sender(); // if sender of same media-path already exists, skip.
+		auto path = peer.cname() + "/" + local_path;
+		const auto &kinds = media_kind.has_value() ? std::vector<Parameters::MediaKind>{media_kind.value()} : SupportedMediaKind();
+		for (const auto k : kinds) {
+			auto kind = Parameters::FromMediaKind(k);
+			auto media_path = path + kind;
+			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
+				return c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
 			});
 			QRPC_LOGJ(info, {{"ev","check consume config"},{"path",path},{"exists",ccit != media_stream_configs.end()}});
 			if (ccit != media_stream_configs.end()) {
-				QRPC_LOGJ(info, {{"ev","ignore media because already prepared"},{"path",path}});
+				QRPC_LOGJ(info, {{"ev","ignore media because already prepared"},{"media_path",media_path}});
 				continue;
 			}
 			auto capit = listener_.capabilities().find(k);
 			if (capit == listener_.capabilities().end()) {
-				QRPC_LOGJ(info, {{"ev","ignore media type which is not supported"},{"path",path}});
+				QRPC_LOGJ(info, {{"ev","ignore media type which is not supported"},{"path",path},{"kind",kind}});
 				ASSERT(false);
 				continue;
 			}
-			// to find producer from peer, need to use lpath (path without cname)
-			auto kind = Parameters::FromMediaKind(k);
-			auto consumed_producer = peer.FindProducerByPath(lpath + "/" + kind);
+			// to find producer from peer, need to use local_path (path without cname and media kind)
+			auto consumed_producer = peer.FindProducerByPath(local_path + kind);
 			if (consumed_producer == nullptr) {
 				QRPC_LOGJ(info, {
 					{"ev","ignore media because corresponding producer of peer not found"},
-					{"path",path + "/" + Parameters::FromMediaKind(k)},{"peer",peer.rtp_id()}
+					{"path",path + kind},{"peer",peer.rtp_id()}
 				});
 				ASSERT(false);
 				continue;
 			}
 			auto &config = media_stream_configs.emplace_back();
 			config.direction = MediaStreamConfig::Direction::SEND;
-			config.media_path = path + "/" + kind;
+			config.media_path = path + kind;
 			config.options = options_map.find(k) == options_map.end() ?
 				MediaStreamConfig::ControlOptions() : options_map.find(k)->second;
 			// copy additional parameter from producer that affects sdp generation
@@ -245,6 +248,8 @@ namespace rtp {
 			try {
 				auto req = CreateRequest<void>(GetFBB(), cit->second.producer_method);
 				producer->HandleRequest(&req);
+				auto pl = json({{"args",{{"path",cname() + "/" + path}}},{"fn","remote_" + control}}).dump();
+				SendToConsumersOf(path, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
 			} catch (std::exception &e) {
 				error = "request failure:" + std::string(e.what());
 				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",control},{"id",id},{"error",e.what()}});
@@ -336,10 +341,13 @@ namespace rtp {
 		// then consumers try to re-subscribe same produced stream and connect to new connection
 		RTC::Transport::CloseProducersAndConsumers();
 	}
-	void Handler::SendToConsumersOf(const std::string &path, const char *data, size_t len) {
+	void Handler::SendToConsumersOf(
+		const std::string &path, const std::string &stream_label, const char *data, size_t len
+	) {
 		auto p = GetProducerById(ProducerFactory::GenerateId(rtp_id(), path));
 		for (auto *c : router_.GetConsumersOf(p)) {
-			// c->SendData(data, len);
+			auto &h = ConsumerFactory::HandlerFrom(c);
+			h.SendToStream(stream_label, data, len);
 		}
 	}
 

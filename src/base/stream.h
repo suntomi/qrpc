@@ -11,6 +11,7 @@ namespace base {
   class Connection;
   class Stream {
   public:
+    static constexpr char *SYSCALL_NAME = "$syscall";
     typedef struct {
       // TODO: use general stream parameter struct, instead of borrow from WebRTC
       RTC::SctpStreamParameters params;

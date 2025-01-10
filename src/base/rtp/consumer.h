@@ -25,6 +25,7 @@ namespace rtp {
     );
     flatbuffers::Offset<FBS::Consumer::DumpResponse>
     FillBuffer(Consumer *c, flatbuffers::FlatBufferBuilder& builder);
+    static Handler &HandlerFrom(Consumer *c);
   protected:
     Handler &handler_;
   }; 

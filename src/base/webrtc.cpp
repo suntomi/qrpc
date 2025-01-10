@@ -511,8 +511,8 @@ bool ConnectionFactory::Connection::PrepareConsume(
 ) {
   // TODO: support fullpath like $url/@cname/name. first should remove part before /@
   auto parsed = str::Split(media_path, "/");
-  if (parsed.size() < 2) {
-    // TODO: support self consume. this is useful for syhncronized audio/video in server side
+  if (parsed.size() < 3) {
+    // TODO: support self consume. this may be useful for syhncronizing audio/video in server side
     // but using $my_cnam/$path for self consume might be enough
     QRPC_LOGJ(error, {{"ev","invalid media_path"},{"media_path",media_path}});
     ASSERT(false);
@@ -525,10 +525,22 @@ bool ConnectionFactory::Connection::PrepareConsume(
     return false;
   }
   parsed.erase(parsed.begin());
+  const auto &last_component = parsed[parsed.size() - 1];
+  const auto media_kind = rtp::Parameters::ToMediaKind(last_component);
+  if (!media_kind.has_value()) {
+    if (!last_component.empty()) {
+      QRPC_LOGJ(error, {{"ev","invalid media_kind"},{"kind",last_component}});
+      ASSERT(false);
+      return false;
+    }
+  } else {
+    // empty last element to generate directory path
+    parsed[parsed.size() - 1] = "";
+  }
   auto &mscs = media_stream_configs();
   std::vector<uint32_t> generated_ssrcs;
   InitRTP();
-  if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), options_map, mscs, generated_ssrcs)) {
+  if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), media_kind, options_map, mscs, generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = media_path;
     }
@@ -684,6 +696,15 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::NewStream(
   streams_.emplace(s->id(), s);
   return s;
 }
+StreamFactory ConnectionFactory::Connection::DefaultStreamFactory() {
+  return [this](const Stream::Config &config, base::Connection &conn) -> std::shared_ptr<Stream> {
+    if (config.label == Stream::SYSCALL_NAME) {
+      return this->syscall_ = std::make_shared<SyscallStream>(conn, config);
+    } else {
+      return this->factory().stream_factory()(config, conn);
+    }
+  };
+}
 std::shared_ptr<Stream> ConnectionFactory::Connection::OpenStream(
   const Stream::Config &c, const StreamFactory &sf
 ) {
@@ -775,7 +796,7 @@ void ConnectionFactory::Connection::Close() {
   }
   if (syscall_ == nullptr) {
     syscall_ = std::dynamic_pointer_cast<SyscallStream>(OpenStream({
-      .label = SyscallStream::NAME
+      .label = Stream::SYSCALL_NAME
     }, [this](const Stream::Config &config, base::Connection &conn) {
       return std::make_shared<SyscallStream>(conn, config, [this](Stream &s) {
         this->closed_ = true;
@@ -1284,12 +1305,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       return;
     }
     auto c = req->ToMediaStreamConfig();
-    auto s = NewStream(
-      c, c.label == SyscallStream::NAME ? 
-        [this](const Stream::Config &config, base::Connection &conn) {
-          return this->syscall_ = std::make_shared<SyscallStream>(conn, config);
-        } : factory().stream_factory()
-    );
+    auto s = NewStream(c, DefaultStreamFactory());
     if (s == nullptr) {
       logger::error({{"proto","sctp"},{"ev","fail to create stream"},{"stream_id",streamId}});
       return;
@@ -1347,6 +1363,33 @@ const std::string &ConnectionFactory::Connection::FindRtpIdFrom(std::string &cna
   }
   return h->rtp_id();
 }
+int ConnectionFactory::Connection::SendToStream(
+  const std::string &label, const char *data, size_t len
+) {
+  bool found = false;
+  for (auto &s : streams_) {
+    QRPC_LOGJ(info, {{"ev","send to stream"},{"label",s.second->config().label},{"flabel",label}});
+    // currently, if multiple streams with same label, send to all of them
+    if (s.second->config().label == label) {
+      int r = s.second->Send(data, len);
+      ASSERT(r >= 0);
+      found = true;
+    }
+  }
+  // if not found, create new stream
+  if (!found && (OpenStream({
+    .label = label
+  }, [this, data, len, &label](const Stream::Config &config, base::Connection &conn) {
+    auto s = this->DefaultStreamFactory()(config, conn);
+    QRPC_LOGJ(info, {{"ev","open and send to stream"},{"label",s->config().label},{"flabel",label}});
+    s->Send(data, len);
+    return s;
+  }) == nullptr)) {
+    return QRPC_EALLOC;
+  }
+  return QRPC_OK;
+}      
+
 void ConnectionFactory::Connection::RecvStreamClosed(uint32_t ssrc) {
   if (srtp_recv_ != nullptr) {
     srtp_recv_->RemoveStream(ssrc);

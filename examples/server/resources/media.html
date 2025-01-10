@@ -90,10 +90,10 @@
           return `./${kind}-on.svg`;
         } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.local_op)) {
           return `./${kind}-play.svg`;
-        } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
-          return './loading.gif';
         } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.remote_op)) {
           return `./${kind}-off.svg`;
+        } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
+          return './loading.gif';
         } else {
           throw new Error(`unknown pause reasons ${pausedElements[path].join(',')}`);
         }

@@ -91,6 +91,8 @@ namespace rtp {
       virtual const std::map<Parameters::MediaKind, Capability> &capabilities() const = 0;
       virtual const std::string &FindRtpIdFrom(std::string &cname) = 0;
       virtual const std::string GenerateMid() = 0;
+      virtual int SendToStream(const std::string &label, const char *data, size_t len) = 0;
+      // for RTC::Transport::Listener
       virtual void RecvStreamClosed(uint32_t ssrc) = 0;
       virtual void SendStreamClosed(uint32_t ssrc) = 0;
       virtual bool IsConnected() const = 0;
@@ -117,6 +119,9 @@ namespace rtp {
     inline const std::string &rtp_id() const { return listener_.rtp_id(); }
     inline const std::string &cname() const { return listener_.cname(); }
     inline const std::map<Media::Mid, Media::Id> mid_media_path_map() const { return mid_media_path_map_; }
+    inline int SendToStream(const std::string &path, const char *data, size_t len) {
+      return listener_.SendToStream(path, data, len);
+    }
     static inline RTC::Shared &shared() { return shared_.get(); }
     static inline RTC::Router &router() { return router_; }
     static inline Channel::ChannelSocket &socket() { return shared_.socket(); }
@@ -153,7 +158,7 @@ namespace rtp {
     void Close();
     int Produce(const MediaStreamConfig &p);
     bool PrepareConsume(
-      Handler &peer, const std::string &path, 
+      Handler &peer, const std::string &local_path, const std::optional<rtp::Parameters::MediaKind> &media_kind,
       const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
       MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
     bool Consume(Handler &peer, const MediaStreamConfig &config);
@@ -199,7 +204,9 @@ namespace rtp {
       try { return reinterpret_cast<Consumer *>(GetConsumerById(consumerId)); }
       catch (std::exception &) { return nullptr; }
     }
-    void SendToConsumersOf(const std::string &path, const char *data, size_t len);
+    void SendToConsumersOf(
+      const std::string &path, const std::string &stream_label, const char *data, size_t len
+    );
   public:
     void ReceiveRtpPacket(RTC::RtpPacket* packet) { RTC::Transport::ReceiveRtpPacket(packet); }
     void ReceiveRtcpPacket(RTC::RTCP::Packet* packet) { RTC::Transport::ReceiveRtcpPacket(packet); }

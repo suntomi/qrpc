@@ -45,7 +45,7 @@ namespace rtp {
     }
     const Parameters ToProbator() const;
     static std::string FromMediaKind(MediaKind k);
-    static MediaKind ToMediaKind(std::string &kind);
+    static std::optional<MediaKind> ToMediaKind(const std::string &kind);
     inline const std::string &RtpProtocol() const { return rtp_proto; }
     inline std::string MediaKindName() const { return FromMediaKind(kind); }
     void AddEncoding(

@@ -5,8 +5,8 @@ class QRPCTrack {
     local_op: "local_op",
     remote_op: "remote_op",
   };
-  static path(parent_path, kind) { return parent_path + "/" + kind; }
-  constructor(path, stream, track, encodings, {onopen, onclose, onpause, onresume}) {
+  static path(canonical_path, kind) { return canonical_path + kind; }
+  constructor(path, stream, track, encodings, {onopen, onclose, onpause, onresume, options}) {
     this.path = path;
     this.stream = stream;
     this.encodings = encodings;
@@ -17,6 +17,7 @@ class QRPCTrack {
     this.track = track
     this.direction = track ? "send" : "recv";
     this.opened = false;
+    this.options = options;
     this.pausedReasons = [];
   }
   get id() { return this.track.id; }
@@ -26,6 +27,7 @@ class QRPCTrack {
   get mid() { return this.transceiver.mid; }
   get active() { return this.track != null; }
   get paused() { return this.pausedReasons.length > 0; }
+  get isReceiver() { return this.direction === "recv"; }
   pausedBy(reason) {
     return this.pausedReasons.indexOf(reason) >= 0;
   }
@@ -45,12 +47,14 @@ class QRPCTrack {
       throw new Error("open is only needed for send tracks");
     }
     if (midMediaPathMap) { // want to put tracks to actual peer connection (not for generating localOffer for producing)
-      let transceiver;
+      let transceiver; // find transceiver for this track by comparing logical path of the track and path decided by server mid
       for (const t of pc.getTransceivers()) {
         if (t.sender == null) {
           console.log("ignore receiver transceiver", t.sender.track);
           continue;
         }
+        // in here, pc.setRemoteDescription is already called, so mid is decided by server remote offer
+        // also midMediaPathMap is updated by syscall ("produce") or whip API call (in QRPClient.#handshake)
         const path = midMediaPathMap[t.mid];
         if (!path) {
           console.log("no path for mid:", t.mid, midMediaPathMap);
@@ -88,13 +92,29 @@ class QRPCTrack {
       }
     }
   }
-  close() {
+  close(c) {
     if (this.track) {
-      this.onclose(this);
-      // const reconnectionWaitMS = this.onclose(this) || 
-      //   QRPCTrack.DAFAULT_TRACK_RECONNECTION_WAIT_MS;
-      // if (reconnectionWaitMS) {
-      // }
+      const reconnectionWaitMS = this.onclose(this);
+      if (this.isReceiver && c) {
+        if (!reconnectionWaitMS) {
+          if (reconnectionWaitMS !== false && reconnectionWaitMS !== null) {
+            reconnectionWaitMS = QRPCTrack.DAFAULT_TRACK_RECONNECTION_WAIT_MS;
+          }
+        } else if (typeof reconnectionWaitMS !== "number") {
+          reconnectionWaitMS = QRPCTrack.DAFAULT_TRACK_RECONNECTION_WAIT_MS;
+        }
+        if (reconnectionWaitMS) {
+          setTimeout(async () => await c.viewMedia(this.path, {
+            onopen: this.onopen,
+            onclose: this.onclose,
+            onpause: this.onpause,
+            onresume: this.onresume,
+            [this.kind]: this.options
+          }), reconnectionWaitMS);
+          console.log(`track ${this.path} reconnect after ${reconnectionWaitMS} ms`);
+          return;
+        }
+      }
       this.track.stop();
       this.track = null;
       this.transceiver = null;
@@ -107,7 +127,7 @@ class QRPCTrack {
 class QRPClient {
   static SYSCALL_STREAM = "$syscall";
   static DEFAULT_SCALABILITY_MODE = "L1T3";
-  static NO_INPUT_THRESHOLD = 1;
+  static NO_INPUT_THRESHOLD = 3;
   static MAX_MSGID = Number.MAX_SAFE_INTEGER;
   constructor(url, cname) {
     this.url = url;
@@ -120,6 +140,7 @@ class QRPClient {
   }
   async #syscallMessageHandler(s, event) {
     const data = JSON.parse(event.data);
+    console.log("syscall", data);
     if (!data.msgid) {
       if (data.fn === "close") {
         console.log("shutdown by server");
@@ -129,6 +150,19 @@ class QRPClient {
           console.log("close track", path);
           this.closeMedia(path);
         }
+      } else if (data.fn == "remote_pause" || data.fn == "remote_resume") {
+        const t = this.tracks[data.args.path];
+        if (t) {
+          if (data.fn == "remote_pause") {
+            t.pause(QRPCTrack.PAUSE_REASON.remote_op);
+          } else {
+            t.resume(QRPCTrack.PAUSE_REASON.remote_op);
+          }
+        } else {
+          throw new Error(`no such track for ${data.fn}: ${data.args.path}`);
+        }
+      } else {
+        console.log("unknown syscall", data);
       }
     } else {
       const promise = this.#fetchPromise(data.msgid);
@@ -172,6 +206,8 @@ class QRPClient {
         data.fn == "resume_ack" || data.fn == "pause_ack" || data.fn == "close_ack"
       ) {
         promise.resolve();
+      } else {
+        console.log("unknown syscall", data);
       }
     }
   }
@@ -429,7 +465,7 @@ class QRPClient {
     console.log("midSsrcMap", midSsrcMap);
     for (const t of tracks) {
       // now, mid is decided. mid (in server remote offer) probably changes 
-      // after it processes on server side, but because of client mid also decided
+      // after it processes on server side, but because of client mid actually decided
       // by server remote offer, changes causes no problem.
       midPathMap[t.mid] = t.path;
       t.ssrc = midSsrcMap[t.mid] || undefined;
@@ -499,7 +535,7 @@ class QRPClient {
     //Create the answer
     const answer = await this.pc.createAnswer();
     answer.sdp = this.fixupLocalAnswer(answer.sdp, midSsrcMap);
-    console.log("local answer sdp", answer.sdp);
+    // console.log("local answer sdp", answer.sdp);
     await this.pc.setLocalDescription(answer);
   }
   async #capability() {
@@ -507,7 +543,7 @@ class QRPClient {
     pc.addTransceiver("audio");
     pc.addTransceiver("video");
     const offer = await pc.createOffer({offerToReceiveAudio: true, offerToReceiveVideo: true});
-    console.log("capability sdp", offer.sdp);
+    // console.log("capability sdp", offer.sdp);
     return offer.sdp;
   }
   async #handshake() {
@@ -638,12 +674,12 @@ class QRPClient {
   #canonicalOpenPath(path) {
     const parsed = path.split('/');
     if (parsed.length == 1) {
-      return path;
+      return path + "/";
     } else {
       if (parsed[parsed.length - 1].length > 0) {
         throw new Error(`invalid path: ${path}: should be ended with /`);
       }
-      return path.slice(0, -1);
+      return path;
     }
   }
   async openMedia(path, {stream, encodings, options, onopen, onclose, onpause, onresume}) {
@@ -683,34 +719,49 @@ class QRPClient {
     }
     return tracks;
   }
+  // media_path is one of the following:
+  // 1. ${cname}/${local_path}/ => all media kind under local_path consumed
+  // 2. ${cname}/${local_path}/${media_kind} => only media_kind under local_path consumed
+  // for 1. last / is mandatory to indicate that it is a directory.
+  // but / can be omitted if last component of local_path does not ssem to be a media kind (not audio/video)
   #canonicalViewPath(path) {
     const parsed = path.split('/');
     if (parsed.length < 2) {
       throw new Error(`invalid path: ${path}: at least \${cname}/\${single_component_local_path} required`);
     } else if (parsed.length == 2) {
-      return { cpath: path, kind: undefined };
+      const last_component = parsed[parsed.length - 1];
+      if (last_component === "audio" || last_component === "video") {
+        throw new Error(`invalid path: ${path}: has single component local_path but the component seems to be media kind`);
+      }
+      return { cpath: path + "/", kind: undefined };
     } else {
       const last_component = parsed[parsed.length - 1];
       if (last_component.length > 0) {
         if (last_component !== "audio" && last_component !== "video") {
-          throw new Error(`invalid path: ${path}: should be ended with / or /audio or /video`);
+          return { cpath: path + "/", kind: undefined };
         }
-        return {cpath: parsed.slice(0, -1).join("/"), kind: last_component};
+        return {cpath: path, kind: last_component};
       }
-      return { cpath: path.slice(0, -1), kind: undefined };
+      return { cpath: path, kind: undefined };
     }
   }
   async viewMedia(path, {onopen, onclose, onpause, onresume, audio, video}) {
-    const {cpath, kind } = this.#canonicalViewPath(path);
-    const remoteOffer = await this.syscall("consume", { 
+    const {cpath, kind} = this.#canonicalViewPath(path);
+    const remoteOffer = await this.syscall("consume", {
       path: cpath, options: (audio || video) ? { audio, video } : undefined
     });
     const tracks = [];
     for (const k of (kind ? [kind] : ["video", "audio"])) {
       const path = QRPCTrack.path(cpath, k);
-      const track = new QRPCTrack(path, null, null, undefined, {onopen, onclose, onpause, onresume});
-      console.log("viewMedia: add track for", path);
-      this.tracks[path] = track;
+      let track = this.tracks[path];
+      if (!track) {
+        track = new QRPCTrack(path, null, null, undefined, {
+          onopen, onclose, onpause, onresume,
+          options: k === "video" ? video : audio
+        });
+        console.log("viewMedia: add track for", path);
+        this.tracks[path] = track;
+      }
       tracks.push(track);
     }
     await this.#setRemoteOffer(remoteOffer);

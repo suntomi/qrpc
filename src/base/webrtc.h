@@ -62,7 +62,6 @@ namespace webrtc {
     typedef UdpSessionTmpl<UdpListener::UdpSession> UdpListenerSession;
     class SyscallStream : public AdhocStream {
     public:
-      static constexpr char *NAME = "$syscall";
       SyscallStream(BaseConnection &c, const Config &config, ConnectHandler &&h) :
         AdhocStream(c, config, std::move(Handler(Nop())), std::move(h), std::move(ShutdownHandler(Nop()))) {}
       SyscallStream(BaseConnection &c, const Config &config) :
@@ -163,6 +162,7 @@ namespace webrtc {
       void TryParseRtpPacket(const uint8_t *p, size_t sz);
       std::shared_ptr<Stream> NewStream(const Stream::Config &c, const StreamFactory &sf);
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const StreamFactory &sf);
+      StreamFactory DefaultStreamFactory();
       bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
         return Session::CheckTimeout(last_active_, now, timeout, next_check);
       }
@@ -251,6 +251,7 @@ namespace webrtc {
         if (mid_seed_ > 1000000000) { ASSERT(false); mid_seed_ = 0; } 
         return std::to_string(mid);
       }
+      int SendToStream(const std::string &label, const char *data, size_t len) override;      
       void RecvStreamClosed(uint32_t ssrc) override;
       void SendStreamClosed(uint32_t ssrc) override; 
       bool IsConnected() const override;
