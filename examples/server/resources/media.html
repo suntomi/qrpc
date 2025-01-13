@@ -132,16 +132,13 @@
       createMediaHandler = (dom) => {
         return {
           onopen: (track)=>{
-            console.log("media open", track.stream.id, track.id);
-            let mediaElement = document.getElementById(`${track.kind}-${track.id}`);
-            if (!mediaElement) {
-              createMediaElement(track, dom);
-            }
+            console.log("media open", track.directory, track.id);
+            createMediaContainerElement(track, dom);
             // track.raw.onmute/onunmute behaviour is unstable for browsers,
             // use our callback onpause/onresume instead.
           },
           onclose: (track)=>{
-            console.log("media close", track.stream.id, track.kind);
+            console.log("media close", track.directory, track.kind);
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             document.getElementById(container_id)?.remove();
           },
@@ -151,7 +148,7 @@
           // 3. remote_close: remote peer seems to be closed or packet severly lost
           // these events can occur simultaneously. that means, onpause/onresume can be called multiple times consecutively.
           onpause: (track, reason)=>{
-            console.log("media pause", track.stream.id, track.kind, reason, track.pausedReasons);
+            console.log("media pause", track.directory, track.kind, reason, track.pausedReasons);
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             const container = document.getElementById(container_id);
             if (track.kind === "video") {
@@ -172,7 +169,7 @@
             }
           },
           onresume: (track, reason)=>{
-            console.log("media resume", track.stream.id, track.kind, reason, track.pausedReasons);
+            console.log("media resume", track.directory, track.kind, reason, track.pausedReasons);
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
             const container = document.getElementById(container_id);
             if (track.kind === "video") {
@@ -215,8 +212,8 @@
           }
         }
       }
-      createMediaElement = (t, dom) => {
-        console.log("createMediaElement", t.path);
+      createMediaContainerElement = (t, dom) => {
+        console.log("createMediaContainerElement", t.path);
         const container_id = `media-${t.directory.replace(/\//g, '-')}`;
         let container = document.getElementById(container_id);
         if (!container) {
@@ -230,10 +227,10 @@
           container.appendChild(label);
           dom.appendChild(container);
         }
-        let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
+        let mediaElement = document.getElementById(t.path);
         if (!mediaElement) {
           mediaElement = document.createElement(t.kind);
-          mediaElement.id = `${t.kind}-${t.id}`;
+          mediaElement.id = t.path;
           mediaElement.autoplay = true;
           container.appendChild(mediaElement);
           if (t.kind === 'video') {
@@ -277,6 +274,7 @@
       }
       onReconnect = (event) => {
         console.log("shutdown by UI");
+        closed = 0;
         c.close();
       }
       setupUI = (c) => {

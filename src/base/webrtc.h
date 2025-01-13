@@ -148,7 +148,7 @@ namespace webrtc {
       // first calling prepare consume to setup connection for consumer, then client connect to the connection, Consume starts actual rtp packet transfer
       bool PrepareConsume(
         const std::string &label, 
-        const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map,
+        const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map, bool sync,
         std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map);
       bool ConsumeMedia(const rtp::MediaStreamConfig &config);
       bool Consume();

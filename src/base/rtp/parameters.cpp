@@ -736,7 +736,7 @@ namespace rtp {
       }
     } else {
       // QRPC_LOGJ(info, {{"ev","cname is not empty"},{"encodings_size",encodings.size()},{"cname",cname}});
-      ASSERT(encodings.size() > 0);
+      // ASSERT(encodings.size() > 0);
       for (auto &e : encodings) {
         ssrcline += str::Format("\na=ssrc:%u cname:%s", e.ssrc, cname.c_str());
         has_ssrc = true;

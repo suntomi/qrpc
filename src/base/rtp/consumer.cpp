@@ -83,6 +83,8 @@ namespace rtp {
         return dynamic_cast<Wrap<RTC::SimulcastConsumer>*>(c)->handler();
       case RTC::RtpParameters::Type::PIPE:
         return dynamic_cast<Wrap<RTC::PipeConsumer>*>(c)->handler();
+      default:
+        logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});
     }
   }
   flatbuffers::Offset<FBS::Consumer::DumpResponse>

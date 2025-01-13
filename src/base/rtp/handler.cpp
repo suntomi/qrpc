@@ -73,7 +73,8 @@ namespace rtp {
 	thread_local const std::map<FBS::Request::Method, FBS::Request::Body> Handler::payload_map_ = {
 		{ FBS::Request::Method::TRANSPORT_CONSUME, FBS::Request::Body::Transport_ConsumeRequest },
 		{ FBS::Request::Method::TRANSPORT_PRODUCE, FBS::Request::Body::Transport_ProduceRequest },
-		{ FBS::Request::Method::WORKER_UPDATE_SETTINGS, FBS::Request::Body::Worker_UpdateSettingsRequest }
+		{ FBS::Request::Method::WORKER_UPDATE_SETTINGS, FBS::Request::Body::Worker_UpdateSettingsRequest },
+		{ FBS::Request::Method::TRANSPORT_CLOSE_CONSUMER, FBS::Request::Body::Transport_CloseConsumerRequest },
 		// more to come if needed
 	};
 
@@ -131,7 +132,7 @@ namespace rtp {
 	}
 	bool Handler::PrepareConsume(
       Handler &peer, const std::string &local_path, const std::optional<rtp::Parameters::MediaKind> &media_kind,
-			const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
+			const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
 			MediaStreamConfigs &media_stream_configs, std::vector<uint32_t> &generated_ssrcs
 	) {
 		auto path = peer.cname() + "/" + local_path;
@@ -140,11 +141,26 @@ namespace rtp {
 			auto kind = Parameters::FromMediaKind(k);
 			auto media_path = path + kind;
 			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
-				return c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
+				return !c.deleted && c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
 			});
-			QRPC_LOGJ(info, {{"ev","check consume config"},{"path",path},{"exists",ccit != media_stream_configs.end()}});
+			QRPC_LOGJ(info, {{"ev","check consume config"},{"media_path",media_path},{"exists",ccit != media_stream_configs.end()}});
 			if (ccit != media_stream_configs.end()) {
-				QRPC_LOGJ(info, {{"ev","ignore media because already prepared"},{"media_path",media_path}});
+				if (sync && media_kind.has_value()) {
+					// get index in media_stream_configs correspond to ccit
+					auto newmid = GenerateMid();
+					QRPC_LOGJ(info, {{"ev","update mid to refresh track"},{"media_path",media_path},{"oldmid",ccit->mid},{"newmid",newmid}});
+					// reorder media_stream_configs so that updated config at the end
+					ccit->deleted = true;
+					auto encodings = ccit->encodings;
+					ccit->encodings.clear();
+					auto &newc = media_stream_configs.emplace_back(*ccit); // copy ccit (after here, ccit might be invalid, so don't touch it)
+					newc.mid = newmid;
+					newc.deleted = false;
+					newc.encodings = encodings;
+					UpdateMidMediaPathMap(newc);
+				} else {
+					QRPC_LOGJ(info, {{"ev","ignore media because already prepare"},{"media_path",media_path},{"sync",sync}});
+				}
 				continue;
 			}
 			auto capit = listener_.capabilities().find(k);
@@ -199,15 +215,29 @@ namespace rtp {
 	}
 
 	bool Handler::Consume(Handler &peer, const MediaStreamConfig &config) {
+		if (config.deleted) {
+			QRPC_LOGJ(info, {{"ev","ignore deleted config"},{"mid",config.mid},{"path",config.media_path}});
+			return true;
+		}
 		const auto &path = config.media_path;
 		auto cid = ConsumerFactory::GenerateId(rtp_id(), path);
 		auto cit = GetConsumers().find(cid);
 		if (cit != GetConsumers().end()) {
-			QRPC_LOGJ(info, {{"ev","consumer already created"},{"cid",cid},{"mid",cit->second->GetRtpParameters().mid}});
-			return true;
+			auto parsed = str::Split(cit->second->producerId, "/");
+			if (parsed.size() < 4) {
+				QRPC_LOGJ(error, {{"ev","invalid producer id"},{"id",cit->second->producerId}});
+				ASSERT(false);
+				return false;
+			} else if (parsed[2] != peer.rtp_id()) {
+				QRPC_LOGJ(info, {{"ev","target producer replaced"},{"old",parsed[2]},{"new",peer.rtp_id()}});
+				CloseConsumer(cit->second);
+			} else {
+				QRPC_LOGJ(info, {{"ev","consumer already created"},{"cid",cid},{"mid",cit->second->GetRtpParameters().mid},{"old",parsed[2]},{"new",peer.rtp_id()}});
+				return true;
+			}
 		}
-		QRPC_LOGJ(info, {{"ev","create consumer"},{"cid",cid},{"mid",config.mid}});
-		// false for creating pipe consumer: TODO: support pipe consumer
+		QRPC_LOGJ(info, {{"ev","create consumer"},{"cid",cid},{"mid",config.mid},{"target_rtp_id",peer.rtp_id()}});
+		// false for creating pipe consumer: TODO: support pipe consumer when its required
 		auto consumer = consumer_factory_.Create(peer, config, false);
 		if (consumer == nullptr) {
 				QRPC_LOGJ(error, {{"ev","fail to create consumer"}});
@@ -228,9 +258,10 @@ namespace rtp {
 	};
 	static std::map<std::string, ControlSet> g_controls = {
 		{"pause", {.producer_method = FBS::Request::Method::PRODUCER_PAUSE, .consumer_method = FBS::Request::Method::CONSUMER_PAUSE}},
-		{"resume", {.producer_method = FBS::Request::Method::PRODUCER_RESUME, .consumer_method = FBS::Request::Method::CONSUMER_RESUME}}
+		{"resume", {.producer_method = FBS::Request::Method::PRODUCER_RESUME, .consumer_method = FBS::Request::Method::CONSUMER_RESUME}},
+		{"request_key_frame",{.producer_method = ControlSet::DOES_NOT_SUPPORT, .consumer_method = FBS::Request::Method::CONSUMER_REQUEST_KEY_FRAME}}
 	};
-	bool Handler::ControlStream(const std::string &path, const std::string &control, std::string &error) {
+	bool Handler::ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error) {
 		auto cit = g_controls.find(control);
 		if (cit == g_controls.end()) {
 			error = "undefined control:" + control;
@@ -240,6 +271,7 @@ namespace rtp {
 		}
 		auto producer = FindProducerByPath(path);
 		if (producer != nullptr) {
+			is_producer = true;
 			if (cit->second.producer_method == ControlSet::DOES_NOT_SUPPORT) {
 				error = "producer " + path + " does not support the control:" + control;
 				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",control},{"cname",cname()},{"path",path}});
@@ -248,8 +280,6 @@ namespace rtp {
 			try {
 				auto req = CreateRequest<void>(GetFBB(), cit->second.producer_method);
 				producer->HandleRequest(&req);
-				auto pl = json({{"args",{{"path",cname() + "/" + path}}},{"fn","remote_" + control}}).dump();
-				SendToConsumersOf(path, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
 			} catch (std::exception &e) {
 				error = "request failure:" + std::string(e.what());
 				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",control},{"id",id},{"error",e.what()}});
@@ -267,6 +297,7 @@ namespace rtp {
 				QRPC_LOGJ(info, {{"ev","no producer found for pause"},{"path",path}});
 				return false;
 			}
+			is_producer = false;
 			if (cit->second.consumer_method == ControlSet::DOES_NOT_SUPPORT) {
 				error = "consumer " + path + " does not support the control:" + control;
 				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",control},{"cname",cname()},{"path",path}});
@@ -282,6 +313,52 @@ namespace rtp {
 			}
 		}
 		return true;
+	}
+	bool Handler::Sync(const std::string &path, std::string &error) {
+		auto *c = FindConsumerByPath(path);
+		if (c == nullptr) {
+			error = "consumer to sync not found";
+			QRPC_LOGJ(error, {{"ev",error},{"path",path}});
+			ASSERT(false);
+			return false;
+		}
+		c->ProducerPaused();
+		c->ProducerResumed();
+		return true;
+	}
+	bool Handler::Ping(const std::string &path, std::string &error) {
+		auto *p = FindProducerByPath(path);
+		if (p == nullptr) {
+			error = "producer to ping not found";
+			QRPC_LOGJ(error, {{"ev",error},{"path",path}});
+			ASSERT(false);
+			return false;
+		}
+		auto pl = json({{"fn","ping"},{"args",{{"path",cname() + "/" + path}}}}).dump();
+		SendToConsumersOf(path, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
+		return true;
+	}
+	bool Handler::Pause(const std::string &path, std::string &error) {
+		bool is_producer = false;
+		if (ControlStream(path, "pause", is_producer, error)) {
+			if (is_producer) {
+				auto pl = json({{"args",{{"path",cname() + "/" + path}}},{"fn","remote_pause"}}).dump();
+				SendToConsumersOf(path, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
+			}
+			return true;
+		}
+		return false;
+	}
+	bool Handler::Resume(const std::string &path, std::string &error) {
+		bool is_producer = false;
+		if (ControlStream(path, "resume", is_producer, error)) {
+			if (is_producer) {
+				auto pl = json({{"args",{{"path",cname() + "/" + path}}},{"fn","remote_resume"}}).dump();
+				SendToConsumersOf(path, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
+			}
+			return true;
+		}
+		return false;
 	}
 	void Handler::SetNegotiationArgs(const std::map<std::string, json> &args) {
 		const auto rlmit = args.find("ridLabelMap");
@@ -350,7 +427,11 @@ namespace rtp {
 			h.SendToStream(stream_label, data, len);
 		}
 	}
-
+	void Handler::CloseConsumer(Consumer *c) {
+		auto &fbb = GetFBB();
+		HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CLOSE_CONSUMER, 
+			FBS::Transport::CreateCloseConsumerRequestDirect(fbb, c->id.c_str()));
+	}
 	int Handler::Produce(const MediaStreamConfig &p) {
 		for (auto kv : p.ssrcs) {
 			ssrc_trackid_map_[kv.first] = kv.second.track_id;

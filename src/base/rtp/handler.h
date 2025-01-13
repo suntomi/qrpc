@@ -39,7 +39,7 @@ namespace rtp {
     inline bool receiver() const { return direction == Direction::RECV; }
     inline bool probator() const { return mid == RTC::RtpProbationGenerator::GetMidValue(); }
     inline const std::string media_stream_track_id() const {
-      return probator() ? mid : media_path;
+      return probator() ? mid : (media_path + "/" + mid);
     }
     inline const std::string local_path() const {
       if (sender()) {
@@ -55,9 +55,9 @@ namespace rtp {
       if (probator()) { return mid; }
       auto cs = str::Split(media_path, "/");
       if (cs.size() == 3) {
-        return cs[0] + "/" + cs[1];
+        return cs[0] + "/" + cs[1] + "/" + mid;
       } else if (cs.size() == 2) {
-        return cs[0];
+        return cs[0] + "/" + mid;
       } else {
         ASSERT(false);
         return "";
@@ -67,6 +67,7 @@ namespace rtp {
     std::string media_path;
     Direction direction{ Direction::RECV };
     ControlOptions options;
+    bool deleted{ false };
   };
   typedef std::vector<MediaStreamConfig> MediaStreamConfigs;
   class Handler : public RTC::Transport {
@@ -159,12 +160,14 @@ namespace rtp {
     int Produce(const MediaStreamConfig &p);
     bool PrepareConsume(
       Handler &peer, const std::string &local_path, const std::optional<rtp::Parameters::MediaKind> &media_kind,
-      const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map,
+      const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
       MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
     bool Consume(Handler &peer, const MediaStreamConfig &config);
-    bool ControlStream(const std::string &path, const std::string &control, std::string &error);
-    bool Pause(const std::string &path, std::string &error) { return ControlStream(path, "pause", error); }
-    bool Resume(const std::string &path, std::string &error) { return ControlStream(path, "resume", error); }
+    bool ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error);
+    bool Pause(const std::string &path, std::string &error);
+    bool Resume(const std::string &path, std::string &error);
+    bool Ping(const std::string &path, std::string &error);
+    bool Sync(const std::string &path, std::string &sdp);
     bool SetExtensionId(uint8_t id, RTC::RtpHeaderExtensionUri::Type uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
     void UpdateMidMediaPathMap(const MediaStreamConfig &c) {
@@ -194,19 +197,20 @@ namespace rtp {
       return FindProducer(ProducerFactory::GenerateId(rtp_id(), path));
     }
     inline Producer *FindProducer(const std::string& producerId) const {
-      try { return reinterpret_cast<Producer *>(GetProducerById(producerId)); }
-      catch (std::exception &) { return nullptr; }
+      auto it = this->mapProducers.find(producerId);
+      return reinterpret_cast<Producer *>(it == this->mapProducers.end() ? nullptr : it->second);
     }
     inline Consumer *FindConsumerByPath(const std::string &path) const {
       return FindConsumer(ConsumerFactory::GenerateId(rtp_id(), path));
     }
     inline Consumer *FindConsumer(const std::string &consumerId) const {
-      try { return reinterpret_cast<Consumer *>(GetConsumerById(consumerId)); }
-      catch (std::exception &) { return nullptr; }
+      auto it = this->mapConsumers.find(consumerId);
+      return reinterpret_cast<Consumer *>(it == this->mapConsumers.end() ? nullptr : it->second);
     }
     void SendToConsumersOf(
       const std::string &path, const std::string &stream_label, const char *data, size_t len
     );
+    void CloseConsumer(Consumer *c);
   public:
     void ReceiveRtpPacket(RTC::RtpPacket* packet) { RTC::Transport::ReceiveRtpPacket(packet); }
     void ReceiveRtcpPacket(RTC::RTCP::Packet* packet) { RTC::Transport::ReceiveRtcpPacket(packet); }

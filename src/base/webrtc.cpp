@@ -124,6 +124,7 @@ void ConnectionFactory::RegisterCname(
     // cleanup old one
     prevcit->second->Close();
   }
+  QRPC_LOGJ(info, {{"ev","register connection"},{"ufrag",c->ufrag()},{"cname",cname},{"ptr",str::dptr(c.get())}});
   cnmap_.emplace(cname, c);
 }
 std::shared_ptr<rtp::Handler>
@@ -417,13 +418,16 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           }
           Call("produce_ack",msgid,{{"sdp",answer},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
         } else if (fn == "consume") {
+          QRPC_LOGJ(info, {{"ev","consume request"},{"args",args}});
           const auto pit = args.find("path");
           if (pit == args.end()) {
             RAISE("no value for key 'path'");
           }
           std::map<rtp::Parameters::MediaKind, ControlOptions> options_map;
+          bool sync = false;
           const auto oit = args.find("options");
           if (oit != args.end()) {
+            QRPC_LOGJ(info, {{"ev","consume options"},{"options",oit->second}});
             const auto &opts = oit->second.get<std::map<std::string,json>>();
             const auto v = opts.find("video");
             if (v != opts.end()) {
@@ -433,11 +437,15 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             if (a != opts.end()) {
               options_map.emplace(rtp::Parameters::MediaKind::AUDIO, v->second);
             }
+            const auto syncit = opts.find("sync");
+            if (syncit != args.end()) {
+              sync = syncit->second.get<bool>();
+            }
           }
           auto path = pit->second.get<std::string>();
           std::string sdp;
           std::map<uint32_t,std::string> ssrc_label_map;
-          if (!c.PrepareConsume(path, options_map, sdp, ssrc_label_map)) {
+          if (!c.PrepareConsume(path, options_map, sync, sdp, ssrc_label_map)) {
             RAISE("fail to prepare consume");
           }
           Call("consume_ack",msgid,{
@@ -464,6 +472,28 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             RAISE("fail to pause track:" + reason);
           }
           Call("resume_ack",msgid,{});
+        } else if (fn == "sync") {
+          const auto pit = args.find("path");
+          if (pit == args.end()) {
+            RAISE("no value for key 'path'");
+          }
+          std::string sdp;
+          if (!c.rtp_handler().Sync(pit->second.get<std::string>(), sdp)) {
+            RAISE("fail to sync:" + sdp);
+          }
+          Call("sync_ack",msgid,{
+            {"mid_media_path_map",c.rtp_handler().mid_media_path_map()},{"sdp",sdp}
+          });
+        } else if (fn == "ping") {
+          const auto pit = args.find("path");
+          if (pit == args.end()) {
+            RAISE("no value for key 'path'");
+          }
+          std::string error;
+          if (!c.rtp_handler().Ping(pit->second.get<std::string>(), error)) {
+            RAISE("fail to ping:" + error);
+          }
+          Call("ping_ack",msgid,{});
         } else {
           RAISE("syscall is not supported");
         }
@@ -506,7 +536,7 @@ void ConnectionFactory::Connection::InitRTP() {
 }
 bool ConnectionFactory::Connection::PrepareConsume(
   const std::string &media_path, 
-  const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map,
+  const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map, bool sync,
   std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map
 ) {
   // TODO: support fullpath like $url/@cname/name. first should remove part before /@
@@ -521,7 +551,6 @@ bool ConnectionFactory::Connection::PrepareConsume(
   auto h = factory().FindHandler(parsed[0]);
   if (h == nullptr) {
     QRPC_LOGJ(error, {{"ev","peer not found"},{"cname",parsed[0]}});
-    ASSERT(false);
     return false;
   }
   parsed.erase(parsed.begin());
@@ -540,7 +569,7 @@ bool ConnectionFactory::Connection::PrepareConsume(
   auto &mscs = media_stream_configs();
   std::vector<uint32_t> generated_ssrcs;
   InitRTP();
-  if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), media_kind, options_map, mscs, generated_ssrcs)) {
+  if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), media_kind, options_map, sync, mscs, generated_ssrcs)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = media_path;
     }
@@ -1834,6 +1863,7 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
       logger::error({{"ev","fail to allocate connection"}});
       return QRPC_EALLOC;
     }
+    logger::info({{"ev","allocate connection"},{"ufrag",ufrag}});
     std::string answer;
     auto cap_sdp = capit->get<std::string>();
     if (!c->SetRtpCapability(cap_sdp, answer)) {

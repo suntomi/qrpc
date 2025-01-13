@@ -131,7 +131,7 @@ namespace logger {
   inline void error(const json &j) { log(level::error, j); }
   inline void fatal(const json &j) { log(level::fatal, j); }
   inline void report(const json &j) { log(level::report, j); }
-  inline void die(const json &j, int exit_code = 1) {
+  [[noreturn]] inline void die(const json &j, int exit_code = 1) {
     fatal(j);
     exit(exit_code);
   }
