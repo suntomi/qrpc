@@ -55,6 +55,7 @@ class Server {
     auto pc = port_configs_.emplace(std::piecewise_construct, 
                 std::forward_as_tuple(addr.port), std::forward_as_tuple(addr, conf));
     if (!pc.second) {
+      QRPC_LOGJ(error, {{"ev","port dup"},{"port",addr.port}});
       ASSERT(false);
       return nullptr;
     }

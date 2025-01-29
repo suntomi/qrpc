@@ -83,6 +83,11 @@
       const pub = document.getElementById('pub');
       const sub = document.getElementById('sub');
       const reconnect = document.getElementById('reconnect');
+      const parsedSearchParams = new URLSearchParams(window.location.search);
+      const urlParameters = {};
+      for (const [key, value] of parsedSearchParams.entries()) {
+        urlParameters[key] = value;
+      }
       mediaIcon = (track) => {
         const parsed = track.path.split('/');
         const kind = parsed[parsed.length - 1];
@@ -293,7 +298,7 @@
       }
       //Create client
       const url = "http://localhost:8888/qrpc";
-      const c = new QRPClient(url);
+      const c = new QRPClient(url, urlParameters["cname"]);
       const context = {};
       const MAX_RECONNECT = 1;
       let closed = 0;

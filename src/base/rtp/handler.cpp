@@ -214,17 +214,18 @@ namespace rtp {
 		return true;
 	}
 
-	bool Handler::Consume(Handler &peer, const MediaStreamConfig &config) {
+	bool Handler::Consume(Handler &peer, const MediaStreamConfig &config, std::string &error) {
 		if (config.deleted) {
 			QRPC_LOGJ(info, {{"ev","ignore deleted config"},{"mid",config.mid},{"path",config.media_path}});
 			return true;
 		}
 		const auto &path = config.media_path;
 		auto cid = ConsumerFactory::GenerateId(rtp_id(), path);
-		auto cit = GetConsumers().find(cid);
-		if (cit != GetConsumers().end()) {
+		auto cit = consumers().find(cid);
+		if (cit != consumers().end()) {
 			auto parsed = str::Split(cit->second->producerId, "/");
 			if (parsed.size() < 4) {
+				error = "invalid producer id:" + cit->second->producerId;
 				QRPC_LOGJ(error, {{"ev","invalid producer id"},{"id",cit->second->producerId}});
 				ASSERT(false);
 				return false;
@@ -241,10 +242,10 @@ namespace rtp {
 		auto consumer = consumer_factory_.Create(peer, config, false);
 		if (consumer == nullptr) {
 				QRPC_LOGJ(error, {{"ev","fail to create consumer"}});
-				ASSERT(false);
+				peer.DumpChildren();
 				return false;
 		}
-		// for (auto &kv : GetConsumers()) {
+		// for (auto &kv : consumers()) {
 		// 	QRPC_LOGJ(info, {{"ev","consumer list"},{"cid",kv.first},{"mid",kv.second->GetRtpParameters().mid}});			
 		// }
 		// auto &fbb = GetFBB();
@@ -431,6 +432,22 @@ namespace rtp {
 		auto &fbb = GetFBB();
 		HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CLOSE_CONSUMER, 
 			FBS::Transport::CreateCloseConsumerRequestDirect(fbb, c->id.c_str()));
+	}
+	void Handler::DumpChildren() {
+#if !defined(NDEBUG)
+		puts(str::Format("================ dump children of %s ================", rtp_id().c_str()).c_str());
+		for (auto &kv : consumers()) {
+			auto &fbb = GetFBB();
+			fbb.Finish(consumer_factory_.FillBuffer(kv.second, fbb));
+			puts(Dump<FBS::Consumer::DumpResponse>("consumer", "FBS.Consumer.DumpResponse", fbb).c_str());
+		}
+		for (auto &kv : producers()) {
+			auto &fbb = GetFBB();
+			fbb.Finish(kv.second->FillBuffer(fbb));
+			puts(Dump<FBS::Producer::DumpResponse>("producer", "FBS.Producer.DumpResponse", fbb).c_str());
+		}
+		puts("================================");
+#endif
 	}
 	int Handler::Produce(const MediaStreamConfig &p) {
 		for (auto kv : p.ssrcs) {

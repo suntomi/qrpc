@@ -20,8 +20,10 @@ class QRPCTrack {
     this.options = options;
     this.pausedReasons = [];
     if (this.isReceiver) {
-      this.keepAlive
+      this.keepAlive();
     }
+    this.nextReconnect = 0;
+    this.reconnectInvtervalMS = null;
   }
   get id() { return this.track.id; }
   get kind() { 
@@ -99,23 +101,29 @@ class QRPCTrack {
       }
     }
   }
-  reconnect(c, backoffMS) {
-    setTimeout(async () => {
-      try {
-        console.log(`try reconnect for ${this.path}`);
-        this.opened = false;
-        await c.viewMedia(this.path, {
-          onopen: this.onopen,
-          onclose: this.onclose,
-          onpause: this.onpause,
-          onresume: this.onresume,
-          [this.kind]: this.options
-        }, true);
-      } catch (e) {
-        console.log(`reconnect failed for ${this.path}: ${e.message}`);
-        this.reconnect(c, backoffMS);
-      }
-    }, backoffMS);
+  startReconnect(c, backoffMS) {
+    this.reconnectInvtervalMS = backoffMS
+    this.nextReconnect = (new Date()).getTime() + this.reconnectInvtervalMS;
+    this.reconnect(c);
+  }
+  stopReconnect() {
+    this.reconnectInvtervalMS = null;
+    this.nextReconnect = null;
+  }
+  async reconnect(c) {
+    try {
+      console.log(`try reconnect for ${this.path}`);
+      this.opened = false;
+      await c.viewMedia(this.path, {
+        onopen: this.onopen,
+        onclose: this.onclose,
+        onpause: this.onpause,
+        onresume: this.onresume,
+        [this.kind]: this.options
+      }, true);
+    } catch (e) {
+      console.log(`reconnect failed for ${this.path}: ${e.message}`);
+    }
   }
   close() {
     if (this.track) {
@@ -133,6 +141,7 @@ class QRPClient {
   static SYSCALL_STREAM = "$syscall";
   static DEFAULT_SCALABILITY_MODE = "L1T3";
   static NO_INPUT_THRESHOLD = 3;
+  static VERBOSE_SYSCALL = ["ping", "ping_ack"];
   static MAX_MSGID = Number.MAX_SAFE_INTEGER;
   constructor(url, cname) {
     this.url = url;
@@ -145,7 +154,9 @@ class QRPClient {
   }
   async #syscallMessageHandler(s, event) {
     const data = JSON.parse(event.data);
-    console.log("syscall", data);
+    if (QRPClient.VERBOSE_SYSCALL.indexOf(data.fn) < 0) {
+      console.log("syscall", data);
+    }
     if (!data.msgid) {
       if (data.fn === "close") {
         console.log("shutdown by server");
@@ -279,6 +290,9 @@ class QRPClient {
     console.log(`current sdpGen:${this.sdpGen}`, this.#handshaked());
     return this.sdpGen;
   }
+  get connected() {
+    return this.pc?.connectionState === "connected";
+  }
   async connect() {
     //If already publishing
     if (this.pc) {
@@ -386,19 +400,15 @@ class QRPClient {
     }
 
     // Listen for candidates
-    pc.onicecandidate = (event)=>{
-      if (event.candidate) 
-      {
-        console.log("Ice candidate", event.candidate);
-        //Ignore candidates not from the first m line
-        if (event.candidate.sdpMLineIndex>0)
-          //Skip
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        // Ignore candidates not from the first m line
+        if (event.candidate.sdpMLineIndex>0) {
           return;
-        //Store candidate
+        }
         this.candidates.push(event.candidate);                                         
       } else {
-        console.log("no more Ice candidate", event.candidate);
-        //No more candidates
+        // No more candidates
         this.endOfcandidates = true;
       }
     }
@@ -439,6 +449,7 @@ class QRPClient {
     for (const k in this.tracks) {
       const t = this.tracks[k];
       if (t.isReceiver) {
+        // console.log("check track", t.path, now - t.lastPing);
         if (now - t.lastPing > (QRPClient.NO_INPUT_THRESHOLD * 1000)) {
           if (!t.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
             let reconnectionWaitMS = t.pause(QRPCTrack.PAUSE_REASON.remote_close);
@@ -447,74 +458,23 @@ class QRPClient {
               reconnectionWaitMS = QRPCTrack.DAFAULT_TRACK_RECONNECTION_WAIT_MS;
             }
             if (reconnectionWaitMS) {
-              t.reconnect(this, reconnectionWaitMS);
-              console.log(`track ${t.path} will try reconnect after ${reconnectionWaitMS} ms`);
+              t.startReconnect(this, reconnectionWaitMS);
+              console.log(`track ${t.path} will try reconnect every ${reconnectionWaitMS} ms`);
             }
+          } else if (t.reconnectInvtervalMS && now > t.nextReconnect) {
+            t.reconnect(this);
+            t.nextReconnect = now + t.reconnectInvtervalMS;
           }
         } else if (t.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
           console.log(`input again for ${t.path}`);
+          t.stopReconnect();
           await this.syscall("sync", {path: t.path});
           t.resume(QRPCTrack.PAUSE_REASON.remote_close);
         }
-      } else {
+      } else if (this.connected) {
         this.syscall("ping", { path: t.path });
       }
     }
-    // const recvStats = this.recvStats;
-    // const stats = await this.pc.getStats();
-    // for (const report of stats.values()) {
-    //   if (report.type !== 'inbound-rtp') {
-    //     continue;
-    //   }
-    //   const parsedId = report.trackIdentifier.split("/");
-    //   const path = parsedId.slice(0, -1).join("/");
-    //   const track = this.tracks[path];
-    //   if (!track || track.direction !== "recv") {
-    //     continue;
-    //   }
-    //   if (!recvStats[path]) {
-    //     recvStats[path] = { packetsReceived: 0, noInput: 0, mid: parsedId[parsedId.length - 1] };
-    //   } else if (recvStats[path].mid !== parsedId[parsedId.length - 1]) {
-    //     console.log("mid changed for", path, recvStats[path].mid, "=>", parsedId[parsedId.length - 1]);
-    //     recvStats[path].packetsReceived = 0;
-    //     recvStats[path].mid = parsedId[parsedId.length - 1];
-    //   }
-    //   const packetsReceived = report.packetsReceived;
-    //   const lastPacketsReceived = recvStats[path].packetsReceived;
-    //   const packetsPerSecond = packetsReceived - lastPacketsReceived;
-    //   if (packetsPerSecond <= 0) {
-    //     recvStats[path].noInput++;
-    //     if (recvStats[path].noInput > QRPClient.NO_INPUT_THRESHOLD) {
-    //       if (!track.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
-    //         console.log(`no input for ${path} for ${QRPClient.NO_INPUT_THRESHOLD} seconds`);
-    //         let reconnectionWaitMS = track.pause(QRPCTrack.PAUSE_REASON.remote_close);
-    //         if (track.isReceiver) {
-    //           if (!reconnectionWaitMS) {
-    //             if (reconnectionWaitMS !== false && reconnectionWaitMS !== null) {
-    //               reconnectionWaitMS = QRPCTrack.DAFAULT_TRACK_RECONNECTION_WAIT_MS;
-    //             }
-    //           } else if (typeof reconnectionWaitMS !== "number") {
-    //             throw new Error(`invalid return value as reconnectionWaitMS: ${reconnectionWaitMS}`);
-    //           }
-    //           if (reconnectionWaitMS) {
-    //             track.reconnect(this, reconnectionWaitMS);
-    //             console.log(`track ${track.path} will try reconnect after ${reconnectionWaitMS} ms`);
-    //             return;
-    //           }
-    //         }
-    //       }
-    //     }
-    //   } else {
-    //     recvStats[path].noInput = 0;
-    //     if (track.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
-    //       console.log(`input again for ${path}`);
-    //       await c.syscall("sync", {path});
-    //       track.resume(QRPCTrack.PAUSE_REASON.remote_close);          
-    //     }
-    //   }
-    //   recvStats[path].packetsReceived = packetsReceived;
-    //   // console.log(`in packets received per second: ${id} = ${packetsPerSecond} (${recvStats[path].noInput})`);
-    // }
   }
   async #createOffer(tracks) {
     const midPathMap = {};
@@ -600,9 +560,9 @@ class QRPClient {
       console.log(`queue sdpGen=${sdpGen}`, this.sdpQueue);
       return;
     }
-    //set remote description
+    // set remote description
     await this.pc.setRemoteDescription({type:"offer",sdp:remoteOffer});
-    //set tracks to actual peer connection
+    // set tracks to actual peer connection
     const midSsrcMap = {};
     for (const t of sentTracks) {
       await t.open(this.pc, this.midMediaPathMap);
@@ -610,14 +570,13 @@ class QRPClient {
         midSsrcMap[t.mid] = t.ssrc;
       }
     }
-    //Create the answer
     const answer = await this.pc.createAnswer();
     answer.sdp = this.fixupLocalAnswer(answer.sdp, midSsrcMap);
     // console.log("local answer sdp", answer.sdp);
     await this.pc.setLocalDescription(answer);
     console.log(`apply sdpGen=${sdpGen} is finished`);
     if (this.sdpQueue.length > 1) {
-      // async sleep
+      // async sleep to stabilize frequent sdp update
       await new Promise(r => setTimeout(r, 1000)); // this may add more sdp to the queue
       // fetch last element of the queue and execute.
       const e = this.sdpQueue[this.sdpQueue.length - 1];
@@ -653,9 +612,6 @@ class QRPClient {
     // Create new SDP offer without initializing actual peer connection
     const {localOffer, midPathMap: localMidLabelMap} = await this.#createOffer(sentTracks);
     console.log("local offer sdp", localOffer.sdp, localMidLabelMap);
-    // const oldSdp = this.pc.localDescription;
-    // // (re)Set local description
-    // await this.pc.setLocalDescription(offer);
 
     //store local ice ufrag/pwd
     this.iceUsername = localOffer.sdp.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];

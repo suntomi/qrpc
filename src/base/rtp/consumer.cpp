@@ -33,8 +33,7 @@ namespace rtp {
 		auto consumed_producer = peer.FindProducerByPath(lpath);
 		if (consumed_producer == nullptr) {
 			QRPC_LOGJ(error, {{"ev","fail to find consumed producer"},{"path",path}});
-			ASSERT(false);
-			return nullptr;
+			return nullptr; // on reconnection but does not prepared producer yet, it is possible
 		}
     auto type = pipe ?
       RTC::RtpParameters::Type::PIPE :
@@ -97,9 +96,7 @@ namespace rtp {
       case RTC::RtpParameters::Type::PIPE:
         return dynamic_cast<RTC::PipeConsumer *>(c)->FillBuffer(builder);
       default:
-        QRPC_LOG(error, "unsupported type: %d", c->GetType());
-        ASSERT(false);
-        return flatbuffers::Offset<FBS::Consumer::DumpResponse>(0);
+        logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});
     }
   }
 }

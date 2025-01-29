@@ -68,7 +68,7 @@ namespace webrtc {
         AdhocStream(c, config, std::move(Handler(Nop())), std::move(ConnectHandler(Nop())), std::move(ShutdownHandler(Nop()))) {}
       ~SyscallStream() {}
       int OnRead(const char *p, size_t sz) override;
-      int Call(const char *fn, uint32_t msgid, const json &j);
+      int Call(const char *fn, uint32_t msgid, const json &j, logger::level llv = logger::level::info);
       int Call(const char *fn, const json &j);
       int Call(const char *fn);
     };
@@ -150,8 +150,8 @@ namespace webrtc {
         const std::string &label, 
         const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map, bool sync,
         std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map);
-      bool ConsumeMedia(const rtp::MediaStreamConfig &config);
-      bool Consume();
+      bool ConsumeMedia(const rtp::MediaStreamConfig &config, std::string &error);
+      bool Consume(std::string &error);
       inline void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();
       IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority);

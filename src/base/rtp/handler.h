@@ -119,6 +119,8 @@ namespace rtp {
     inline Listener &listener() { return listener_; }
     inline const std::string &rtp_id() const { return listener_.rtp_id(); }
     inline const std::string &cname() const { return listener_.cname(); }
+    inline const absl::flat_hash_map<std::string, RTC::Consumer*> &consumers() const { return this->mapConsumers; }
+    inline const absl::flat_hash_map<std::string, RTC::Producer*> &producers() const { return this->mapProducers; }
     inline const std::map<Media::Mid, Media::Id> mid_media_path_map() const { return mid_media_path_map_; }
     inline int SendToStream(const std::string &path, const char *data, size_t len) {
       return listener_.SendToStream(path, data, len);
@@ -162,7 +164,7 @@ namespace rtp {
       Handler &peer, const std::string &local_path, const std::optional<rtp::Parameters::MediaKind> &media_kind,
       const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
       MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
-    bool Consume(Handler &peer, const MediaStreamConfig &config);
+    bool Consume(Handler &peer, const MediaStreamConfig &config, std::string &error);
     bool ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error);
     bool Pause(const std::string &path, std::string &error);
     bool Resume(const std::string &path, std::string &error);
@@ -211,6 +213,7 @@ namespace rtp {
       const std::string &path, const std::string &stream_label, const char *data, size_t len
     );
     void CloseConsumer(Consumer *c);
+    void DumpChildren(); // dump consumer and producer created by this handler
   public:
     void ReceiveRtpPacket(RTC::RtpPacket* packet) { RTC::Transport::ReceiveRtpPacket(packet); }
     void ReceiveRtcpPacket(RTC::RTCP::Packet* packet) { RTC::Transport::ReceiveRtcpPacket(packet); }

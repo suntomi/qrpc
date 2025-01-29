@@ -739,6 +739,17 @@ QAPI_THREADSAFE bool qrpc_alarm_is_valid(qrpc_alarm_t a);
 // log API
 //
 // --------------------------
+//log severity
+typedef enum {
+  QRPC_LOGLV_TRACE,
+  QRPC_LOGLV_DEBUG,
+  QRPC_LOGLV_INFO,
+  QRPC_LOGLV_WARN,
+  QRPC_LOGLV_ERROR,
+  QRPC_LOGLV_FATAL,            
+  QRPC_LOGLV_REPORT, //intend to use for msg that is very important, but not error.
+  QRPC_LOGLV_MAX,
+} qrpc_loglv_t;
 //log handler. 
 typedef void (*qrpc_logger_t)(const char *, size_t);
 //log configuration
@@ -753,18 +764,10 @@ typedef struct {
 
   //log handler
   qrpc_logger_t callback;
+
+  //log level to show
+  qrpc_loglv_t level;
 } qrpc_logconf_t;
-//log severity
-typedef enum {
-  QRPC_LOGLV_TRACE,
-  QRPC_LOGLV_DEBUG,
-  QRPC_LOGLV_INFO,
-  QRPC_LOGLV_WARN,
-  QRPC_LOGLV_ERROR,
-  QRPC_LOGLV_FATAL,            
-  QRPC_LOGLV_REPORT, //intend to use for msg that is very important, but not error.
-  QRPC_LOGLV_MAX,
-} qrpc_loglv_t;
 //structured log param
 typedef enum {
   QRPC_LOG_INTEGER,
