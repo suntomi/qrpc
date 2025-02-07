@@ -58,7 +58,7 @@ namespace rtp {
     }
   public:
     ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
-    MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id) const;
+    MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id, bool paused) const;
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
     PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const;
     void GetGeneratedSsrc(std::vector<uint32_t> &generated_ssrcs) const;

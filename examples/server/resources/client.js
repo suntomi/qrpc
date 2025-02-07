@@ -6,7 +6,7 @@ class QRPCTrack {
     remote_op: "remote_op",
   };
   static path(canonical_path, kind) { return canonical_path + kind; }
-  constructor(path, media, stream, track, encodings, {onopen, onclose, onpause, onresume, options}) {
+  constructor(path, media, stream, track, encodings, {onopen, onclose, onpause, onresume}) {
     this.path = path;
     this.media = media;
     this.media.addTrack(this);
@@ -18,7 +18,6 @@ class QRPCTrack {
     this.onresume = onresume || (() => {});
     this.track = track
     this.opened = false;
-    this.options = options;
     this.pausedReasons = [];
   }
   get id() { return this.track.id; }
@@ -111,9 +110,10 @@ class QRPCTrack {
   }
 }
 class QRPCMedia {
-  constructor(path, direction) {
+  constructor(path, direction, options) {
     this.path = path;
     this.direction = direction;
+    this.options = options;
     this.tracks = {};
     this.nextReconnect = 0;
     this.lastPing = null;
@@ -169,11 +169,7 @@ class QRPCMedia {
     try {
       console.log(`try reconnect for ${this.path}`);
       await c.viewMedia(this.path, {
-        onopen: this.onopen,
-        onclose: this.onclose,
-        onpause: this.onpause,
-        onresume: this.onresume,
-        [this.kind]: this.options
+        options: Object.assign(this.options, { sync: true })
       }, true);
     } catch (e) {
       console.log(`reconnect failed for ${this.path}: ${e.message}`);
@@ -791,7 +787,7 @@ class QRPClient {
     const tracks = [];
     stream.getTracks().forEach(t => {
       const path = QRPCTrack.path(cpath, t.kind);
-      const media = this.#addMedia(cpath, "send");
+      const media = this.#addMedia(cpath, "send", options);
       this.trackIdLabelMap[t.id] = path;
       const track = new QRPCTrack(path, media, stream, t, encodings, {
         onopen, onclose, onpause, onresume
@@ -814,7 +810,7 @@ class QRPClient {
     }
     return tracks;
   }
-  #addMedia(path, direction, paused) {
+  #addMedia(path, direction, options) {
     // 1. path/(video|audio) => path/
     // 2. path/ => path/
     const parsed = path.split("/");
@@ -825,7 +821,7 @@ class QRPClient {
     if (this.medias[path]) {
       media = this.medias[path];
     } else {
-      media = new QRPCMedia(path, direction, paused);
+      media = new QRPCMedia(path, direction, options);
       this.medias[path] = media;
     }
     return media;
@@ -856,7 +852,7 @@ class QRPClient {
       return { cpath: path, kind: undefined };
     }
   }
-  async viewMedia(path, {onopen, onclose, onpause, onresume, audio, video}, sync) {
+  async viewMedia(path, {onopen, onclose, onpause, onresume, options}) {
     if (!this.#handshaked()) {
       throw new Error("subscribe media can only be called after handshake");
     }
@@ -866,18 +862,16 @@ class QRPClient {
     // same as sdpGen/sentTrack in openMedia, #handshake
     const sdpGen = this.#incSdpGen();
     const sentTracks = [...this.sentTracks];
-    const remoteOffer = await this.syscall("consume", {
-      path: cpath, options: (audio || video || sync) ? { audio, video, sync } : undefined
-    });
+    const remoteOffer = await this.syscall("consume", {path: cpath, options});
     const tracks = [];
     for (const k of (kind ? [kind] : ["video", "audio"])) {
       const path = kind ? cpath : QRPCTrack.path(cpath, k);
-      const media = this.#addMedia(cpath, "recv");
+      const media = this.#addMedia(cpath, "recv", options);
       let track = this.tracks[path];
       if (!track) {
+        if (options?.sync) { throw new Error(`no track for ${path} yet but sync option is set`); }
         track = new QRPCTrack(path, media, null, null, undefined, {
-          onopen, onclose, onpause, onresume,
-          options: k === "video" ? video : audio
+          onopen, onclose, onpause, onresume
         });
         console.log("viewMedia: add track for", path);
         this.tracks[path] = track;

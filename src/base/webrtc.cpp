@@ -450,7 +450,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
               options_map.emplace(rtp::Parameters::MediaKind::AUDIO, v->second);
             }
             const auto syncit = opts.find("sync");
-            if (syncit != args.end()) {
+            if (syncit != opts.end()) {
               sync = syncit->second.get<bool>();
             }
           }

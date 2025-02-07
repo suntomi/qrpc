@@ -66,7 +66,7 @@ namespace rtp {
 		try {
       handler_.HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CONSUME, FBS::Transport::CreateConsumeRequestDirect(
         fbb, id.c_str(), producer_id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
-        config.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings, 0, config.options.pause
+        config.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings, config.options.pause
       ));
       return handler_.FindConsumer(id);
     } catch (std::exception &e) {

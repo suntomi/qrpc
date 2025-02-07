@@ -64,10 +64,14 @@
     <div id="subscribe">
       <input type="text" id="idedit" placeholder="input connection id of other peer"/>
       <input type="text" id="lpath_sub" placeholder="input local path" value="webcam"/>
+      <input type="checkbox" id="sub_audio" checked/><label for="sub_audio">audio</label>
+      <input type="checkbox" id="sub_video" checked/><label for="sub_video">video</label>
       <button id="sub">subscribe</button>
     </div>
     <div id="publish">
       <input type="text" id="lpath_pub" placeholder="input local path" value="webcam2"/>
+      <input type="checkbox" id="pub_audio" checked/><label for="pub_audio">audio</label>
+      <input type="checkbox" id="pub_video" checked/><label for="pub_video">video</label>
       <button id="pub">publish</button>
     </div>
     <div>published tracks</div>
@@ -134,8 +138,9 @@
         });
         return audioSwitch;
       }
-      createMediaHandler = (dom) => {
+      createMediaHandlerWithOptions = (dom, options) => {
         return {
+          options,
           onopen: (track)=>{
             console.log("media open", track.directory, track.id);
             createMediaContainerElement(track, dom);
@@ -249,8 +254,8 @@
         mediaElement.srcObject = t.stream;
         return container;
       }
-      openMedia = async (path, handler) => {
-        await c.openMedia(path, Object.assign({}, handler, {
+      openMedia = async (path, handler_and_options) => {
+        await c.openMedia(path, Object.assign({}, handler_and_options, {
           stream: await navigator.mediaDevices.getUserMedia({
             video: {width: {ideal: 1280}, height: {ideal: 720}},
             audio: true
@@ -263,19 +268,26 @@
             // 100kbps ?
             {rid: 'l1', maxBitrate: 500000, active: true, scaleResolutionDownBy: 4.0}
           ],
-        }));        
+        }));
+      }
+      createPubSubOptions = (audio_checkbox_id, video_checkbox_id) => {
+        const need_audio = document.getElementById(audio_checkbox_id).checked;
+        const need_video = document.getElementById(video_checkbox_id).checked;
+        return Object.assign({}, need_audio ? {} : {audio:{pause:true}}, need_video ? {} : {video:{pause:true}});
       }
       onPublish = async (event) => {
         const lpath = document.getElementById('lpath_pub').value;
-        console.log(`publish: input path = ${lpath}`);
-        await openMedia(lpath, createMediaHandler(pubsList, true));
+        const options = createPubSubOptions('pub_audio', 'pub_video');
+        console.log(`publish: input path = ${lpath}`, options);
+        await openMedia(lpath, createMediaHandlerWithOptions(pubsList, options));
       }
       onSubscribe = async (event) => {
         const id = document.getElementById('idedit').value;
         const lpath = document.getElementById('lpath_sub').value;
+        const options = createPubSubOptions('sub_audio', 'sub_video');
         const path = `${id}/${lpath}`;
-        console.log(`subscribe: input path = ${path}`);
-        await c.viewMedia(path, createMediaHandler(subsList));
+        console.log(`subscribe: input path = ${path}`, options);
+        await c.viewMedia(path, createMediaHandlerWithOptions(subsList, options));
       }
       onReconnect = (event) => {
         console.log("shutdown by UI");
@@ -305,7 +317,7 @@
       c.onopen = async () => {
         console.log("client onopen called");
         setupUI(c);
-        await openMedia("webcam", createMediaHandler(pubsList, true));
+        await openMedia("webcam", createMediaHandlerWithOptions(pubsList));
         return context;
       };
       c.onclose = () => {

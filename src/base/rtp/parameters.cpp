@@ -141,11 +141,11 @@ namespace rtp {
     return FBS::RtpParameters::CreateRtpMappingDirect(fbb, &c, &e);
   }
   ::flatbuffers::Offset<FBS::Transport::ProduceRequest>
-  Parameters::MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id) const {
+  Parameters::MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id, bool paused) const {
     return FBS::Transport::CreateProduceRequestDirect(
       fbb, id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
       FillBuffer(fbb),
-      PackRtpMapping(fbb)
+      PackRtpMapping(fbb), 0, paused
     );
   }
 
