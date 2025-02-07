@@ -39,7 +39,7 @@ namespace rtp {
     inline bool receiver() const { return direction == Direction::RECV; }
     inline bool probator() const { return mid == RTC::RtpProbationGenerator::GetMidValue(); }
     inline const std::string media_stream_track_id() const {
-      return probator() ? mid : (media_path + "/" + mid);
+      return probator() ? mid : media_path;
     }
     inline const std::string local_path() const {
       if (sender()) {
@@ -55,15 +55,20 @@ namespace rtp {
       if (probator()) { return mid; }
       auto cs = str::Split(media_path, "/");
       if (cs.size() == 3) {
-        return cs[0] + "/" + cs[1] + "/" + mid;
+        return cs[0] + "/" + cs[1];
       } else if (cs.size() == 2) {
-        return cs[0] + "/" + mid;
+        return cs[0];
       } else {
         ASSERT(false);
         return "";
       }
     }
     bool GenerateCN(std::string &cname) const;
+    void Reset() {
+      auto new_seed = GenerateSsrc();
+      QRPC_LOGJ(info, {{"ev","reset ssrc seed"},{"old",ssrc_seed},{"new",new_seed}});
+      this->ssrc_seed = new_seed;
+    }
     std::string media_path;
     Direction direction{ Direction::RECV };
     ControlOptions options;

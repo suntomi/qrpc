@@ -140,33 +140,43 @@ namespace rtp {
 		for (const auto k : kinds) {
 			auto kind = Parameters::FromMediaKind(k);
 			auto media_path = path + kind;
+			auto capit = listener_.capabilities().find(k);
+			if (capit == listener_.capabilities().end()) {
+				QRPC_LOGJ(info, {{"ev","ignore media type which is not supported"},{"path",path},{"kind",kind}});
+				ASSERT(false);
+				continue;
+			}
 			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
 				return !c.deleted && c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
 			});
 			QRPC_LOGJ(info, {{"ev","check consume config"},{"media_path",media_path},{"exists",ccit != media_stream_configs.end()}});
 			if (ccit != media_stream_configs.end()) {
 				if (sync && media_kind.has_value()) {
-					// get index in media_stream_configs correspond to ccit
-					auto newmid = GenerateMid();
-					QRPC_LOGJ(info, {{"ev","update mid to refresh track"},{"media_path",media_path},{"oldmid",ccit->mid},{"newmid",newmid}});
-					// reorder media_stream_configs so that updated config at the end
-					ccit->deleted = true;
-					auto encodings = ccit->encodings;
-					ccit->encodings.clear();
-					auto &newc = media_stream_configs.emplace_back(*ccit); // copy ccit (after here, ccit might be invalid, so don't touch it)
-					newc.mid = newmid;
-					newc.deleted = false;
-					newc.encodings = encodings;
-					UpdateMidMediaPathMap(newc);
+					auto old_seed = ccit->ssrc_seed;
+					ccit->Reset();
+					// to find producer from peer, need to use local_path (path without cname and media kind)
+					auto consumed_producer = peer.FindProducerByPath(local_path + kind);
+					if (consumed_producer == nullptr) {
+						QRPC_LOGJ(info, {
+							{"ev","ignore media because corresponding producer of peer not found"},
+							{"path",path + kind},{"peer",peer.rtp_id()}
+						});
+						ASSERT(false);
+						continue;
+					}
+					auto &config = *ccit;
+					config.encodings.clear();
+					config.codecs.clear();
+					config.headerExtensions.clear();
+					// generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
+					if (!Producer::consumer_params(consumed_producer->params(), capit->second, config)) {
+						QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
+						ASSERT(false);
+						continue;
+					}
 				} else {
 					QRPC_LOGJ(info, {{"ev","ignore media because already prepare"},{"media_path",media_path},{"sync",sync}});
 				}
-				continue;
-			}
-			auto capit = listener_.capabilities().find(k);
-			if (capit == listener_.capabilities().end()) {
-				QRPC_LOGJ(info, {{"ev","ignore media type which is not supported"},{"path",path},{"kind",kind}});
-				ASSERT(false);
 				continue;
 			}
 			// to find producer from peer, need to use local_path (path without cname and media kind)

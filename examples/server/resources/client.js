@@ -806,7 +806,7 @@ class QRPClient {
     const sdpGen = this.#incSdpGen();
     const sentTracks = [...this.sentTracks];
     const remoteOffer = await this.syscall("consume", {
-      path: cpath, options: (audio || video) ? { audio, video } : undefined
+      path: cpath, options: (audio || video || sync) ? { audio, video, sync } : undefined
     });
     const tracks = [];
     for (const k of (kind ? [kind] : ["video", "audio"])) {
@@ -822,10 +822,7 @@ class QRPClient {
       }
       tracks.push(track);
     }
-    if (!sync) {
-      // if not for sync, set remote offer to add more tracks
-      await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
-    }
+    await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
     return tracks;
   }
   async pauseMedia(path) {

@@ -165,6 +165,11 @@ ConnectionFactory::FindFromUfrag(const IceUFrag &ufrag) {
 uint32_t ConnectionFactory::g_ref_count_ = 0;
 std::mutex ConnectionFactory::g_ref_sync_mutex_;
 static Channel::ChannelSocket g_channel_socket_(INVALID_FD, INVALID_FD);
+static void srtp_logger(srtp_log_level_t level,
+                        const char *msg,
+                        void *data) {
+  QRPC_LOGJ(info,{{"ev","srtp log"},{"level",level},{"msg",msg}});
+}
 int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 	try
 	{
@@ -231,6 +236,7 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
       DepLibWebRTC::ClassInit();
       Utils::Crypto::ClassInit();
       RTC::DtlsTransport::ClassInit();
+      srtp_install_log_handler(srtp_logger, nullptr);
       RTC::SrtpSession::ClassInit();
       Logger::ClassInit(&g_channel_socket_);
       DepUsrSCTP::CreateChecker();
@@ -1443,6 +1449,7 @@ int ConnectionFactory::Connection::SendToStream(
 
 void ConnectionFactory::Connection::RecvStreamClosed(uint32_t ssrc) {
   if (srtp_recv_ != nullptr) {
+    QRPC_LOGJ(info, {{"ev","recv stream closed"},{"ssrc",ssrc},{"cname",cname_}});
     srtp_recv_->RemoveStream(ssrc);
   }
 }
@@ -1493,10 +1500,6 @@ void ConnectionFactory::Connection::SendRtpPacket(
     return;
   }
   // packet->Dump();
-  // std::string mid, rid;
-  // auto has_mid = packet->ReadMid(mid), has_rid = packet->ReadRid(rid);
-  // QRPC_LOGJ(info, {{"ev","sendrtp"},// {"to",ice_server_->GetSelectedSession()->addr().str()},
-  //   {"ssrc",packet->GetSsrc()},{"mid",has_mid ? mid : "x"},{"rid",has_rid ? rid : "x"},{"seq",packet->GetSequenceNumber()},{"pt",packet->GetPayloadType()},{"sz",sz}});
   // Increase send transmission.
   rtp_handler_->DataSent(sz);
 }
