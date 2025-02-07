@@ -151,8 +151,7 @@ namespace rtp {
 			});
 			QRPC_LOGJ(info, {{"ev","check consume config"},{"media_path",media_path},{"exists",ccit != media_stream_configs.end()}});
 			if (ccit != media_stream_configs.end()) {
-				if (sync && media_kind.has_value()) {
-					auto old_seed = ccit->ssrc_seed;
+				if (sync) {
 					ccit->Reset();
 					// to find producer from peer, need to use local_path (path without cname and media kind)
 					auto consumed_producer = peer.FindProducerByPath(local_path + kind);
@@ -337,16 +336,17 @@ namespace rtp {
 		c->ProducerResumed();
 		return true;
 	}
-	bool Handler::Ping(const std::string &path, std::string &error) {
-		auto *p = FindProducerByPath(path);
-		if (p == nullptr) {
-			error = "producer to ping not found";
-			QRPC_LOGJ(error, {{"ev",error},{"path",path}});
-			ASSERT(false);
-			return false;
+	bool Handler::Ping(std::string &error) {
+		for (const auto &kv : producers()) {
+      auto it = mid_media_path_map_.find(kv.second->GetRtpParameters().mid);
+			if (it == mid_media_path_map_.end()) {
+				QRPC_LOGJ(info, {{"ev","no path data"},{"mid",kv.second->GetRtpParameters().mid}});
+				ASSERT(false);
+				continue;
+			}
+			auto pl = json({{"fn","ping"},{"args",{{"path",cname() + "/" + it->second}}}}).dump();
+			SendToConsumersOf(kv.second, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
 		}
-		auto pl = json({{"fn","ping"},{"args",{{"path",cname() + "/" + path}}}}).dump();
-		SendToConsumersOf(path, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
 		return true;
 	}
 	bool Handler::Pause(const std::string &path, std::string &error) {
@@ -430,9 +430,8 @@ namespace rtp {
 		RTC::Transport::CloseProducersAndConsumers();
 	}
 	void Handler::SendToConsumersOf(
-		const std::string &path, const std::string &stream_label, const char *data, size_t len
+		const RTC::Producer *p, const std::string &stream_label, const char *data, size_t len
 	) {
-		auto p = GetProducerById(ProducerFactory::GenerateId(rtp_id(), path));
 		for (auto *c : router_.GetConsumersOf(p)) {
 			auto &h = ConsumerFactory::HandlerFrom(c);
 			h.SendToStream(stream_label, data, len);

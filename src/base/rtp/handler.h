@@ -173,7 +173,7 @@ namespace rtp {
     bool ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error);
     bool Pause(const std::string &path, std::string &error);
     bool Resume(const std::string &path, std::string &error);
-    bool Ping(const std::string &path, std::string &error);
+    bool Ping(std::string &error);
     bool Sync(const std::string &path, std::string &sdp);
     bool SetExtensionId(uint8_t id, RTC::RtpHeaderExtensionUri::Type uri);
     void SetNegotiationArgs(const std::map<std::string, json> &args);
@@ -215,8 +215,14 @@ namespace rtp {
       return reinterpret_cast<Consumer *>(it == this->mapConsumers.end() ? nullptr : it->second);
     }
     void SendToConsumersOf(
-      const std::string &path, const std::string &stream_label, const char *data, size_t len
+      const RTC::Producer *p, const std::string &stream_label, const char *data, size_t len
     );
+    void SendToConsumersOf(
+      const std::string &path, const std::string &stream_label, const char *data, size_t len
+    ) {
+      auto p = GetProducerById(ProducerFactory::GenerateId(rtp_id(), path));
+      SendToConsumersOf(p, stream_label, data, len);
+    }
     void CloseConsumer(Consumer *c);
     void DumpChildren(); // dump consumer and producer created by this handler
   public:

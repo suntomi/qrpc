@@ -497,12 +497,8 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             {"mid_media_path_map",c.rtp_handler().mid_media_path_map()},{"sdp",sdp}
           });
         } else if (fn == "ping") {
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
           std::string error;
-          if (!c.rtp_handler().Ping(pit->second.get<std::string>(), error)) {
+          if (!c.rtp_handler().Ping(error)) {
             RAISE("fail to ping:" + error);
           }
           Call("ping_ack",msgid,{},logger::level::trace);

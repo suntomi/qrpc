@@ -6,8 +6,10 @@ class QRPCTrack {
     remote_op: "remote_op",
   };
   static path(canonical_path, kind) { return canonical_path + kind; }
-  constructor(path, stream, track, encodings, {onopen, onclose, onpause, onresume, options}) {
+  constructor(path, media, stream, track, encodings, {onopen, onclose, onpause, onresume, options}) {
     this.path = path;
+    this.media = media;
+    this.media.addTrack(this);
     this.stream = stream;
     this.encodings = encodings;
     this.onopen = onopen;
@@ -15,15 +17,9 @@ class QRPCTrack {
     this.onpause = onpause || ((reason) => {});
     this.onresume = onresume || (() => {});
     this.track = track
-    this.direction = track ? "send" : "recv";
     this.opened = false;
     this.options = options;
     this.pausedReasons = [];
-    if (this.isReceiver) {
-      this.keepAlive();
-    }
-    this.nextReconnect = 0;
-    this.reconnectInvtervalMS = null;
   }
   get id() { return this.track.id; }
   get kind() { 
@@ -35,8 +31,8 @@ class QRPCTrack {
   get mid() { return this.transceiver.mid; }
   get active() { return this.track != null; }
   get paused() { return this.pausedReasons.length > 0; }
-  get isReceiver() { return this.direction === "recv"; }
-  keepAlive() { this.lastPing = (new Date()).getTime(); }
+  get direction() { return this.media.direction; }
+  get isReceiver() { return this.media.isReceiver; }
   pausedBy(reason) {
     return this.pausedReasons.indexOf(reason) >= 0;
   }
@@ -101,6 +97,65 @@ class QRPCTrack {
       }
     }
   }
+  close() {
+    if (this.track) {
+      this.onclose(this);
+      this.media.removeTrack(this);
+      this.track.stop();
+      this.track = null;
+      this.transceiver = null;
+      this.stream = null;
+      this.opened = false;
+      this.pausedReasons = [];
+    }
+  }
+}
+class QRPCMedia {
+  constructor(path, direction) {
+    this.path = path;
+    this.direction = direction;
+    this.tracks = {};
+    this.nextReconnect = 0;
+    this.lastPing = null;
+    this.reconnectInvtervalMS = null;
+    this.opened = true;
+    this.keepAlive();
+  }
+  get isReceiver() { return this.direction === "recv"; }
+  keepAlive() {
+    this.lastPing = (new Date()).getTime();
+  }
+  addTrack(t) {
+    this.tracks[t.path] = t;
+  }
+  removeTrack(t) {
+    delete this.tracks[t.path];
+  }
+  pause(reason) {
+    const ret = [];
+    for (const k in this.tracks) {
+      let reconnectionWaitMS = this.tracks[k].pause(reason);
+      if (reason === QRPCTrack.PAUSE_REASON.remote_close) {
+        if (!reconnectionWaitMS && reconnectionWaitMS !== false && reconnectionWaitMS !== null) {
+          reconnectionWaitMS = QRPCTrack.DAFAULT_TRACK_RECONNECTION_WAIT_MS;
+        } else if (typeof reconnectionWaitMS !== "number") {
+          reconnectionWaitMS = null;
+        }
+        if (reconnectionWaitMS) {
+          ret.push(reconnectionWaitMS);
+        }
+      }
+    }
+    if (ret.length > 0) {
+      // sort by ascending order and return first element (that is, minimum element)
+      return ret.sort()[0];
+    }
+  }
+  resume(reason) {
+    for (const k in this.tracks) {
+      this.tracks[k].resume(reason);
+    }
+  }
   startReconnect(c, backoffMS) {
     this.reconnectInvtervalMS = backoffMS
     this.nextReconnect = (new Date()).getTime() + this.reconnectInvtervalMS;
@@ -113,7 +168,6 @@ class QRPCTrack {
   async reconnect(c) {
     try {
       console.log(`try reconnect for ${this.path}`);
-      this.opened = false;
       await c.viewMedia(this.path, {
         onopen: this.onopen,
         onclose: this.onclose,
@@ -123,17 +177,6 @@ class QRPCTrack {
       }, true);
     } catch (e) {
       console.log(`reconnect failed for ${this.path}: ${e.message}`);
-    }
-  }
-  close() {
-    if (this.track) {
-      this.onclose(this);
-      this.track.stop();
-      this.track = null;
-      this.transceiver = null;
-      this.stream = null;
-      this.opened = false;
-      this.pausedReasons = [];
     }
   }
 }
@@ -181,7 +224,7 @@ class QRPClient {
         if (data.args.path) {
           const t = this.tracks[data.args.path];
           if (t) {
-            t.keepAlive();
+            t.media.keepAlive();
           } else {
             console.log(`no such track for ping: ${data.args.path}`);
           }
@@ -246,6 +289,7 @@ class QRPClient {
   }
   #clear() {
     this.streams = {};
+    this.medias = {};
     this.tracks = {};
     this.sentTracks = [];
     this.trackIdLabelMap = {};
@@ -259,7 +303,6 @@ class QRPClient {
     this.id = null;
     this.syscallStream = null;
     this.timer = null;
-    this.recvStats = {};
     this.sdpQueue = [];
   }
   initIce() {
@@ -414,7 +457,7 @@ class QRPClient {
     }
     this.timer = setInterval(async () => {
       const now = (new Date()).getTime();
-      await this.#checkTracks(now);
+      await this.#checkMedias(now);
     }, 1000); // 1秒ごとにチェック
   }
   parseLocalOffer(localOffer) {
@@ -445,34 +488,33 @@ class QRPClient {
     }
     return result;
   }
-  async #checkTracks(now) {
-    for (const k in this.tracks) {
-      const t = this.tracks[k];
-      if (t.isReceiver) {
+  async #checkMedias(now) {
+    for (const k in this.medias) {
+      const m = this.medias[k];
+      if (m.isReceiver) {
         // console.log("check track", t.path, now - t.lastPing);
-        if (now - t.lastPing > (QRPClient.NO_INPUT_THRESHOLD * 1000)) {
-          if (!t.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
-            let reconnectionWaitMS = t.pause(QRPCTrack.PAUSE_REASON.remote_close);
-            console.log(`no ping for ${t.path} for ${QRPClient.NO_INPUT_THRESHOLD * 1000} ms`, reconnectionWaitMS);
-            if (!reconnectionWaitMS && reconnectionWaitMS !== false && reconnectionWaitMS !== null) {
-              reconnectionWaitMS = QRPCTrack.DAFAULT_TRACK_RECONNECTION_WAIT_MS;
-            }
+        if (now - m.lastPing > (QRPClient.NO_INPUT_THRESHOLD * 1000)) {
+          if (m.opened) {
+            m.opened = false;
+            const reconnectionWaitMS = m.pause(QRPCTrack.PAUSE_REASON.remote_close);
+            console.log(`no ping for ${m.path} for ${QRPClient.NO_INPUT_THRESHOLD * 1000} ms`, reconnectionWaitMS);
             if (reconnectionWaitMS) {
-              t.startReconnect(this, reconnectionWaitMS);
-              console.log(`track ${t.path} will try reconnect every ${reconnectionWaitMS} ms`);
+              m.startReconnect(this, reconnectionWaitMS);
+              console.log(`track ${m.path} will try reconnect every ${reconnectionWaitMS} ms`);
             }
-          } else if (t.reconnectInvtervalMS && now > t.nextReconnect) {
-            t.reconnect(this);
-            t.nextReconnect = now + t.reconnectInvtervalMS;
+          } else if (m.reconnectInvtervalMS && now > m.nextReconnect) {
+            m.reconnect(this);
+            m.nextReconnect = now + m.reconnectInvtervalMS;
           }
-        } else if (t.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
-          console.log(`input again for ${t.path}`);
-          t.stopReconnect();
-          await this.syscall("sync", {path: t.path});
-          t.resume(QRPCTrack.PAUSE_REASON.remote_close);
+        } else if (!m.opened) {
+          console.log(`input again for ${m.path}`);
+          m.opened = true;
+          m.stopReconnect();
+          // await this.syscall("sync", {path: m.path});
+          m.resume(QRPCTrack.PAUSE_REASON.remote_close);
         }
       } else if (this.connected) {
-        this.syscall("ping", { path: t.path });
+        this.syscall("ping", {});
       }
     }
   }
@@ -749,8 +791,11 @@ class QRPClient {
     const tracks = [];
     stream.getTracks().forEach(t => {
       const path = QRPCTrack.path(cpath, t.kind);
+      const media = this.#addMedia(cpath, "send");
       this.trackIdLabelMap[t.id] = path;
-      const track = new QRPCTrack(path, stream, t, encodings, {onopen, onclose, onpause, onresume});
+      const track = new QRPCTrack(path, media, stream, t, encodings, {
+        onopen, onclose, onpause, onresume
+      });
       console.log("openMedia: add track for", track.path);
       this.tracks[track.path] = track;
       this.sentTracks.push(track);
@@ -768,6 +813,22 @@ class QRPClient {
       await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
     }
     return tracks;
+  }
+  #addMedia(path, direction, paused) {
+    // 1. path/(video|audio) => path/
+    // 2. path/ => path/
+    const parsed = path.split("/");
+    let media;
+    if (parsed[parsed.length - 1] === "video" || parsed[parsed.length - 1] === "audio") {
+      path = path.slice(0, -5);
+    }
+    if (this.medias[path]) {
+      media = this.medias[path];
+    } else {
+      media = new QRPCMedia(path, direction, paused);
+      this.medias[path] = media;
+    }
+    return media;
   }
   // media_path is one of the following:
   // 1. ${cname}/${local_path}/ => all media kind under local_path consumed
@@ -811,9 +872,10 @@ class QRPClient {
     const tracks = [];
     for (const k of (kind ? [kind] : ["video", "audio"])) {
       const path = kind ? cpath : QRPCTrack.path(cpath, k);
+      const media = this.#addMedia(cpath, "recv");
       let track = this.tracks[path];
       if (!track) {
-        track = new QRPCTrack(path, null, null, undefined, {
+        track = new QRPCTrack(path, media, null, null, undefined, {
           onopen, onclose, onpause, onresume,
           options: k === "video" ? video : audio
         });
