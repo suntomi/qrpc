@@ -124,19 +124,16 @@
         const mediaControlHandler = createMediaControlHandler(track);
         audioSwitch.className = 'audio-switch';
         const img = document.createElement('img');
-        img.src = './audio-on.svg';
+        img.src = mediaIcon(track);
         img.alt = 'Loading...';
         audioSwitch.appendChild(img);
         audioSwitch.addEventListener('click', async (event) => {
           console.log("audio switch", track.path, track.pausedReasons);
           event.stopPropagation(); // if it puts after await, not effective. I guess the callback is regarded as finished once await is happen.
           await mediaControlHandler(event);
-          const img = document.createElement('img');
-          img.src = mediaIcon(track);
-          img.alt = 'Loading...';
-          audioSwitch.replaceChild(img, audioSwitch.firstChild);
+          audioSwitch.firstChild.src = mediaIcon(track);
         });
-        return audioSwitch;
+        return {audioSwitch, img};
       }
       createMediaHandlerWithOptions = (dom, options) => {
         return {
@@ -222,6 +219,38 @@
           }
         }
       }
+      addVEforAudioVolume = (audioDom, visualDom, track) => {
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(audioDom.srcObject);
+        // AnalyserNode の生成と設定
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256; // 分解能（数値は適宜調整）
+        source.connect(analyser);
+        analyser.connect(audioContext.destination);
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const visualize = () => {
+          requestAnimationFrame(visualize);
+          if (track.pausedBy(QRPCTrack.PAUSE_REASON.local_op)) {
+            return; // skip visualization because user paused the audio
+          }
+          analyser.getByteTimeDomainData(dataArray);
+          // 中央値である128を基準に、サンプル値から絶対偏差を計算
+          let sum = 0;
+          dataArray.forEach(value => { sum += Math.abs(value - 128); });
+          const average = sum / dataArray.length;  // 平均振幅
+          // 平均振幅をもとにスケールを計算（例：1～1.5倍）
+          const scale = 1 + Math.min(0.5, average / 16);
+          // console.log("scale", scale);
+          visualDom.style.transform = `scale(${scale})`;
+        }
+        // audio再生に合わせて更新を開始
+        audioDom.addEventListener('play', () => {
+          if (audioContext.state === 'suspended') {
+            audioContext.resume();
+          }
+          visualize();
+        });
+      }
       createMediaContainerElement = (t, dom) => {
         console.log("createMediaContainerElement", t.path);
         const container_id = `media-${t.directory.replace(/\//g, '-')}`;
@@ -242,16 +271,20 @@
           mediaElement = document.createElement(t.kind);
           mediaElement.id = t.path;
           mediaElement.autoplay = true;
+          mediaElement.srcObject = t.stream;
           container.appendChild(mediaElement);
           if (t.kind === 'video') {
             // attach pause/resume handler for entire container click event
             container.addEventListener('click', createMediaControlHandler(t));
           } else if (t.kind === 'audio') {
             // attach pause/resume handler for audio switch elemnt click event
-            container.appendChild(createAudioSwitchElement(t));
+            const {audioSwitch, img} = createAudioSwitchElement(t);
+            container.appendChild(audioSwitch);
+            addVEforAudioVolume(mediaElement, img, t);
           }
+        } else {
+          mediaElement.srcObject = t.stream;
         }
-        mediaElement.srcObject = t.stream;
         return container;
       }
       openMedia = async (path, handler_and_options) => {
