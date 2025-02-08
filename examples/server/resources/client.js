@@ -35,15 +35,18 @@ class QRPCTrack {
   pausedBy(reason) {
     return this.pausedReasons.indexOf(reason) >= 0;
   }
-  pause(reason) {
-    this.pausedReasons.push(reason);
-    return this.onpause && this.onpause(this, reason);
+  pause(reason, noCallback) {
+    const i = this.pausedReasons.indexOf(reason);
+    if (i < 0) {
+      this.pausedReasons.push(reason);
+    }
+    return !noCallback && this.onpause && this.onpause(this, reason);
   }
-  resume(reason) {
+  resume(reason, noCallback) {
     const i = this.pausedReasons.indexOf(reason);
     if (i >= 0) {
       this.pausedReasons.splice(i, 1);
-      this.onresume && this.onresume(this, reason);
+      !noCallback && this.onresume && this.onresume(this, reason);
     }
   }
   async open(pc, midMediaPathMap) {
@@ -99,7 +102,6 @@ class QRPCTrack {
   close() {
     if (this.track) {
       this.onclose(this);
-      this.media.removeTrack(this);
       this.track.stop();
       this.track = null;
       this.transceiver = null;
@@ -107,6 +109,7 @@ class QRPCTrack {
       this.opened = false;
       this.pausedReasons = [];
     }
+    this.media.removeTrack(this);
   }
 }
 class QRPCMedia {
@@ -252,6 +255,21 @@ class QRPClient {
         for (const pair of data.args.ssrc_label_map || []) {
           this.ssrcLabelMap[pair[0]] = pair[1];
         }
+        for (const k in data.args.status_map || {}) {
+          const st = data.args.status_map[k];
+          const t = this.tracks[k];
+          if (t) {
+            console.log(`track ${t.path} already paused by `, st.pausedReasons);
+            for (const r of st.pausedReasons || []) {
+              t.pause(r, true);
+            }
+          } else {
+            for (const kk in this.tracks) {
+              console.log(`compare [${k}] and [${kk}] [${k == kk}]`);
+            }
+            console.log(`no such track for [${k}]`, this.tracks, this.tracks[k]);
+          }
+        }
         Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
         console.log("midMediaPathMap => ", this.midMediaPathMap);
         console.log("ssrcLabelMap => ", this.ssrcLabelMap);
@@ -265,6 +283,16 @@ class QRPClient {
         }
         Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
         console.log("midMediaPathMap => ", this.midMediaPathMap);
+        for (const k in data.args.status_map || {}) {
+          const st = data.args.status_map[k];
+          const t = this.tracks[k];
+          if (t) {
+            console.log(`track ${t.path} already paused by `, st.pausedReasons);
+            for (const r of st.pausedReasons || []) {
+              t.pause(r, true);
+            }
+          }
+        }
         promise.resolve(data.args.sdp);
       } else if (
         data.fn == "resume_ack" || data.fn == "pause_ack" || data.fn == "close_ack" ||
@@ -798,15 +826,25 @@ class QRPClient {
       tracks.push(track);
     });
     if (this.#handshaked()) {
-      const sdpGen = this.#incSdpGen();
-      const sentTracks = [...this.sentTracks];
       // already handshaked, so renegotiate for newly produced tracks.
       const {localOffer, midPathMap} = await this.#createOffer(tracks);
       console.log("openMedia: local offer", localOffer.sdp, midPathMap);
-      const remoteOffer = await this.syscall("produce", { 
-        sdp: localOffer.sdp, options, midPathMap
-      });
-      await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
+      const sdpGen = this.#incSdpGen();
+      const sentTracks = [...this.sentTracks];
+      try {
+        const remoteOffer = await this.syscall("produce", {
+          sdp: localOffer.sdp, options, midPathMap
+        });
+        await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
+      } catch (e) {
+        console.log("openMedia: remote negotiation failed", e.message);
+        for (const t of tracks) {
+          delete this.medias[t.media.path];
+          delete this.tracks[t.path];
+          t.close();
+        }
+        throw e;
+      }
     }
     return tracks;
   }
@@ -857,12 +895,6 @@ class QRPClient {
       throw new Error("subscribe media can only be called after handshake");
     }
     const {cpath, kind} = this.#canonicalViewPath(path);
-    // sdpGen/sentTracks/remoteOffer should be timing matched. otherwise other media API call
-    // may change sdpGen/sentTracks which does not match with current values
-    // same as sdpGen/sentTrack in openMedia, #handshake
-    const sdpGen = this.#incSdpGen();
-    const sentTracks = [...this.sentTracks];
-    const remoteOffer = await this.syscall("consume", {path: cpath, options});
     const tracks = [];
     for (const k of (kind ? [kind] : ["video", "audio"])) {
       const path = kind ? cpath : QRPCTrack.path(cpath, k);
@@ -878,7 +910,23 @@ class QRPClient {
       }
       tracks.push(track);
     }
-    await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
+    // sdpGen/sentTracks/remoteOffer should be timing matched. otherwise other media API call
+    // may change sdpGen/sentTracks which does not match with current values
+    // same as sdpGen/sentTrack in openMedia, #handshake
+    const sdpGen = this.#incSdpGen();
+    const sentTracks = [...this.sentTracks];
+    try {
+      const remoteOffer = await this.syscall("consume", {path: cpath, options});
+      await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
+    } catch (e) {
+      console.log("viewMedia: remote negotiation failed", e.message);
+      for (const t of tracks) {
+        delete this.medias[t.media.path];
+        delete this.tracks[t.path];
+        t.close();
+      }
+      throw e;
+    }
     return tracks;
   }
   async pauseMedia(path) {

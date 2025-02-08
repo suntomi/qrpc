@@ -420,15 +420,34 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           if (mpmit == args.end()) {
             RAISE("no value for key 'midPathMap'");
           }
+          std::map<rtp::Parameters::MediaKind, ControlOptions> options_map;
+          const auto oit = args.find("options");
+          if (oit != args.end()) {
+            QRPC_LOGJ(info, {{"ev","produce options"},{"options",oit->second}});
+            const auto &opts = oit->second.get<std::map<std::string,json>>();
+            const auto v = opts.find("video");
+            if (v != opts.end()) {
+              options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
+            }
+            const auto a = opts.find("audio");
+            if (a != opts.end()) {
+              options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
+            }
+          }
           SDP sdp(sdpit->second.get<std::string>());
           std::string answer;
-          if (!sdp.Answer(mpmit->second.get<std::map<std::string,std::string>>(), c, answer)) {
+          std::map<std::string,rtp::Producer*> created_producers;
+          if (!sdp.Answer(mpmit->second.get<std::map<std::string,std::string>>(), c, answer, &options_map, &created_producers)) {
             RAISE("fail to prepare consume");
           }
           if (!c.rtp_enabled()) {
             RAISE("nothing produced");
           }
-          Call("produce_ack",msgid,{{"sdp",answer},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
+          json status_map;
+          for (const auto &kv : created_producers) {
+            status_map[kv.first] = kv.second->status().ToJson();
+          }
+          Call("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
         } else if (fn == "consume") {
           QRPC_LOGJ(info, {{"ev","consume request"},{"args",args}});
           const auto pit = args.find("path");
@@ -457,11 +476,17 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           auto path = pit->second.get<std::string>();
           std::string sdp;
           std::map<uint32_t,std::string> ssrc_label_map;
-          if (!c.PrepareConsume(path, options_map, sync, sdp, ssrc_label_map)) {
+          std::map<std::string,rtp::Consumer*> created_consumers;
+          if (!c.PrepareConsume(path, options_map, sync, sdp, ssrc_label_map, created_consumers)) {
             RAISE("fail to prepare consume");
           }
+          json status_map;
+          for (const auto &kv : created_consumers) {
+            auto st = rtp::ConsumerFactory::StatusFrom(kv.second);
+            status_map[kv.first] = st.ToJson();
+          }
           Call("consume_ack",msgid,{
-            {"ssrc_label_map",ssrc_label_map},
+            {"ssrc_label_map",ssrc_label_map},{"status_map",status_map},
             {"mid_media_path_map",c.rtp_handler().mid_media_path_map()},{"sdp",sdp}
           });
         } else if (fn == "pause") {
@@ -545,7 +570,8 @@ void ConnectionFactory::Connection::InitRTP() {
 bool ConnectionFactory::Connection::PrepareConsume(
   const std::string &media_path, 
   const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map, bool sync,
-  std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map
+  std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map,
+  std::map<std::string,rtp::Consumer*> &created_consumers
 ) {
   // TODO: support fullpath like $url/@cname/name. first should remove part before /@
   auto parsed = str::Split(media_path, "/");
@@ -579,7 +605,8 @@ bool ConnectionFactory::Connection::PrepareConsume(
   auto &mscs = media_stream_configs();
   std::vector<uint32_t> generated_ssrcs;
   InitRTP();
-  if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), media_kind, options_map, sync, mscs, generated_ssrcs)) {
+  if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), media_kind, 
+    options_map, sync, mscs, generated_ssrcs, created_consumers)) {
     for (const auto ssrc : generated_ssrcs) {
       ssrc_label_map[ssrc] = media_path;
     }
@@ -591,7 +618,7 @@ bool ConnectionFactory::Connection::PrepareConsume(
     }
     if (IsConnected()) {
       QRPC_LOGJ(debug, {{"ev","consumer connection already ready. consume now"}});
-      return Consume(sdp);
+      return Consume(created_consumers, sdp);
     }
     return true;
   } else {
@@ -599,7 +626,7 @@ bool ConnectionFactory::Connection::PrepareConsume(
     return false;
   }
 }
-bool ConnectionFactory::Connection::Consume(std::string &error) {
+bool ConnectionFactory::Connection::Consume(std::map<std::string,rtp::Consumer*> &created_consumers, std::string &error) {
   if (!is_consumer()) {
     error = "there should be consumer config";
     QRPC_LOGJ(error, {{"ev",error}});
@@ -611,6 +638,13 @@ bool ConnectionFactory::Connection::Consume(std::string &error) {
   for (const auto &c : media_stream_configs()) {
     if (!ConsumeMedia(c, error)) {
       return false;
+    } else if (created_consumers.find(c.media_path) != created_consumers.end()) {
+      created_consumers[c.media_path] = rtp_handler().FindConsumerByPath(c.media_path);
+      if (created_consumers[c.media_path] == nullptr) {
+        error = "fail to find consumer by path: " + c.media_path;
+        ASSERT(false);
+        return false;
+      }
     }
   }
   return true;
@@ -637,10 +671,9 @@ bool ConnectionFactory::Connection::ConsumeMedia(
   }
   auto h = factory().FindHandler(parsed[0]);
   if (h == nullptr) {
-    error = "peer not found: " + parsed[0];
-    QRPC_LOGJ(error, {{"ev","peer not found"},{"cname",parsed[0]}});
-    ASSERT(false);
-    return false;
+    // this may not error (target peer gone). cannot remove because client reconnection still on going
+    QRPC_LOGJ(warn, {{"ev","ignore because peer not found"},{"cname",parsed[0]}});
+    return true;
   }
   std::vector<uint32_t> generated_ssrcs;
   if (rtp_handler().Consume(*h, config, error)) {
@@ -931,14 +964,6 @@ void ConnectionFactory::Connection::OnDtlsEstablished() {
   sctp_association_->TransportConnected();
   if (rtp_handler_ != nullptr) {
     rtp_handler_->Connected();
-  }
-  if (is_consumer()) {
-    std::string error;
-    if (!Consume(error)) {
-      logger::error({{"ev","fail to consume on dtls established"},{"reason",error}});
-      factory().ScheduleClose(*this);
-      return;
-    }
   }
   int r;
   if ((r = OnConnect()) < 0) {

@@ -5,6 +5,18 @@
 
 namespace base {
 namespace rtp {
+  json ProducerStatus::ToJson() const {
+    json pausedReasons;
+    if (paused) {
+      pausedReasons.push_back("local_op");
+    }
+    return {
+      {"pausedReasons", pausedReasons},
+    };
+  }
+	ProducerStatus Producer::status() const {
+		return {.paused = IsPaused()};
+	}
 	bool Producer::consumer_params(
 		const RTC::RtpParameters &consumed_producer_params,
 		const Capability &consumer_capability, Parameters &p) {

@@ -70,7 +70,7 @@ namespace rtp {
   thread_local Shared Handler::shared_;
 	thread_local Handler::RouterListener router_listener_;
 	thread_local RTC::Router Handler::router_(&shared_.get(), to_string(std::this_thread::get_id()), &router_listener_);
-	thread_local const std::map<FBS::Request::Method, FBS::Request::Body> Handler::payload_map_ = {
+	const std::map<FBS::Request::Method, FBS::Request::Body> Handler::payload_map_ = {
 		{ FBS::Request::Method::TRANSPORT_CONSUME, FBS::Request::Body::Transport_ConsumeRequest },
 		{ FBS::Request::Method::TRANSPORT_PRODUCE, FBS::Request::Body::Transport_ProduceRequest },
 		{ FBS::Request::Method::WORKER_UPDATE_SETTINGS, FBS::Request::Body::Worker_UpdateSettingsRequest },
@@ -131,9 +131,10 @@ namespace rtp {
 		return kinds;
 	}
 	bool Handler::PrepareConsume(
-      Handler &peer, const std::string &local_path, const std::optional<rtp::Parameters::MediaKind> &media_kind,
-			const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
-			MediaStreamConfigs &media_stream_configs, std::vector<uint32_t> &generated_ssrcs
+      Handler &peer, const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
+			const std::map<Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
+			MediaStreamConfigs &media_stream_configs, std::vector<uint32_t> &generated_ssrcs,
+			std::map<std::string,Consumer*> &created_consumers
 	) {
 		auto path = peer.cname() + "/" + local_path;
 		const auto &kinds = media_kind.has_value() ? std::vector<Parameters::MediaKind>{media_kind.value()} : SupportedMediaKind();
@@ -146,6 +147,19 @@ namespace rtp {
 				ASSERT(false);
 				continue;
 			}
+			// to find producer from peer, need to use local_path (path without cname and media kind)
+			auto consumed_producer = peer.FindProducerByPath(local_path + kind);
+			if (consumed_producer == nullptr) {
+				QRPC_LOGJ(info, {
+					{"ev","ignore media because corresponding producer of peer not found"},
+					{"path",path + kind},{"peer",peer.rtp_id()}
+				});
+				ASSERT(false);
+				continue;
+			}
+			// set place holder for consumer that may be created
+			created_consumers[media_path] = nullptr;
+			// check if consumer of same media-path already exists
 			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
 				return !c.deleted && c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
 			});
@@ -153,16 +167,6 @@ namespace rtp {
 			if (ccit != media_stream_configs.end()) {
 				if (sync) {
 					ccit->Reset();
-					// to find producer from peer, need to use local_path (path without cname and media kind)
-					auto consumed_producer = peer.FindProducerByPath(local_path + kind);
-					if (consumed_producer == nullptr) {
-						QRPC_LOGJ(info, {
-							{"ev","ignore media because corresponding producer of peer not found"},
-							{"path",path + kind},{"peer",peer.rtp_id()}
-						});
-						ASSERT(false);
-						continue;
-					}
 					auto &config = *ccit;
 					config.encodings.clear();
 					config.codecs.clear();
@@ -179,16 +183,6 @@ namespace rtp {
 				continue;
 			} else {
 				// TODO: we keep media config entry that is not used anymore as 'empty' entry. if such an entry exists, reuse it.
-			}
-			// to find producer from peer, need to use local_path (path without cname and media kind)
-			auto consumed_producer = peer.FindProducerByPath(local_path + kind);
-			if (consumed_producer == nullptr) {
-				QRPC_LOGJ(info, {
-					{"ev","ignore media because corresponding producer of peer not found"},
-					{"path",path + kind},{"peer",peer.rtp_id()}
-				});
-				ASSERT(false);
-				continue;
 			}
 			auto &config = media_stream_configs.emplace_back();
 			config.direction = MediaStreamConfig::Direction::SEND;
@@ -460,7 +454,7 @@ namespace rtp {
 		puts("================================");
 #endif
 	}
-	int Handler::Produce(const MediaStreamConfig &p) {
+	Producer *Handler::Produce(const MediaStreamConfig &p) {
 		for (auto kv : p.ssrcs) {
 			ssrc_trackid_map_[kv.first] = kv.second.track_id;
 		}
@@ -468,7 +462,7 @@ namespace rtp {
 		// auto &fbb = GetFBB();
 		// fbb.Finish(producer->FillBuffer(fbb));
 		// puts(Dump<FBS::Producer::DumpResponse>("producer", "FBS.Producer.DumpResponse", fbb).c_str());
-		return producer != nullptr ? QRPC_OK : QRPC_EINVAL;
+		return producer;
 	}
 	void Handler::UpdateByCapability(const Capability &cap) {
 		for (const auto &he : cap.headerExtensions) {

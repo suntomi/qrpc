@@ -149,9 +149,10 @@ namespace webrtc {
       bool PrepareConsume(
         const std::string &label, 
         const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map, bool sync,
-        std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map);
+        std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map,
+        std::map<std::string,rtp::Consumer*> &created_consumers);
       bool ConsumeMedia(const rtp::MediaStreamConfig &config, std::string &error);
-      bool Consume(std::string &error);
+      bool Consume(std::map<std::string,rtp::Consumer*> &created_consumers, std::string &error);
       inline void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();
       IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority);

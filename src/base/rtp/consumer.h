@@ -14,6 +14,11 @@ namespace rtp {
   class Producer;
   class MediaStreamConfig;
   typedef RTC::Consumer Consumer;
+  struct ConsumerStatus {
+    bool paused{ false };
+    bool producerPaused{ false };
+    json ToJson() const;
+  };
   class ConsumerFactory {
   public:
     ConsumerFactory(Handler &h) : handler_(h) {}
@@ -26,6 +31,7 @@ namespace rtp {
     flatbuffers::Offset<FBS::Consumer::DumpResponse>
     FillBuffer(Consumer *c, flatbuffers::FlatBufferBuilder& builder);
     static Handler &HandlerFrom(Consumer *c);
+    static ConsumerStatus StatusFrom(Consumer *c);
   protected:
     Handler &handler_;
   }; 

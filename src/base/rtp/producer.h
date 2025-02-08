@@ -14,6 +14,10 @@ namespace rtp {
   class Handler;
   class Parameters;
   class MediaStreamConfig;
+  struct ProducerStatus {
+    bool paused{ false };
+    json ToJson() const;
+  };
   class Producer : public RTC::Producer {
     friend class ProducerFactory;
   public:
@@ -24,6 +28,7 @@ namespace rtp {
     ) : RTC::Producer(s, id, l, p), params_(original_params), media_(m) {}
     ~Producer() override {}
     const Parameters &params() const { return params_; }
+    ProducerStatus status() const;
   public:
     static bool consumer_params(
       const RTC::RtpParameters &consumed_producer_params, const Capability &consumer_capability, Parameters &p

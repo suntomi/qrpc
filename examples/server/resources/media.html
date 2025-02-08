@@ -219,31 +219,29 @@
           }
         }
       }
-      addVEforAudioVolume = (audioDom, visualDom, track) => {
+      visualizeAudioVolume = (audioDom, visualDom, track) => {
         const audioContext = new AudioContext();
         const source = audioContext.createMediaStreamSource(audioDom.srcObject);
-        // AnalyserNode の生成と設定
         const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256; // 分解能（数値は適宜調整）
+        analyser.fftSize = 256; // resulution of frequencies
         source.connect(analyser);
         analyser.connect(audioContext.destination);
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         const visualize = () => {
           requestAnimationFrame(visualize);
-          if (track.pausedBy(QRPCTrack.PAUSE_REASON.local_op)) {
-            return; // skip visualization because user paused the audio
+          if (track.paused) {
+            return; // skip visualization because the audio is paused
           }
           analyser.getByteTimeDomainData(dataArray);
-          // 中央値である128を基準に、サンプル値から絶対偏差を計算
+          // calculate average amplitude of audio by calculating difference from 128 (middle value)
           let sum = 0;
           dataArray.forEach(value => { sum += Math.abs(value - 128); });
-          const average = sum / dataArray.length;  // 平均振幅
-          // 平均振幅をもとにスケールを計算（例：1～1.5倍）
+          const average = sum / dataArray.length;  // average of absolute amplitude
+          // calculate scale factor based on average amplitude and adjust the scale 1.0 to 1.5
           const scale = 1 + Math.min(0.5, average / 16);
-          // console.log("scale", scale);
           visualDom.style.transform = `scale(${scale})`;
         }
-        // audio再生に合わせて更新を開始
+        // start visualization when audio is played
         audioDom.addEventListener('play', () => {
           if (audioContext.state === 'suspended') {
             audioContext.resume();
@@ -276,11 +274,14 @@
           if (t.kind === 'video') {
             // attach pause/resume handler for entire container click event
             container.addEventListener('click', createMediaControlHandler(t));
+            // in case of bootstrapping pause, show overlay
+            console.log("video paused", t.paused, t.pausedReasons);
+            if (t.paused) { container.appendChild(createOverlayElement(t)); }
           } else if (t.kind === 'audio') {
             // attach pause/resume handler for audio switch elemnt click event
             const {audioSwitch, img} = createAudioSwitchElement(t);
             container.appendChild(audioSwitch);
-            addVEforAudioVolume(mediaElement, img, t);
+            visualizeAudioVolume(mediaElement, img, t);
           }
         } else {
           mediaElement.srcObject = t.stream;

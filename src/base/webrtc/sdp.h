@@ -11,8 +11,8 @@ using json = nlohmann::json;
 
 namespace base {
 namespace rtp {
+  class Producer;
   class Parameters;
-  class MediaStreamConfig;
 }
 namespace webrtc {
   // for SDP example, see example/client/main.cpp test_sdp()
@@ -23,7 +23,9 @@ namespace webrtc {
   public:
     // connection is not const reference because it might be configured with SDP
     bool Answer(const std::map<std::string, std::string> mid_path_map,
-      ConnectionFactory::Connection &c, std::string &answer) const;
+      ConnectionFactory::Connection &c, std::string &answer,
+      const std::map<rtp::Parameters::MediaKind, rtp::MediaStreamConfig::ControlOptions> *options_map = nullptr,
+      std::map<std::string, rtp::Producer*> *created_producers = nullptr) const;
     static int Offer(const ConnectionFactory::Connection &c,
       const std::string &ufrag, const std::string &pwd, std::string &offer);
   public:

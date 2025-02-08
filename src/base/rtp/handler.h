@@ -164,11 +164,12 @@ namespace rtp {
       RTC::Transport::HandleRequest(&Handler::CreateRequest(fbb, m, ofs));
     }
     void Close();
-    int Produce(const MediaStreamConfig &p);
+    Producer *Produce(const MediaStreamConfig &p);
     bool PrepareConsume(
-      Handler &peer, const std::string &local_path, const std::optional<rtp::Parameters::MediaKind> &media_kind,
-      const std::map<rtp::Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
-      MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs);
+      Handler &peer, const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
+      const std::map<Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
+      MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs,
+      std::map<std::string,Consumer*> &created_consumers);
     bool Consume(Handler &peer, const MediaStreamConfig &config, std::string &error);
     bool ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error);
     bool Pause(const std::string &path, std::string &error);
@@ -252,7 +253,7 @@ namespace rtp {
   protected:
     static thread_local Shared shared_;
     static thread_local RTC::Router router_;
-    static thread_local const std::map<FBS::Request::Method, FBS::Request::Body> payload_map_;
+    static const std::map<FBS::Request::Method, FBS::Request::Body> payload_map_;
     Listener &listener_;
     ProducerFactory producer_factory_; // should be declared prior to Producer* and Consumer* containers
     ConsumerFactory consumer_factory_;

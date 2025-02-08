@@ -323,12 +323,15 @@ a=msid-semantic: WMS
 
   bool SDP::Answer(
     const std::map<std::string, std::string> mid_path_map,
-    ConnectionFactory::Connection &c, std::string &answer
+    ConnectionFactory::Connection &c, std::string &answer,
+    const std::map<rtp::Parameters::MediaKind, rtp::MediaStreamConfig::ControlOptions> *options_map,
+    std::map<std::string, rtp::Producer*> *created_producers
   ) const {
     json dsec, asec, vsec;
     auto &section_params = c.media_stream_configs();
     std::string media_sections, proto;
     std::vector<std::string> mids;
+    rtp::Producer *p;
     if (FindMediaSection("application", dsec)) {
       // find protocol from SCTP backed transport
       auto protoit = dsec.find("protocol");
@@ -355,20 +358,31 @@ a=msid-semantic: WMS
         return false;
       }
       c.dtls_transport().SetRemoteFingerprint(fp);
-      auto &params = section_params.emplace_back();
-      if (!AnswerMediaSection(dsec, proto, mid_path_map, c, params, answer)) {
-        QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
-        ASSERT(false);
-        return false;
+      if (created_producers == nullptr) {
+        auto &params = section_params.emplace_back();
+        if (!AnswerMediaSection(dsec, proto, mid_path_map, c, params, answer)) {
+          QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
+          ASSERT(false);
+          return false;
+        }
       }
     }
     // TODO: should support multiple audio/video streams from same webrtc connection?
     if (FindMediaSection("audio", asec)) {
       auto &params = section_params.emplace_back();
       if (AnswerMediaSection(asec, proto, mid_path_map, c, params, answer)) {
-        if (c.rtp_handler().Produce(params) != QRPC_OK) {
+        if (options_map != nullptr) {
+          auto it = options_map->find(rtp::Parameters::MediaKind::AUDIO);
+          if (it != options_map->end()) {
+            params.options = it->second;
+          }
+        }
+        if ((p = c.rtp_handler().Produce(params)) == nullptr) {
           answer = "fail to create audio producer";
           return false;
+        }
+        if (created_producers != nullptr) {
+          (*created_producers)[params.media_path] = p;
         }
       } else {
         QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
@@ -379,9 +393,18 @@ a=msid-semantic: WMS
     if (FindMediaSection("video", vsec)) {
       auto &params = section_params.emplace_back();
       if (AnswerMediaSection(vsec, proto, mid_path_map, c, params, answer)) {
-        if (c.rtp_handler().Produce(params) != QRPC_OK) {
+        if (options_map != nullptr) {
+          auto it = options_map->find(rtp::Parameters::MediaKind::VIDEO);
+          if (it != options_map->end()) {
+            params.options = it->second;
+          }
+        }
+        if ((p = c.rtp_handler().Produce(params)) == nullptr) {
           answer = "fail to create video producer";
           return false;
+        }
+        if (created_producers != nullptr) {
+          (*created_producers)[params.media_path] = p;
         }
       } else {
         QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
@@ -390,6 +413,7 @@ a=msid-semantic: WMS
       }
     }
     // geneating answer for prodducer
+    ASSERT(!proto.empty());
     return GenerateAnswer(c, proto, section_params, answer);
   }
 } // namespace webrtc

@@ -8,6 +8,18 @@
 
 namespace base {
 namespace rtp {
+  json ConsumerStatus::ToJson() const {
+    json pausedReasons;
+    if (paused) {
+      pausedReasons.push_back("local_op");
+    }
+    if (producerPaused) {
+      pausedReasons.push_back("remote_op");
+    }
+    return {
+      {"pausedReasons", pausedReasons},
+    };
+  }
   template <class C>
   class Wrap : public C {
   public:
@@ -18,6 +30,9 @@ namespace rtp {
     ) : C(s, id, producer_id, l, d), media_(m) {}
     ~Wrap() override {}
     Handler &handler() { return *dynamic_cast<Handler *>(C::listener); }
+    ConsumerStatus status() const {
+      return ConsumerStatus{.paused = C::IsPaused(), .producerPaused = C::IsProducerPaused()};
+    }
   protected:
     std::shared_ptr<Media> media_;
   };
@@ -82,6 +97,18 @@ namespace rtp {
         return dynamic_cast<Wrap<RTC::SimulcastConsumer>*>(c)->handler();
       case RTC::RtpParameters::Type::PIPE:
         return dynamic_cast<Wrap<RTC::PipeConsumer>*>(c)->handler();
+      default:
+        logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});
+    }
+  }
+  ConsumerStatus ConsumerFactory::StatusFrom(Consumer *c) {
+    switch (c->GetType()) {
+      case RTC::RtpParameters::Type::SIMPLE:
+        return dynamic_cast<Wrap<RTC::SimpleConsumer>*>(c)->status();
+      case RTC::RtpParameters::Type::SIMULCAST:
+        return dynamic_cast<Wrap<RTC::SimulcastConsumer>*>(c)->status();
+      case RTC::RtpParameters::Type::PIPE:
+        return dynamic_cast<Wrap<RTC::PipeConsumer>*>(c)->status();
       default:
         logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});
     }
