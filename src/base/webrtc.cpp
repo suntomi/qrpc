@@ -447,7 +447,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             }
             const auto a = opts.find("audio");
             if (a != opts.end()) {
-              options_map.emplace(rtp::Parameters::MediaKind::AUDIO, v->second);
+              options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
             }
             const auto syncit = opts.find("sync");
             if (syncit != opts.end()) {

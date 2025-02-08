@@ -177,6 +177,8 @@ namespace rtp {
 					QRPC_LOGJ(info, {{"ev","ignore media because already prepare"},{"media_path",media_path},{"sync",sync}});
 				}
 				continue;
+			} else {
+				// TODO: we keep media config entry that is not used anymore as 'empty' entry. if such an entry exists, reuse it.
 			}
 			// to find producer from peer, need to use local_path (path without cname and media kind)
 			auto consumed_producer = peer.FindProducerByPath(local_path + kind);
