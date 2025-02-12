@@ -315,7 +315,9 @@ class QRPClient {
     this.streams = {};
     this.medias = {};
     this.tracks = {};
-    this.sentTracks = [];
+    // we use array to keep sent track add order.
+    // it is important to match them with SDP media section order
+    this.sentTracks = []; 
     this.trackIdLabelMap = {};
     this.ridLabelMap = {};
     this.midMediaPathMap = {};
@@ -670,14 +672,11 @@ class QRPClient {
     this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM, {
       onmessage: this.#syscallMessageHandler.bind(this)
     });
-    if (this.onopen) {
-      this.context = await this.onopen();
-    }
     const sdpGen = this.#incSdpGen();
     const sentTracks = [...this.sentTracks];
     // Create new SDP offer without initializing actual peer connection
-    const {localOffer, midPathMap: localMidLabelMap} = await this.#createOffer(sentTracks);
-    console.log("local offer sdp", localOffer.sdp, localMidLabelMap);
+    const {localOffer, midPathMap} = await this.#createOffer(sentTracks);
+    console.log("local offer sdp", localOffer.sdp, midPathMap);
 
     //store local ice ufrag/pwd
     this.iceUsername = localOffer.sdp.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
@@ -690,7 +689,7 @@ class QRPClient {
         sdp:localOffer.sdp,
         cname:this.cname,
         rtp:this.#rtpPayload(),
-        midPathMap: localMidLabelMap,
+        midPathMap,
         capability: await this.#capability()
       }),
       headers: {
@@ -715,6 +714,9 @@ class QRPClient {
       console.log("id", this.id);
 
       await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
+      if (this.onopen) {
+        this.context = await this.onopen();
+      }  
     } catch (e) {
       console.log("error in handling whip response:" + e.message + "|" + (text || "no response"));
       throw e;
@@ -833,7 +835,7 @@ class QRPClient {
       const sentTracks = [...this.sentTracks];
       try {
         const remoteOffer = await this.syscall("produce", {
-          sdp: localOffer.sdp, options, midPathMap
+          sdp: localOffer.sdp, options, midPathMap, rtp: this.#rtpPayload()
         });
         await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
       } catch (e) {

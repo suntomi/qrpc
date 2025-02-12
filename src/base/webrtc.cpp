@@ -434,6 +434,11 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
               options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
             }
           }
+          const auto rtpit = args.find("rtp");
+          if (rtpit != args.end()) {
+            c.InitRTP();
+            c.rtp_handler().SetNegotiationArgs(rtpit->second.get<std::map<std::string,json>>());
+          }
           SDP sdp(sdpit->second.get<std::string>());
           std::string answer;
           std::map<std::string,rtp::Producer*> created_producers;
