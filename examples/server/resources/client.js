@@ -318,14 +318,13 @@ class QRPClient {
     // we use array to keep sent track add order.
     // it is important to match them with SDP media section order
     this.sentTracks = []; 
-    this.trackIdLabelMap = {};
-    this.ridLabelMap = {};
     this.midMediaPathMap = {};
     this.ssrcLabelMap = {};
     this.ridScalabilityModeMap = {};
     this.rpcPromises = {};
     this.sdpGen = 0;
     this.msgidSeed = 1;
+    this.ridSeed = 0;
     this.id = null;
     this.syscallStream = null;
     this.timer = null;
@@ -338,6 +337,13 @@ class QRPClient {
     //Pending candidadtes
     this.candidates = [];
     this.endOfcandidates = false;
+  }
+  #newRid() {
+    const rid = this.ridSeed++;
+    if (this.ridSeed > 0xFFFF) {
+      throw new Error("rid overflow");
+    }
+    return rid;
   }
   #newMsgId() {
     const msgid = this.msgidSeed++;
@@ -675,8 +681,8 @@ class QRPClient {
     const sdpGen = this.#incSdpGen();
     const sentTracks = [...this.sentTracks];
     // Create new SDP offer without initializing actual peer connection
-    const {localOffer, midPathMap} = await this.#createOffer(sentTracks);
-    console.log("local offer sdp", localOffer.sdp, midPathMap);
+    const {localOffer} = await this.#createOffer(sentTracks);
+    console.log("local offer sdp", localOffer.sdp);
 
     //store local ice ufrag/pwd
     this.iceUsername = localOffer.sdp.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
@@ -688,8 +694,6 @@ class QRPClient {
       body: JSON.stringify({
         sdp:localOffer.sdp,
         cname:this.cname,
-        rtp:this.#rtpPayload(),
-        midPathMap,
         capability: await this.#capability()
       }),
       headers: {
@@ -775,14 +779,10 @@ class QRPClient {
   }
   #rtpPayload() {
     if (
-      Object.keys(this.ridLabelMap).length !== 0 ||
-      Object.keys(this.ridScalabilityModeMap).length !== 0 ||
-      Object.keys(this.trackIdLabelMap).length !== 0
+      Object.keys(this.ridScalabilityModeMap).length !== 0
     ) {
       return {
-        ridLabelMap:this.ridLabelMap,
         ridScalabilityModeMap:this.ridScalabilityModeMap,
-        trackIdLabelMap:this.trackIdLabelMap,
       };
     }
     return undefined;
@@ -805,10 +805,13 @@ class QRPClient {
       throw new Error("encoding is mandatory");
     }
     encodings.forEach(e => {
-      if (!e.rid) { throw new Error("for each encodings, rid is mandatory"); }
       if (!e.maxBitrate) { throw new Error("for each encodings, maxBitrate is mandatory"); }
       e.scalabilityMode = e.scalabilityMode || QRPClient.DEFAULT_SCALABILITY_MODE;
-      this.ridLabelMap[e.rid] = cpath;
+      if (e.rid) {
+        if (this.ridScalabilityModeMap[e.rid]) { throw new Error(`rid:${e.rid} is already used`); }
+      } else {
+        e.rid = `r${this.#newRid()}`;
+      }
       this.ridScalabilityModeMap[e.rid] = e.scalabilityMode;
     });
     // sort by maxBitrate asc, because server regards earlier encoding as lower quality,
@@ -818,7 +821,6 @@ class QRPClient {
     stream.getTracks().forEach(t => {
       const path = QRPCTrack.path(cpath, t.kind);
       const media = this.#addMedia(cpath, "send", options);
-      this.trackIdLabelMap[t.id] = path;
       const track = new QRPCTrack(path, media, stream, t, encodings, {
         onopen, onclose, onpause, onresume
       });

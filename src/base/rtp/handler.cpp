@@ -368,16 +368,6 @@ namespace rtp {
 		return false;
 	}
 	void Handler::SetNegotiationArgs(const std::map<std::string, json> &args) {
-		const auto rlmit = args.find("ridLabelMap");
-		if (rlmit != args.end()) {
-			rid_label_map_ = rlmit->second.get<std::map<Media::Rid,Media::Id>>();
-			QRPC_LOGJ(info, {{"ev","new rid label map"},{"map",*rlmit}});
-		}
-		const auto tlmit = args.find("trackIdLabelMap");
-		if (tlmit != args.end()) {
-			trackid_label_map_ = tlmit->second.get<std::map<Media::TrackId,Media::Id>>();
-			QRPC_LOGJ(info, {{"ev","new track id label map"},{"map",*tlmit}});
-		}
 		const auto rsmit = args.find("ridScalabilityModeMap");
 		if (rsmit != args.end()) {
 			rid_scalability_mode_map_ = rsmit->second.get<std::map<Media::Rid,Media::ScalabilityMode>>();

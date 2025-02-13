@@ -1896,11 +1896,6 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
       logger::error({{"ev","fail to find value for key 'cname'"},{"req",client_req}});
       return QRPC_EINVAL;
     }
-    const auto mpmit = client_req.find("midPathMap");
-    if (mpmit == client_req.end()) {
-      logger::error({{"ev","fail to find value for key 'midPathMap'"},{"req",client_req}});
-      return QRPC_OK;
-    }
     const auto capit = client_req.find("capability");
     if (capit == client_req.end()) {
       QRPC_LOGJ(error, {{"ev","fail to find value for key 'capability'"},{"req",client_req}});
@@ -1928,7 +1923,7 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
       c->rtp_handler().SetNegotiationArgs(rtpit->get<std::map<std::string,json>>());
     }
     SDP sdp(client_sdp);
-    if (!sdp.Answer(mpmit->get<std::map<std::string, std::string>>(), *c, answer)) {
+    if (!sdp.Answer({}, *c, answer)) {
       logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",answer}});
       return QRPC_EINVAL; // if return from here, c will be freed because no anchor exists
     }
