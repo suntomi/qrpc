@@ -191,16 +191,13 @@ namespace rtp {
 			}
 			// set place holder for consumer that may be created
 			created_consumers[media_path] = nullptr;
-			bool reusable_entry_found = false;
 			// check if consumer of same media-path already exists
 			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
 				return !c.closed && c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
 			});
 			QRPC_LOGJ(info, {{"ev","check consume config"},{"media_path",media_path},{"exists",ccit != media_stream_configs.end()}});
 			if (ccit != media_stream_configs.end()) {
-				if (sync) {
-					reusable_entry_found = true;
-				} else {
+				if (!sync) {
 					QRPC_LOGJ(info, {{"ev","ignore media because already prepare"},{"media_path",media_path},{"sync",sync}});
 					continue;
 				}
@@ -210,26 +207,22 @@ namespace rtp {
 					return c.closed && c.sender(); // if sender of same media-path already exists, skip.
 				});
 				if (ccit != media_stream_configs.end()) {
-					reusable_entry_found = true;
 					QRPC_LOGJ(info, {{"ev","reuse closed media config"},{"old_media_path",ccit->media_path},{"new_media_path",media_path}});	
-					ccit->media_path = media_path;
 				}
 			}
-			if (reusable_entry_found) {
-				ccit->Reset();
-				auto &config = *ccit;
-				config.encodings.clear();
-				config.codecs.clear();
-				config.headerExtensions.clear();
-				// generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
-				if (!Producer::consumer_params(consumed_producer->params(), capit->second, config)) {
-					QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
-					ASSERT(false);
-					return false;
-				}
-				continue;
+			bool reusable_entry_found = false;
+			MediaStreamConfig *p_config;
+			if (ccit != media_stream_configs.end()) {
+				reusable_entry_found = true;
+				p_config = &(*ccit);
+				p_config->encodings.clear();
+				p_config->codecs.clear();
+				p_config->headerExtensions.clear();
+				p_config->closed = false;
+			} else {
+				p_config = &media_stream_configs.emplace_back();
 			}
-			auto &config = media_stream_configs.emplace_back();
+			auto &config = *p_config;
 			config.direction = MediaStreamConfig::Direction::SEND;
 			config.media_path = path + kind;
 			config.options = options_map.find(k) == options_map.end() ?
@@ -245,9 +238,11 @@ namespace rtp {
 				ASSERT(false);
 				continue;
 			}
-			// generate unique mid from own consumer factory
-			auto mid = GenerateMid();
-			config.mid = mid;
+			if (!reusable_entry_found) {
+				// generate unique mid from own consumer factory
+				auto mid = GenerateMid();
+				config.mid = mid;
+			}
 			config.rtcp.cname = peer.cname();
 			config.GetGeneratedSsrc(generated_ssrcs);
 			// if video consumer and there is no probator mid, generate probator mid => param pair

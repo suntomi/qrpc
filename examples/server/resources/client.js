@@ -258,7 +258,6 @@ class QRPClient {
           const st = data.args.status_map[k];
           const t = this.tracks[k];
           if (t) {
-            console.log(`track ${t.path} already paused by `, st.pausedReasons);
             for (const r of st.pausedReasons || []) {
               t.pause(r, true);
             }

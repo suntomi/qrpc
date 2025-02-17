@@ -183,11 +183,11 @@
             if (track.kind === "audio") {
               document.getElementById(`audio-switch-${track.path.replace(/\//g, '-')}`)?.remove();
             } else if (track.kind === "video" && container?.mediaControlHandler) {
-              container.addEventListener('click', container.mediaControlHandler);
+              container.removeEventListener('click', container.mediaControlHandler);
             }
-            if (!container.querySelector('video, audio')) {
+            if (!container?.querySelector('video, audio')) {
               console.log("no media element in container:", container_id, "will be removed");
-              container.remove();
+              container?.remove();
             }
           },
           // there is 3 reason to pause/resume media.

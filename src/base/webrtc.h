@@ -136,7 +136,7 @@ namespace webrtc {
           return c.direction == rtp::MediaStreamConfig::Direction::SEND;
         }) != media_stream_configs_.end();
       }
-      inline std::vector<rtp::MediaStreamConfig> &media_stream_configs() { return media_stream_configs_; }
+      inline rtp::MediaStreamConfigs &media_stream_configs() { return media_stream_configs_; }
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void SetCname(const std::string &cname);
@@ -285,7 +285,7 @@ namespace webrtc {
       AlarmProcessor::Id alarm_id_;
       std::string cname_;
       std::map<rtp::Parameters::MediaKind, rtp::Capability> capabilities_;
-      std::vector<rtp::MediaStreamConfig> media_stream_configs_; // stream configs with keeping creation order
+      rtp::MediaStreamConfigs media_stream_configs_; // stream configs with keeping creation order
       uint32_t mid_seed_;
       bool sctp_connected_, closed_;
     };

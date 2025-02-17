@@ -74,7 +74,19 @@ namespace rtp {
     ControlOptions options;
     bool closed{ false };
   };
-  typedef std::vector<MediaStreamConfig> MediaStreamConfigs;
+  class MediaStreamConfigs : public std::vector<MediaStreamConfig> {
+  public:
+    inline MediaStreamConfig &NewSlot() {
+      for (auto &c : *this) {
+        if (c.closed) {
+          // can reuse closed slot
+          c.closed = false;
+          return c;
+        }
+      }
+      return this->emplace_back();
+    }
+  };
   class Handler : public RTC::Transport {
   public:
     typedef RTC::RtpHeaderExtensionIds ExtensionIds;

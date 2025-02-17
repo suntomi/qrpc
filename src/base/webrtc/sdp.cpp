@@ -370,7 +370,7 @@ a=msid-semantic: WMS
     }
     // TODO: should support multiple audio/video streams from same webrtc connection?
     if (FindMediaSection("audio", asec)) {
-      auto &params = section_params.emplace_back();
+      auto &params = section_params.NewSlot();
       if (AnswerMediaSection(asec, proto, mid_path_map, c, params, answer)) {
         if (options_map != nullptr) {
           auto it = options_map->find(rtp::Parameters::MediaKind::AUDIO);
@@ -392,7 +392,7 @@ a=msid-semantic: WMS
       }
     }
     if (FindMediaSection("video", vsec)) {
-      auto &params = section_params.emplace_back();
+      auto &params = section_params.NewSlot();
       if (AnswerMediaSection(vsec, proto, mid_path_map, c, params, answer)) {
         if (options_map != nullptr) {
           auto it = options_map->find(rtp::Parameters::MediaKind::VIDEO);
