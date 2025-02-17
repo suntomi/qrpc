@@ -72,7 +72,7 @@ namespace rtp {
     std::string media_path;
     Direction direction{ Direction::RECV };
     ControlOptions options;
-    bool deleted{ false };
+    bool closed{ false };
   };
   typedef std::vector<MediaStreamConfig> MediaStreamConfigs;
   class Handler : public RTC::Transport {
@@ -170,8 +170,12 @@ namespace rtp {
       const std::map<Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
       MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs,
       std::map<std::string,Consumer*> &created_consumers);
+    bool CloseMedia(
+      const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
+      MediaStreamConfigs &media_stream_configs, std::vector<std::string> &closed_paths, std::string &error);
     bool Consume(Handler &peer, const MediaStreamConfig &config, std::string &error);
     bool ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error);
+    bool CloseStream(const MediaStreamConfig &config, std::string &error);
     bool Pause(const std::string &path, std::string &error);
     bool Resume(const std::string &path, std::string &error);
     bool Ping(std::string &error);
@@ -225,6 +229,7 @@ namespace rtp {
       SendToConsumersOf(p, stream_label, data, len);
     }
     void CloseConsumer(Consumer *c);
+    void CloseProducer(Producer *p);
     void DumpChildren(); // dump consumer and producer created by this handler
   public:
     void ReceiveRtpPacket(RTC::RtpPacket* packet) { RTC::Transport::ReceiveRtpPacket(packet); }

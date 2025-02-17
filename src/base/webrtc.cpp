@@ -383,7 +383,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
     auto data = json::parse(pl);
     auto fnit = data.find("fn");
     if (fnit == data.end()) {
-      QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no 'fn' key"},{"pl",pl}});
+      QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no value for key 'fn'"},{"pl",pl}});
       return QRPC_OK;
     }
     const auto &fn = fnit->get<std::string>();
@@ -532,6 +532,17 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             RAISE("fail to ping:" + error);
           }
           Call("ping_ack",msgid,{},logger::level::trace);
+        } else if (fn == "close_media") {
+          std::string sdp_or_error;
+          std::vector<std::string> closed_paths;
+          const auto pit = args.find("path");
+          if (pit == args.end()) {
+            RAISE("no value for key 'path'");
+          }
+          if (!c.CloseMedia(pit->second.get<std::string>(), closed_paths, sdp_or_error)) {
+            RAISE("fail to close media:" + sdp_or_error);
+          }
+          Call("close_media_ack",msgid,{{"paths",closed_paths},{"sdp",sdp_or_error}});
         } else {
           RAISE("syscall is not supported");
         }
@@ -653,6 +664,47 @@ bool ConnectionFactory::Connection::Consume(std::map<std::string,rtp::Consumer*>
     }
   }
   return true;
+}
+bool ConnectionFactory::Connection::CloseMedia(
+  const std::string &media_path, std::vector<std::string> &closed_paths, std::string &sdp_or_error
+) {
+  if (!rtp_enabled()) {
+    sdp_or_error = "rtp not enabled";
+    return false;
+  }
+  auto parsed = str::Split(media_path, "/");
+  if (parsed.size() <= 0) {
+    sdp_or_error = "empty media_path: " + media_path;
+    QRPC_LOGJ(error, {{"ev","empty media_path"},{"path",media_path}});
+    ASSERT(false);
+    return false;
+  }
+  const auto &last_component = parsed[parsed.size() - 1];
+  const auto media_kind = rtp::Parameters::ToMediaKind(last_component);
+  if (media_kind.has_value()) {
+    if (parsed.size() <= 1) {
+      sdp_or_error = "invalid media_kind no path part: " + media_path;
+      QRPC_LOGJ(error, {{"ev","invalid media_path: no path part"},{"kind",media_path}});
+      ASSERT(false);
+      return false;
+    }
+    // empty last element to generate directory path
+    parsed[parsed.size() - 1] = "";
+  } else {
+    // ensure to be directory path
+    parsed.push_back("");
+  }
+  auto &mscs = media_stream_configs();
+  if (rtp_handler().CloseMedia(str::Join(parsed, "/"), media_kind, mscs, closed_paths, sdp_or_error)) {
+    auto proto = ice_server().GetSelectedSession()->proto();
+    if (!SDP::GenerateAnswer(*this, proto, mscs, sdp_or_error)) {
+      QRPC_LOGJ(error, {{"ev","fail to generate sdp"},{"reason",sdp_or_error}});
+      ASSERT(false);
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
 bool ConnectionFactory::Connection::ConsumeMedia(
   const rtp::MediaStreamConfig &config, std::string &error

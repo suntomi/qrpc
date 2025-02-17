@@ -75,6 +75,7 @@ namespace rtp {
 		{ FBS::Request::Method::TRANSPORT_PRODUCE, FBS::Request::Body::Transport_ProduceRequest },
 		{ FBS::Request::Method::WORKER_UPDATE_SETTINGS, FBS::Request::Body::Worker_UpdateSettingsRequest },
 		{ FBS::Request::Method::TRANSPORT_CLOSE_CONSUMER, FBS::Request::Body::Transport_CloseConsumerRequest },
+		{ FBS::Request::Method::TRANSPORT_CLOSE_PRODUCER, FBS::Request::Body::Transport_CloseProducerRequest },
 		// more to come if needed
 	};
 
@@ -130,6 +131,37 @@ namespace rtp {
 		};
 		return kinds;
 	}
+	bool Handler::CloseMedia(
+		const std::string &path, const std::optional<Parameters::MediaKind> &media_kind,
+		MediaStreamConfigs &media_stream_configs, std::vector<std::string> &closed_paths, std::string &error
+	) {
+		const auto &kinds = media_kind.has_value() ? std::vector<Parameters::MediaKind>{media_kind.value()} : SupportedMediaKind();
+		for (const auto k : kinds) {
+			auto kind = Parameters::FromMediaKind(k);
+			auto media_path = path + kind;
+			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
+				return c.media_path == media_path;
+			});
+			if (ccit == media_stream_configs.end()) {
+				error = "media not found";
+				QRPC_LOGJ(error, {{"ev","media not found"},{"path",media_path}});
+				ASSERT(false);
+				return false;
+			}
+			if (ccit->closed) {
+				QRPC_LOGJ(info, {{"ev","media already closed"},{"path",media_path}});
+				return true;
+			}
+			if (!CloseStream(*ccit, error)) {
+				QRPC_LOGJ(error, {{"ev","fail to close media"},{"path",media_path},{"error",error}});
+				return false;
+			}
+			QRPC_LOGJ(info, {{"ev","media closed"},{"path",media_path}});
+			closed_paths.push_back(media_path);
+			ccit->closed = true;
+		}
+		return true;
+	}
 	bool Handler::PrepareConsume(
       Handler &peer, const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
 			const std::map<Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
@@ -159,30 +191,43 @@ namespace rtp {
 			}
 			// set place holder for consumer that may be created
 			created_consumers[media_path] = nullptr;
+			bool reusable_entry_found = false;
 			// check if consumer of same media-path already exists
 			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
-				return !c.deleted && c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
+				return !c.closed && c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
 			});
 			QRPC_LOGJ(info, {{"ev","check consume config"},{"media_path",media_path},{"exists",ccit != media_stream_configs.end()}});
 			if (ccit != media_stream_configs.end()) {
 				if (sync) {
-					ccit->Reset();
-					auto &config = *ccit;
-					config.encodings.clear();
-					config.codecs.clear();
-					config.headerExtensions.clear();
-					// generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
-					if (!Producer::consumer_params(consumed_producer->params(), capit->second, config)) {
-						QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
-						ASSERT(false);
-						continue;
-					}
+					reusable_entry_found = true;
 				} else {
 					QRPC_LOGJ(info, {{"ev","ignore media because already prepare"},{"media_path",media_path},{"sync",sync}});
+					continue;
+				}
+			} else {
+				// find empty place holder for consumer
+				ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [](const auto &c) {
+					return c.closed && c.sender(); // if sender of same media-path already exists, skip.
+				});
+				if (ccit != media_stream_configs.end()) {
+					reusable_entry_found = true;
+					QRPC_LOGJ(info, {{"ev","reuse closed media config"},{"old_media_path",ccit->media_path},{"new_media_path",media_path}});	
+					ccit->media_path = media_path;
+				}
+			}
+			if (reusable_entry_found) {
+				ccit->Reset();
+				auto &config = *ccit;
+				config.encodings.clear();
+				config.codecs.clear();
+				config.headerExtensions.clear();
+				// generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
+				if (!Producer::consumer_params(consumed_producer->params(), capit->second, config)) {
+					QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
+					ASSERT(false);
+					return false;
 				}
 				continue;
-			} else {
-				// TODO: we keep media config entry that is not used anymore as 'empty' entry. if such an entry exists, reuse it.
 			}
 			auto &config = media_stream_configs.emplace_back();
 			config.direction = MediaStreamConfig::Direction::SEND;
@@ -220,10 +265,6 @@ namespace rtp {
 	}
 
 	bool Handler::Consume(Handler &peer, const MediaStreamConfig &config, std::string &error) {
-		if (config.deleted) {
-			QRPC_LOGJ(info, {{"ev","ignore deleted config"},{"mid",config.mid},{"path",config.media_path}});
-			return true;
-		}
 		const auto &path = config.media_path;
 		auto cid = ConsumerFactory::GenerateId(rtp_id(), path);
 		auto cit = consumers().find(cid);
@@ -423,10 +464,39 @@ namespace rtp {
 			h.SendToStream(stream_label, data, len);
 		}
 	}
+	bool Handler::CloseStream(const MediaStreamConfig &config, std::string &error) {
+		if (config.sender()) {
+			auto *c = FindConsumerByPath(config.media_path);
+			if (c != nullptr) {
+				CloseConsumer(c);
+			} else {
+				error = "no consumer found for path:" + config.media_path;
+				QRPC_LOGJ(error, {{"ev","no consumer found for path"},{"path",config.media_path}});
+				return false;
+			}
+		} else if (config.receiver()) {
+			auto *p = FindProducerByPath(config.media_path);
+			if (p != nullptr) {
+				CloseProducer(p);
+			} else {
+				error = "no producer found for path:" + config.media_path;
+				QRPC_LOGJ(error, {{"ev","no producer found for path"},{"path",config.media_path}});
+				return false;
+			}
+		}
+		return true;
+	}
 	void Handler::CloseConsumer(Consumer *c) {
 		auto &fbb = GetFBB();
 		HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CLOSE_CONSUMER, 
 			FBS::Transport::CreateCloseConsumerRequestDirect(fbb, c->id.c_str()));
+	}
+	void Handler::CloseProducer(Producer *p) {
+		auto &fbb = GetFBB();
+		auto pl = json({{"args",{{"path",p->media_path()}}},{"fn","close_track"}}).dump();
+		SendToConsumersOf(p, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
+		HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CLOSE_PRODUCER, 
+			FBS::Transport::CreateCloseProducerRequestDirect(fbb, p->id.c_str()));
 	}
 	void Handler::DumpChildren() {
 #if !defined(NDEBUG)

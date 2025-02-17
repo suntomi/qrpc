@@ -99,9 +99,10 @@ class QRPCTrack {
       }
     }
   }
-  close() {
+  async close(pc) {
     if (this.track) {
       this.onclose(this);
+      pc.removeTrack(this.transceiver.sender);
       this.track.stop();
       this.track = null;
       this.transceiver = null;
@@ -204,10 +205,8 @@ class QRPClient {
         console.log("shutdown by server");
         this.#close();
       } else if (data.fn === "close_track") {
-        for (const path of data.args.paths) {
-          console.log("close track", path);
-          this.closeMedia(path);
-        }
+        console.log("close_track", data.args.path);
+        await this.#closeTracks([data.args.path]);
       } else if (data.fn == "remote_pause" || data.fn == "remote_resume") {
         const t = this.tracks[data.args.path];
         if (t) {
@@ -293,6 +292,9 @@ class QRPClient {
             }
           }
         }
+        promise.resolve(data.args.sdp);
+      } else if (data.fn == "close_media_ack") {
+        await this.#closeTracks(data.args.paths);
         promise.resolve(data.args.sdp);
       } else if (
         data.fn == "resume_ack" || data.fn == "pause_ack" || data.fn == "close_ack" ||
@@ -753,7 +755,7 @@ class QRPClient {
     }
     for (const k in this.tracks) {
       console.log("close track", k);
-      this.tracks[k].close();
+      await this.tracks[k].close(this.pc);
     }
     for (const k in this.streams) {
       console.log("close stream", k);
@@ -845,7 +847,7 @@ class QRPClient {
         for (const t of tracks) {
           delete this.medias[t.media.path];
           delete this.tracks[t.path];
-          t.close();
+          await t.close(this.pc);
         }
         throw e;
       }
@@ -927,7 +929,7 @@ class QRPClient {
       for (const t of tracks) {
         delete this.medias[t.media.path];
         delete this.tracks[t.path];
-        t.close();
+        await t.close(this.pc);
       }
       throw e;
     }
@@ -951,12 +953,36 @@ class QRPClient {
       throw new Error("resumeMedia: no media for " + path);
     }
   }
-  closeMedia(path) {
-    const t = this.tracks[path];
-    if (t) {
-      t.close();
-      delete this.tracks[path];
+  async #closeTracks(paths) {
+    const medias = [];
+    for (const path of paths) {
+      console.log("close track", path);
+      const t = this.tracks[path];
+      if (t) {
+        medias[t.media.path] = t.media;
+        await t.close(this.pc); // this removes the track from media.tracks
+        delete this.tracks[path];
+      }
+      const index = this.sentTracks.indexOf(t);
+      if (index >= 0) {
+        console.log("remove sent track", path, index);
+        this.sentTracks.splice(index, 1);
+      }
     }
+    // if media has no tracks, remove it too
+    for (const k in medias) {
+      const m = medias[k];
+      if (Object.keys(m.tracks).length === 0) {
+        console.log("close media", m.path);
+        delete this.medias[m.path];
+      }
+    }
+  }
+  async closeMedia(path) {
+    const remoteOffer = await this.syscall("close_media", { path });
+    const sdpGen = this.#incSdpGen();
+    const sentTracks = [...this.sentTracks];
+    await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
   }
   // options combines createDataChannel's option and RTCDataChannel event handler (onopen, onclose, onmessage)
   openStream(path, options) {

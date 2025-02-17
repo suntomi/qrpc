@@ -44,6 +44,18 @@
         width: 100%;
         height: auto;
       }
+      .close {
+        width: 3vw;
+        height: 3vw;
+        position: absolute;
+        top: 1vh;
+        right: 1.5vw;
+        z-index: 1;
+      }
+      .close img {
+        width: 100%;
+        height: auto;
+      }
       .label {
         color: white; /* text color is white */
         position: absolute;
@@ -121,8 +133,9 @@
       }
       createAudioSwitchElement = (track) => {
         const audioSwitch = document.createElement('div');
-        const mediaControlHandler = createMediaControlHandler(track);
+        audioSwitch.id = `audio-switch-${track.path.replace(/\//g, '-')}`;
         audioSwitch.className = 'audio-switch';
+        const mediaControlHandler = createMediaControlHandler(track);
         const img = document.createElement('img');
         img.src = mediaIcon(track);
         img.alt = 'Loading...';
@@ -135,6 +148,24 @@
         });
         return {audioSwitch, img};
       }
+      createCloseIconElement = (track) => {
+        const closeIcon = document.createElement('div');
+        const img = document.createElement('img');
+        img.src = "./close.svg";
+        img.alt = "Loading...";
+        closeIcon.appendChild(img);
+        closeIcon.className = 'close';
+        closeIcon.addEventListener('click', async (event) => {
+          console.log("close", track.path);
+          event.stopPropagation();
+          try {
+            await c.closeMedia(track.directory);
+          } catch (e) {
+            console.error(e);
+          }
+        });
+        return closeIcon;
+      }
       createMediaHandlerWithOptions = (dom, options) => {
         return {
           options,
@@ -146,8 +177,18 @@
           },
           onclose: (track)=>{
             console.log("media close", track.directory, track.kind);
+            document.getElementById(track.path)?.remove();
             const container_id = `media-${track.directory.replace(/\//g, '-')}`;
-            document.getElementById(container_id)?.remove();
+            const container = document.getElementById(container_id);
+            if (track.kind === "audio") {
+              document.getElementById(`audio-switch-${track.path.replace(/\//g, '-')}`)?.remove();
+            } else if (track.kind === "video" && container?.mediaControlHandler) {
+              container.addEventListener('click', container.mediaControlHandler);
+            }
+            if (!container.querySelector('video, audio')) {
+              console.log("no media element in container:", container_id, "will be removed");
+              container.remove();
+            }
           },
           // there is 3 reason to pause/resume media.
           // 1. local_op: user click pause button
@@ -273,9 +314,9 @@
           container.appendChild(mediaElement);
           if (t.kind === 'video') {
             // attach pause/resume handler for entire container click event
-            container.addEventListener('click', createMediaControlHandler(t));
+            container.mediaControlHandler = createMediaControlHandler(t);
+            container.addEventListener('click', container.mediaControlHandler);
             // in case of bootstrapping pause, show overlay
-            console.log("video paused", t.paused, t.pausedReasons);
             if (t.paused) { container.appendChild(createOverlayElement(t)); }
           } else if (t.kind === 'audio') {
             // attach pause/resume handler for audio switch elemnt click event
@@ -283,6 +324,7 @@
             container.appendChild(audioSwitch);
             visualizeAudioVolume(mediaElement, img, t);
           }
+          container.appendChild(createCloseIconElement(t));
         } else {
           mediaElement.srcObject = t.stream;
         }
@@ -295,12 +337,9 @@
             audio: true
           }), 
           encodings: [
-            // 5Mbps ?
-            {maxBitrate: 5000000, scaleResolutionDownBy: 1.0},
-            // 1Mbps ?
-            {maxBitrate: 1000000, scaleResolutionDownBy: 2.0},
-            // 500kbps ?
-            {maxBitrate: 500000, scaleResolutionDownBy: 4.0}
+            {maxBitrate: 5000000, scaleResolutionDownBy: 1.0}, // 5Mbps
+            {maxBitrate: 1000000, scaleResolutionDownBy: 2.0}, // 1Mbps
+            {maxBitrate: 500000, scaleResolutionDownBy: 4.0}   // 500kbps
           ],
         }));
       }

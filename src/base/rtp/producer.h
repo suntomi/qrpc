@@ -28,6 +28,7 @@ namespace rtp {
     ) : RTC::Producer(s, id, l, p), params_(original_params), media_(m) {}
     ~Producer() override {}
     const Parameters &params() const { return params_; }
+    const std::string &media_path() const { return media_->label(); }
     ProducerStatus status() const;
   public:
     static bool consumer_params(

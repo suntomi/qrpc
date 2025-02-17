@@ -79,7 +79,6 @@ namespace rtp {
     } else if (kind == "app") {
       return MediaKind::APP;
     } else {
-      ASSERT(kind.empty());
       return std::nullopt;
     }
   }
