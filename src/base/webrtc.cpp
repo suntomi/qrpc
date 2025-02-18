@@ -420,7 +420,8 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           if (mpmit == args.end()) {
             RAISE("no value for key 'midPathMap'");
           }
-          std::map<rtp::Parameters::MediaKind, ControlOptions> options_map;
+          SDP::MediaContext context;
+          auto &options_map = context.options_map;
           const auto oit = args.find("options");
           if (oit != args.end()) {
             QRPC_LOGJ(info, {{"ev","produce options"},{"options",oit->second}});
@@ -436,14 +437,18 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           }
           const auto rtpit = args.find("rtp");
           if (rtpit != args.end()) {
-            c.InitRTP();
-            c.rtp_handler().SetNegotiationArgs(rtpit->second.get<std::map<std::string,json>>());
+            const auto rsmit = rtpit->second.find("ridScalabilityModeMap");
+            if (rsmit != rtpit->second.end()) {
+              context.rid_scalability_mode_map = rsmit->get<std::map<std::string,std::string>>();
+            } else {
+              ASSERT(false);
+            }
           }
           SDP sdp(sdpit->second.get<std::string>());
           std::string answer;
           std::map<std::string,rtp::Producer*> created_producers;
-          if (!sdp.Answer(mpmit->second.get<std::map<std::string,std::string>>(), c, answer, &options_map, &created_producers)) {
-            RAISE("fail to prepare consume");
+          if (!sdp.Answer(mpmit->second.get<std::map<std::string,std::string>>(), c, answer, &context)) {
+            RAISE("fail to produce");
           }
           if (!c.rtp_enabled()) {
             RAISE("nothing produced");
@@ -1969,11 +1974,6 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
       return QRPC_OK;
     }
     c->SetCname(cnit->get<std::string>());
-    const auto rtpit = client_req.find("rtp");
-    if (rtpit != client_req.end()) {
-      c->InitRTP();
-      c->rtp_handler().SetNegotiationArgs(rtpit->get<std::map<std::string,json>>());
-    }
     SDP sdp(client_sdp);
     if (!sdp.Answer({}, *c, answer)) {
       logger::error({{"ev","invalid client sdp"},{"sdp",client_sdp},{"reason",answer}});

@@ -102,7 +102,9 @@ class QRPCTrack {
   async close(pc) {
     if (this.track) {
       this.onclose(this);
-      pc.removeTrack(this.transceiver.sender);
+      if (this.transceiver?.mid) {
+        pc.removeTrack(this.transceiver.sender);
+      }
       this.track.stop();
       this.track = null;
       this.transceiver = null;
@@ -285,7 +287,6 @@ class QRPClient {
           const st = data.args.status_map[k];
           const t = this.tracks[k];
           if (t) {
-            console.log(`track ${t.path} already paused by `, st.pausedReasons);
             for (const r of st.pausedReasons || []) {
               t.pause(r, true);
             }
@@ -321,11 +322,9 @@ class QRPClient {
     this.sentTracks = []; 
     this.midMediaPathMap = {};
     this.ssrcLabelMap = {};
-    this.ridScalabilityModeMap = {};
     this.rpcPromises = {};
     this.sdpGen = 0;
     this.msgidSeed = 1;
-    this.ridSeed = 0;
     this.id = null;
     this.syscallStream = null;
     this.timer = null;
@@ -338,13 +337,6 @@ class QRPClient {
     //Pending candidadtes
     this.candidates = [];
     this.endOfcandidates = false;
-  }
-  #newRid() {
-    const rid = this.ridSeed++;
-    if (this.ridSeed > 0xFFFF) {
-      throw new Error("rid overflow");
-    }
-    return rid;
   }
   #newMsgId() {
     const msgid = this.msgidSeed++;
@@ -778,16 +770,6 @@ class QRPClient {
       console.log("no reconnect. bye!");
     }
   }
-  #rtpPayload() {
-    if (
-      Object.keys(this.ridScalabilityModeMap).length !== 0
-    ) {
-      return {
-        ridScalabilityModeMap:this.ridScalabilityModeMap,
-      };
-    }
-    return undefined;
-  }
   #canonicalOpenPath(path) {
     const parsed = path.split('/');
     if (parsed.length == 1) {
@@ -802,18 +784,15 @@ class QRPClient {
   async openMedia(path, {stream, encodings, options, onopen, onclose, onpause, onresume}) {
     const cpath = this.#canonicalOpenPath(path);
     console.log("openMedia", cpath, stream, encodings);
-    if (!encodings) {
-      throw new Error("encoding is mandatory");
-    }
+    if (!encodings) { throw new Error("encodings is mandatory"); }
+    const ridScalabilityModeMap = {};
+    let index = 0;
     encodings.forEach(e => {
       if (!e.maxBitrate) { throw new Error("for each encodings, maxBitrate is mandatory"); }
+      if (e.rid) { throw new Error(`cannot specify rid for encodings`); }
+      e.rid = `r${index++}`;
       e.scalabilityMode = e.scalabilityMode || QRPClient.DEFAULT_SCALABILITY_MODE;
-      if (e.rid) {
-        if (this.ridScalabilityModeMap[e.rid]) { throw new Error(`rid:${e.rid} is already used`); }
-      } else {
-        e.rid = `r${this.#newRid()}`;
-      }
-      this.ridScalabilityModeMap[e.rid] = e.scalabilityMode;
+      ridScalabilityModeMap[e.rid] = e.scalabilityMode;
     });
     // sort by maxBitrate asc, because server regards earlier encoding as lower quality,
     // regardless its actual bitrate
@@ -838,7 +817,7 @@ class QRPClient {
       const sentTracks = [...this.sentTracks];
       try {
         const remoteOffer = await this.syscall("produce", {
-          sdp: localOffer.sdp, options, midPathMap, rtp: this.#rtpPayload()
+          sdp: localOffer.sdp, options, midPathMap, rtp: {ridScalabilityModeMap}
         });
         await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
       } catch (e) {

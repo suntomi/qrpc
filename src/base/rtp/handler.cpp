@@ -210,19 +210,7 @@ namespace rtp {
 					QRPC_LOGJ(info, {{"ev","reuse closed media config"},{"old_media_path",ccit->media_path},{"new_media_path",media_path}});	
 				}
 			}
-			bool reusable_entry_found = false;
-			MediaStreamConfig *p_config;
-			if (ccit != media_stream_configs.end()) {
-				reusable_entry_found = true;
-				p_config = &(*ccit);
-				p_config->encodings.clear();
-				p_config->codecs.clear();
-				p_config->headerExtensions.clear();
-				p_config->closed = false;
-			} else {
-				p_config = &media_stream_configs.emplace_back();
-			}
-			auto &config = *p_config;
+			auto &config = media_stream_configs.NewSlot(k);
 			config.direction = MediaStreamConfig::Direction::SEND;
 			config.media_path = path + kind;
 			config.options = options_map.find(k) == options_map.end() ?
@@ -238,7 +226,7 @@ namespace rtp {
 				ASSERT(false);
 				continue;
 			}
-			if (!reusable_entry_found) {
+			if (config.mid.empty()) {
 				// generate unique mid from own consumer factory
 				auto mid = GenerateMid();
 				config.mid = mid;
@@ -403,13 +391,6 @@ namespace rtp {
 		}
 		return false;
 	}
-	void Handler::SetNegotiationArgs(const std::map<std::string, json> &args) {
-		const auto rsmit = args.find("ridScalabilityModeMap");
-		if (rsmit != args.end()) {
-			rid_scalability_mode_map_ = rsmit->second.get<std::map<Media::Rid,Media::ScalabilityMode>>();
-			QRPC_LOGJ(info, {{"ev","new rid scalability mode map"},{"map",*rsmit}});
-		}
-	}
 	std::shared_ptr<Media> Handler::FindFrom(const std::string &path, bool consumer) {
 		auto parsed = str::Split(path, "/");
 		if (consumer) {
@@ -510,9 +491,6 @@ namespace rtp {
 #endif
 	}
 	Producer *Handler::Produce(const MediaStreamConfig &p) {
-		for (auto kv : p.ssrcs) {
-			ssrc_trackid_map_[kv.first] = kv.second.track_id;
-		}
 		auto producer = producer_factory_.Create(p);
 		// auto &fbb = GetFBB();
 		// fbb.Finish(producer->FillBuffer(fbb));

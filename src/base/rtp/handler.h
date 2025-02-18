@@ -76,11 +76,15 @@ namespace rtp {
   };
   class MediaStreamConfigs : public std::vector<MediaStreamConfig> {
   public:
-    inline MediaStreamConfig &NewSlot() {
+    inline MediaStreamConfig &NewSlot(Parameters::MediaKind kind) {
       for (auto &c : *this) {
-        if (c.closed) {
+        if (c.closed /* && c.kind == kind */) {
           // can reuse closed slot
           c.closed = false;
+          c.encodings.clear();
+          c.codecs.clear();
+          c.headerExtensions.clear();
+          c.ssrcs.clear();
           return c;
         }
       }
@@ -130,8 +134,7 @@ namespace rtp {
     typedef Listener::onSendCallback onSendCallback;
   public:
     Handler(Listener &l) : RTC::Transport(&shared(), l.rtp_id(), &router(), TransportOptions(l.GetRtpConfig())),
-      listener_(l), producer_factory_(*this), consumer_factory_(*this), medias_(),
-      rid_label_map_(), trackid_label_map_(), ssrc_trackid_map_(), rid_scalability_mode_map_() {}
+      listener_(l), producer_factory_(*this), consumer_factory_(*this), medias_(), mid_media_path_map_() {}
     ~Handler() override { RTC::Transport::CloseProducersAndConsumers(); }
     inline Listener &listener() { return listener_; }
     inline const std::string &rtp_id() const { return listener_.rtp_id(); }
@@ -153,10 +156,6 @@ namespace rtp {
     static void ConfigureLogging(const std::string &log_level, const std::vector<std::string> &log_tags);
     static const FBS::Transport::Options* TransportOptions(const Config &c);
     static const std::vector<Parameters::MediaKind> &SupportedMediaKind();
-    inline const std::string &FindScalabilityMode(const std::string &rid) const {
-      auto it = rid_scalability_mode_map_.find(rid);
-      return it != rid_scalability_mode_map_.end() ? it->second : "";
-    }
     inline std::string GenerateMid() { return listener_.GenerateMid(); }
     qrpc_time_t OnTimer(qrpc_time_t now);
     template <typename Body>
@@ -193,7 +192,6 @@ namespace rtp {
     bool Ping(std::string &error);
     bool Sync(const std::string &path, std::string &sdp);
     bool SetExtensionId(uint8_t id, RTC::RtpHeaderExtensionUri::Type uri);
-    void SetNegotiationArgs(const std::map<std::string, json> &args);
     void UpdateMidMediaPathMap(const MediaStreamConfig &c) {
       mid_media_path_map_[c.mid] = c.media_path;
 			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",mid_media_path_map_}});
@@ -275,11 +273,7 @@ namespace rtp {
     ProducerFactory producer_factory_; // should be declared prior to Producer* and Consumer* containers
     ConsumerFactory consumer_factory_;
     std::map<Media::Id, std::shared_ptr<Media>> medias_;
-    std::map<Media::Rid, Media::Id> rid_label_map_;
-    std::map<Media::TrackId, Media::Id> trackid_label_map_;
     std::map<Media::Mid, std::string> mid_media_path_map_;
-    std::map<Media::Ssrc, Media::TrackId> ssrc_trackid_map_;
-    std::map<Media::Rid, Media::ScalabilityMode> rid_scalability_mode_map_;
   };
 }
 }

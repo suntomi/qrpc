@@ -31,7 +31,8 @@ namespace rtp {
     };
   public:
     Parameters() : RTC::RtpParameters(), ssrc_seed(GenerateSsrc()) {}
-    bool Parse(const json &section, Capability &cap, std::string &answer, const Handler *h = nullptr);
+    bool Parse(const json &section, Capability &cap, std::string &answer,
+      const std::map<std::string, std::string> &rid_scalability_mode_map = {});
     std::string Answer(const std::string &cname = "") const;
     std::string Payloads() const {
       if (kind == rtp::Parameters::MediaKind::APP) {

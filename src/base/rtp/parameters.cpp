@@ -228,7 +228,10 @@ namespace rtp {
     return p;
   }
 
-  bool Parameters::Parse(const json &section, Capability &cap, std::string &answer, const Handler *h)  {
+  bool Parameters::Parse(
+    const json &section, Capability &cap, std::string &answer,
+    const std::map<std::string, std::string> &rid_scalability_mode_map
+  )  {
     auto midit = section.find("mid");
     if (midit == section.end()) {
       answer = "section: no value for key 'mid'";
@@ -600,7 +603,8 @@ namespace rtp {
       auto &rids = dir1 == "send" ? simulcast.send_rids : simulcast.recv_rids;
       rids = lit->get<std::string>();
       for (auto &rid : str::Split(rids, ";")) {
-        auto scalability_mode = h != nullptr ? h->FindScalabilityMode(rid) : "";
+        auto it = rid_scalability_mode_map.find(rid);
+        auto scalability_mode = it != rid_scalability_mode_map.end() ? it->second : "";
         AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
       }
       auto d2it = scit->find("dir2");
@@ -610,7 +614,8 @@ namespace rtp {
         auto &rids = dir2 == "send" ? simulcast.send_rids : simulcast.recv_rids;
         rids = l2it->get<std::string>();
         for (auto &rid : str::Split(rids, ";")) {
-          auto scalability_mode = h != nullptr ? h->FindScalabilityMode(rid) : "";
+          auto it = rid_scalability_mode_map.find(rid);
+          auto scalability_mode = it != rid_scalability_mode_map.end() ? it->second : "";
           AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
         }
       }

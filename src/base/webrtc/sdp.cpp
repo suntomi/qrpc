@@ -264,6 +264,7 @@ a=msid-semantic: WMS
   bool SDP::AnswerMediaSection(
     const json &section, const std::string &proto,
     const std::map<std::string, std::string> mid_path_map,
+    const std::map<std::string, std::string> rid_scalability_mode_map,
     ConnectionFactory::Connection &c,
     rtp::MediaStreamConfig &params,
     std::string &errmsg
@@ -304,18 +305,22 @@ a=msid-semantic: WMS
     } else {
       rtp::Capability cap;
       c.InitRTP();
-      if (!params.Parse(section, cap, errmsg, &c.rtp_handler())) {
+      auto mid = params.mid; // mid here, is empty (newly created) or actual mid (reused)
+      if (!params.Parse(section, cap, errmsg, rid_scalability_mode_map)) { // mid is overwritten by value from peer
         return false;
       }
-      auto pit = mid_path_map.find(params.mid);
+      auto pit = mid_path_map.find(params.mid); // mid_path_map is also from peer, so can find element by peer mid
       if (pit == mid_path_map.end()) {
         errmsg = "find label from mid = " + params.mid;
         ASSERT(false);
         return false;
       }
       params.media_path = pit->second;
-      // assign actual mid and update label map
-      params.mid = c.rtp_handler().GenerateMid();
+      if (mid.empty()) { // for newly created params, assign new mid
+        params.mid = c.rtp_handler().GenerateMid();
+      } else {
+        params.mid = mid; // for reused params, use existing mid (preserved at above)
+      }
       c.rtp_handler().UpdateMidMediaPathMap(params);
     }
     params.direction = rtp::MediaStreamConfig::Direction::RECV;
@@ -325,8 +330,7 @@ a=msid-semantic: WMS
   bool SDP::Answer(
     const std::map<std::string, std::string> mid_path_map,
     ConnectionFactory::Connection &c, std::string &answer,
-    const std::map<rtp::Parameters::MediaKind, rtp::MediaStreamConfig::ControlOptions> *options_map,
-    std::map<std::string, rtp::Producer*> *created_producers
+    MediaContext *context
   ) const {
     json dsec, asec, vsec;
     auto &section_params = c.media_stream_configs();
@@ -359,58 +363,51 @@ a=msid-semantic: WMS
         return false;
       }
       c.dtls_transport().SetRemoteFingerprint(fp);
-      if (created_producers == nullptr) {
+      if (context == nullptr) {
         auto &params = section_params.emplace_back();
-        if (!AnswerMediaSection(dsec, proto, mid_path_map, c, params, answer)) {
+        if (!AnswerMediaSection(dsec, proto, mid_path_map, {}, c, params, answer)) {
           QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
           ASSERT(false);
           return false;
         }
       }
     }
-    // TODO: should support multiple audio/video streams from same webrtc connection?
-    if (FindMediaSection("audio", asec)) {
-      auto &params = section_params.NewSlot();
-      if (AnswerMediaSection(asec, proto, mid_path_map, c, params, answer)) {
-        if (options_map != nullptr) {
-          auto it = options_map->find(rtp::Parameters::MediaKind::AUDIO);
-          if (it != options_map->end()) {
+    if (context != nullptr) {
+      if (FindMediaSection("audio", asec)) {
+        auto &params = section_params.NewSlot(rtp::Parameters::MediaKind::AUDIO);
+        if (AnswerMediaSection(asec, proto, mid_path_map, context->rid_scalability_mode_map, c, params, answer)) {
+          auto it = context->options_map.find(rtp::Parameters::MediaKind::AUDIO);
+          if (it != context->options_map.end()) {
             params.options = it->second;
           }
-        }
-        if ((p = c.rtp_handler().Produce(params)) == nullptr) {
-          answer = "fail to create audio producer";
+          if ((p = c.rtp_handler().Produce(params)) == nullptr) {
+            answer = "fail to create audio producer";
+            return false;
+          }
+          context->created_producers[params.media_path] = p;
+        } else {
+          QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
+          ASSERT(false);
           return false;
         }
-        if (created_producers != nullptr) {
-          (*created_producers)[params.media_path] = p;
-        }
-      } else {
-        QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
-        ASSERT(false);
-        return false;
       }
-    }
-    if (FindMediaSection("video", vsec)) {
-      auto &params = section_params.NewSlot();
-      if (AnswerMediaSection(vsec, proto, mid_path_map, c, params, answer)) {
-        if (options_map != nullptr) {
-          auto it = options_map->find(rtp::Parameters::MediaKind::VIDEO);
-          if (it != options_map->end()) {
+      if (FindMediaSection("video", vsec)) {
+        auto &params = section_params.NewSlot(rtp::Parameters::MediaKind::VIDEO);
+        if (AnswerMediaSection(vsec, proto, mid_path_map, context->rid_scalability_mode_map, c, params, answer)) {
+          auto it = context->options_map.find(rtp::Parameters::MediaKind::VIDEO);
+          if (it != context->options_map.end()) {
             params.options = it->second;
           }
-        }
-        if ((p = c.rtp_handler().Produce(params)) == nullptr) {
-          answer = "fail to create video producer";
+          if ((p = c.rtp_handler().Produce(params)) == nullptr) {
+            answer = "fail to create video producer";
+            return false;
+          }
+          context->created_producers[params.media_path] = p;
+        } else {
+          QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
+          ASSERT(false);
           return false;
         }
-        if (created_producers != nullptr) {
-          (*created_producers)[params.media_path] = p;
-        }
-      } else {
-        QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
-        ASSERT(false);
-        return false;
       }
     }
     // geneating answer for prodducer
