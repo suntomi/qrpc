@@ -66,8 +66,13 @@ namespace rtp {
     bool GenerateCN(std::string &cname) const;
     void Reset() {
       auto new_seed = GenerateSsrc();
-      QRPC_LOGJ(info, {{"ev","reset ssrc seed"},{"old",ssrc_seed},{"new",new_seed}});
+      QRPC_LOGJ(info, {{"ev","reset config"},{"mld",mid},{"path",media_path},{"new_seed",new_seed}});
       this->ssrc_seed = new_seed;
+      this->closed = false;
+      this->encodings.clear();
+      this->codecs.clear();
+      this->headerExtensions.clear();
+      this->ssrcs.clear();
     }
     std::string media_path;
     Direction direction{ Direction::RECV };

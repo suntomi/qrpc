@@ -210,7 +210,15 @@ namespace rtp {
 					QRPC_LOGJ(info, {{"ev","reuse closed media config"},{"old_media_path",ccit->media_path},{"new_media_path",media_path}});	
 				}
 			}
-			auto &config = media_stream_configs.NewSlot(k);
+			auto &config = ccit != media_stream_configs.end() ? *ccit : media_stream_configs.emplace_back();
+			// initialization depends on the slot is from reuse or not
+			if (config.mid.empty()) {
+				// generate unique mid from own consumer factory
+				auto mid = GenerateMid();
+				config.mid = mid;
+			} else {
+				config.Reset();
+			}
 			config.direction = MediaStreamConfig::Direction::SEND;
 			config.media_path = path + kind;
 			config.options = options_map.find(k) == options_map.end() ?
@@ -219,17 +227,11 @@ namespace rtp {
 			config.kind = k;
 			config.network = consumed_producer->params().network;
 			config.rtp_proto = consumed_producer->params().rtp_proto;
-			config.ssrc_seed = consumed_producer->params().ssrc_seed;
 			// generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
 			if (!Producer::consumer_params(consumed_producer->params(), capit->second, config)) {
 				QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
 				ASSERT(false);
 				continue;
-			}
-			if (config.mid.empty()) {
-				// generate unique mid from own consumer factory
-				auto mid = GenerateMid();
-				config.mid = mid;
 			}
 			config.rtcp.cname = peer.cname();
 			config.GetGeneratedSsrc(generated_ssrcs);
