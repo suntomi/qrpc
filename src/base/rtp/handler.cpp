@@ -148,7 +148,7 @@ namespace rtp {
 				ASSERT(false);
 				return false;
 			}
-			if (ccit->closed) {
+			if (ccit->closed()) {
 				QRPC_LOGJ(info, {{"ev","media already closed"},{"path",media_path}});
 				return true;
 			}
@@ -158,7 +158,7 @@ namespace rtp {
 			}
 			QRPC_LOGJ(info, {{"ev","media closed"},{"path",media_path}});
 			closed_paths.push_back(media_path);
-			ccit->closed = true;
+			ccit->close();
 		}
 		return true;
 	}
@@ -193,7 +193,7 @@ namespace rtp {
 			created_consumers[media_path] = nullptr;
 			// check if consumer of same media-path already exists
 			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
-				return !c.closed && c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
+				return !c.closed() && c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
 			});
 			QRPC_LOGJ(info, {{"ev","check consume config"},{"media_path",media_path},{"exists",ccit != media_stream_configs.end()}});
 			if (ccit != media_stream_configs.end()) {
@@ -201,22 +201,24 @@ namespace rtp {
 					QRPC_LOGJ(info, {{"ev","ignore media because already prepare"},{"media_path",media_path},{"sync",sync}});
 					continue;
 				}
+				ccit->Reconnect();
 			} else {
 				// find empty place holder for consumer
-				ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [](const auto &c) {
-					return c.closed && c.sender(); // if sender of same media-path already exists, skip.
+				ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [k](const auto &c) {
+					return c.closed() && c.sender() && c.kind == k; // if sender of same media-path already exists, skip.
 				});
 				if (ccit != media_stream_configs.end()) {
-					QRPC_LOGJ(info, {{"ev","reuse closed media config"},{"old_media_path",ccit->media_path},{"new_media_path",media_path}});	
+					QRPC_LOGJ(info, {{"ev","reuse closed media config"},{"old_media_path",ccit->media_path},{"new_media_path",media_path}});
+					ccit->Reuse();
 				}
 			}
 			auto &config = ccit != media_stream_configs.end() ? *ccit : media_stream_configs.emplace_back();
-			// initialization depends on the slot is from reuse or not
-			if (config.mid.empty()) {
+			// initialization depends on the slot is from reuse/reconnect or not
+			if (config.mid.empty()) { // new slot
 				// generate unique mid from own consumer factory
 				auto mid = GenerateMid();
 				config.mid = mid;
-			} else {
+			} else { // reuse/reconnect slot
 				config.Reset();
 			}
 			config.direction = MediaStreamConfig::Direction::SEND;

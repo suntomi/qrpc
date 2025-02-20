@@ -218,7 +218,7 @@ a=setup:active
       p.MediaKindName().c_str(), p.network.port, p.RtpProtocol().c_str(), p.Payloads().c_str(),
       p.mid.c_str(),
       msid.c_str(), p.media_stream_track_id().c_str(),
-      p.closed ? "inacitive" : "sendrecv",
+      p.closed() && p.receiver() ? "inactive" : "sendrecv",
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       p.receiver() ? "trickle" : "renomination",

@@ -55,20 +55,25 @@ namespace rtp {
       if (probator()) { return mid; }
       auto cs = str::Split(media_path, "/");
       if (cs.size() == 3) {
-        return cs[0] + "/" + cs[1];
+        return cs[0] + "/" + cs[1] + "/" + std::to_string(this->reuse_count);
       } else if (cs.size() == 2) {
-        return cs[0];
+        return cs[0] + "/" + std::to_string(this->reuse_count);
       } else {
         ASSERT(false);
         return "";
       }
     }
     bool GenerateCN(std::string &cname) const;
+    bool closed() const { return this->close_flag != 0; }
+    void close() { this->close_flag = 1; }
+    // ok to reset to 0
+    void Reuse() { this->reuse_count++; }
+    void Reconnect() { this->reconnect_count++; }
     void Reset() {
       auto new_seed = GenerateSsrc();
       QRPC_LOGJ(info, {{"ev","reset config"},{"mld",mid},{"path",media_path},{"new_seed",new_seed}});
       this->ssrc_seed = new_seed;
-      this->closed = false;
+      this->close_flag = 0;
       this->encodings.clear();
       this->codecs.clear();
       this->headerExtensions.clear();
@@ -77,15 +82,15 @@ namespace rtp {
     std::string media_path;
     Direction direction{ Direction::RECV };
     ControlOptions options;
-    bool closed{ false };
+    uint8_t close_flag{0}, reuse_count{0}, reconnect_count{0};
   };
   class MediaStreamConfigs : public std::vector<MediaStreamConfig> {
   public:
     inline MediaStreamConfig &NewSlot(Parameters::MediaKind kind) {
       for (auto &c : *this) {
-        if (c.closed /* && c.kind == kind */) {
+        if (c.closed() && c.kind == kind) {
           // can reuse closed slot
-          c.closed = false;
+          c.close_flag = 0;
           c.encodings.clear();
           c.codecs.clear();
           c.headerExtensions.clear();

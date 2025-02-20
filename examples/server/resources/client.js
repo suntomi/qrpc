@@ -99,13 +99,23 @@ class QRPCTrack {
       }
     }
   }
-  async close(pc) {
+  async close(pc, force) {
     if (this.track) {
       this.onclose(this);
-      if (this.transceiver?.mid) {
-        pc.removeTrack(this.transceiver.sender);
+      // once track is stopped, it cannot be reused for receiver at least in chrome browser.
+      // for unknown reason (might be bug), 
+      // if track is stopped, ontrack event of corresponding SDP media section always contains old 'readyState=ended' track.
+      // even if chrome statistics shows that track is active again (with different ssrc)
+      // the reason I think this might be bug, 
+      // is that track id does not change regardless SDP sends different msid for corresponding media section.
+      // for workaround, we do not stop track for receiver.
+      // QRPClient.close call the function with force = true, so that we can stop track for receiver for cleanup case.
+      if (force || !this.isReceiver) {
+        if (this.transceiver?.mid) {
+          pc.removeTrack(this.transceiver.sender);
+        }
+        this.track.stop();
       }
-      this.track.stop();
       this.track = null;
       this.transceiver = null;
       this.stream = null;
@@ -416,7 +426,7 @@ class QRPClient {
       // TODO: unify this step by using event.transceiver.mid and this.midMediaPathMap
       let path = undefined;
       if (event.transceiver) {
-        if (event.transceiver.mid === "probator") { console.log("ignore probator"); return; }
+        if (event.transceiver.mid === "probator") { return; }
         path = this.midMediaPathMap[event.transceiver.mid];
         if (!path) {
           throw new Error(`No path is defined for mid = ${event.transceiver.mid}`);
@@ -555,20 +565,20 @@ class QRPClient {
     const localOffer = await pc.createOffer();
     await pc.setLocalDescription(localOffer);
     const midSsrcMap = this.parseLocalOffer(localOffer.sdp);
-    console.log("midSsrcMap", midSsrcMap);
+    // console.log("midSsrcMap", midSsrcMap);
     for (const t of tracks) {
       // now, mid is decided. mid (in server remote offer) probably changes 
       // after it processes on server side, but because of client mid actually decided
       // by server remote offer, changes causes no problem.
       midPathMap[t.mid] = t.path;
       t.ssrc = midSsrcMap[t.mid] || undefined;
-      console.log(`${t.path},mid=${t.mid} ssrc = ${t.ssrc}`);
+      // console.log(`${t.path},mid=${t.mid} ssrc = ${t.ssrc}`);
     }
     pc.close();
     return {localOffer, midPathMap};
   }
   fixupLocalAnswer(localAnswer, midSsrcMap) {
-    console.log("fixupLocalAnswer", midSsrcMap);
+    // console.log("fixupLocalAnswer", midSsrcMap);
     const chunks = [];
     let chunk = [];
     const lines = localAnswer.split(/\r?\n/);
@@ -745,8 +755,8 @@ class QRPClient {
       reconnectionWaitMS = 5000;
     }
     for (const k in this.tracks) {
-      console.log("close track", k);
-      await this.tracks[k].close(this.pc);
+      console.log("close track", k); 
+      await this.tracks[k].close(this.pc, true); // trur for closing receivers
     }
     for (const k in this.streams) {
       console.log("close stream", k);
@@ -804,7 +814,7 @@ class QRPClient {
       const track = new QRPCTrack(path, media, stream, t, encodings, {
         onopen, onclose, onpause, onresume
       });
-      console.log("openMedia: add track for", track.path);
+      // console.log("openMedia: add track for", track.path);
       this.tracks[track.path] = track;
       this.sentTracks.push(track);
       tracks.push(track);
@@ -889,7 +899,7 @@ class QRPClient {
         track = new QRPCTrack(path, media, null, null, undefined, {
           onopen, onclose, onpause, onresume
         });
-        console.log("viewMedia: add track for", path);
+        // console.log("viewMedia: add track for", path);
         this.tracks[path] = track;
       }
       tracks.push(track);
@@ -934,7 +944,6 @@ class QRPClient {
   async #closeTracks(paths) {
     const medias = [];
     for (const path of paths) {
-      console.log("close track", path);
       const t = this.tracks[path];
       if (t) {
         medias[t.media.path] = t.media;
@@ -943,7 +952,6 @@ class QRPClient {
       }
       const index = this.sentTracks.indexOf(t);
       if (index >= 0) {
-        console.log("remove sent track", path, index);
         this.sentTracks.splice(index, 1);
       }
     }
