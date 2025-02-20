@@ -33,7 +33,7 @@ namespace rtp {
     ConsumerStatus status() const {
       return ConsumerStatus{.paused = C::IsPaused(), .producerPaused = C::IsProducerPaused()};
     }
-    void OnProducerClosed() {
+    void OnProducerManuallyClosed() {
       for (auto &c : handler().listener().media_stream_configs()) {
         if (c.media_path == media_path_) {
           c.close();
@@ -136,16 +136,16 @@ namespace rtp {
         logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});
     }
   }
-  void ConsumerFactory::OnProducerClosed(Consumer *c) {
+  void ConsumerFactory::OnProducerManuallyClosed(Consumer *c) {
     switch (c->GetType()) {
       case RTC::RtpParameters::Type::SIMPLE:
-        dynamic_cast<Wrap<RTC::SimpleConsumer>*>(c)->OnProducerClosed();
+        dynamic_cast<Wrap<RTC::SimpleConsumer>*>(c)->OnProducerManuallyClosed();
         break;
       case RTC::RtpParameters::Type::SIMULCAST:
-        dynamic_cast<Wrap<RTC::SimulcastConsumer>*>(c)->OnProducerClosed();
+        dynamic_cast<Wrap<RTC::SimulcastConsumer>*>(c)->OnProducerManuallyClosed();
         break;
       case RTC::RtpParameters::Type::PIPE:
-        dynamic_cast<Wrap<RTC::PipeConsumer>*>(c)->OnProducerClosed();
+        dynamic_cast<Wrap<RTC::PipeConsumer>*>(c)->OnProducerManuallyClosed();
         break;
       default:
         logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});

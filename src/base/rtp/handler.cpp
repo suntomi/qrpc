@@ -192,7 +192,7 @@ namespace rtp {
 			created_consumers[media_path] = nullptr;
 			// check if consumer of same media-path already exists
 			auto ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [&media_path](const auto &c) {
-				return !c.closed() && c.media_path == media_path && c.sender(); // if sender of same media-path already exists, skip.
+				return !c.closed() && c.sender() && c.media_path == media_path; // if active sender of same media-path already exists, skip.
 			});
 			QRPC_LOGJ(info, {{"ev","check consume config"},{"media_path",media_path},{"exists",ccit != media_stream_configs.end()}});
 			if (ccit != media_stream_configs.end()) {
@@ -471,9 +471,15 @@ namespace rtp {
 			FBS::Transport::CreateCloseConsumerRequestDirect(fbb, c->id.c_str()));
 	}
 	void Handler::CloseProducer(Producer *p) {
-		auto &fbb = GetFBB();
 		auto pl = json({{"args",{{"path",cname() + "/" + p->media_path()}}},{"fn","close_track"}}).dump();
-		SendToConsumersOf(p, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
+		auto data = pl.c_str();
+		auto len = pl.size();
+		for (auto *c : router_.GetConsumersOf(p)) {
+			auto &h = ConsumerFactory::HandlerFrom(c);
+			h.SendToStream(Stream::SYSCALL_NAME, data, len);
+			ConsumerFactory::OnProducerManuallyClosed(c);
+		}
+		auto &fbb = GetFBB();
 		HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CLOSE_PRODUCER, 
 			FBS::Transport::CreateCloseProducerRequestDirect(fbb, p->id.c_str()));
 	}

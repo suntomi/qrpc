@@ -276,11 +276,6 @@ namespace rtp {
       uint32_t ppid,
       onQueuedCallback *cb = nullptr) override { listener_.SendMessage(dataConsumer, msg, len, ppid, cb); }
     void SendSctpData(const uint8_t* data, size_t len) override { listener_.SendSctpData(data, len); }
-    // overrides RTC::Consumer::Listener
-    void OnConsumerProducerClosed(RTC::Consumer *c) override {
-      ConsumerFactory::OnProducerClosed(dynamic_cast<Consumer *>(c));
-      RTC::Transport::OnConsumerProducerClosed(c);
-    }
   protected:
     static thread_local Shared shared_;
     static thread_local RTC::Router router_;
