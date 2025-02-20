@@ -72,6 +72,12 @@ namespace webrtc {
       int Call(const char *fn, const json &j);
       int Call(const char *fn);
     };
+    class WatcherStream : public AdhocStream {
+      WatcherStream(BaseConnection &c, const Config &config) :
+        AdhocStream(c, config, std::move(Handler(Nop())), std::move(ConnectHandler(Nop())), std::move(ShutdownHandler(Nop()))) {}
+      ~WatcherStream() {}
+      int OnRead(const char *, size_t) override {}
+    };
   public: // connections
     class Connection : public base::Connection, 
                        public IceServer::Listener,
@@ -136,7 +142,7 @@ namespace webrtc {
           return c.direction == rtp::MediaStreamConfig::Direction::SEND;
         }) != media_stream_configs_.end();
       }
-      inline rtp::MediaStreamConfigs &media_stream_configs() { return media_stream_configs_; }
+      rtp::MediaStreamConfigs &media_stream_configs() override { return media_stream_configs_; }
     public:
       int Init(std::string &ufrag, std::string &pwd);
       void SetCname(const std::string &cname);
@@ -164,6 +170,7 @@ namespace webrtc {
       void TryParseRtpPacket(const uint8_t *p, size_t sz);
       std::shared_ptr<Stream> NewStream(const Stream::Config &c, const StreamFactory &sf);
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const StreamFactory &sf);
+      std::shared_ptr<Stream> WatchStream(const Stream::Config &c);
       StreamFactory DefaultStreamFactory();
       bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
         return Session::CheckTimeout(last_active_, now, timeout, next_check);

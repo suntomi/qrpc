@@ -184,9 +184,8 @@ namespace rtp {
 			if (consumed_producer == nullptr) {
 				QRPC_LOGJ(info, {
 					{"ev","ignore media because corresponding producer of peer not found"},
-					{"path",path + kind},{"peer",peer.rtp_id()}
+					{"path",local_path + kind},{"peer",peer.rtp_id()}
 				});
-				ASSERT(false);
 				continue;
 			}
 			// set place holder for consumer that may be created
@@ -473,7 +472,7 @@ namespace rtp {
 	}
 	void Handler::CloseProducer(Producer *p) {
 		auto &fbb = GetFBB();
-		auto pl = json({{"args",{{"path",p->media_path()}}},{"fn","close_track"}}).dump();
+		auto pl = json({{"args",{{"path",cname() + "/" + p->media_path()}}},{"fn","close_track"}}).dump();
 		SendToConsumersOf(p, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
 		HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CLOSE_PRODUCER, 
 			FBS::Transport::CreateCloseProducerRequestDirect(fbb, p->id.c_str()));

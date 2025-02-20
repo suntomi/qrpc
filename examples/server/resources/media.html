@@ -360,7 +360,7 @@
         const options = createPubSubOptions('sub_audio', 'sub_video');
         const path = `${id}/${lpath}`;
         console.log(`subscribe: input path = ${path}`, options);
-        await c.viewMedia(path, createMediaHandlerWithOptions(subsList, options));
+        await c.watchMedia(path, createMediaHandlerWithOptions(subsList, options));
       }
       onReconnect = (event) => {
         console.log("shutdown by UI");

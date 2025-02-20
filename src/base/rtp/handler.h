@@ -121,6 +121,7 @@ namespace rtp {
       virtual const std::string &rtp_id() const = 0;
       virtual const std::string &cname() const = 0;
       virtual const std::map<Parameters::MediaKind, Capability> &capabilities() const = 0;
+      virtual MediaStreamConfigs &media_stream_configs() = 0;
       virtual const std::string &FindRtpIdFrom(std::string &cname) = 0;
       virtual const std::string GenerateMid() = 0;
       virtual int SendToStream(const std::string &label, const char *data, size_t len) = 0;
@@ -275,6 +276,11 @@ namespace rtp {
       uint32_t ppid,
       onQueuedCallback *cb = nullptr) override { listener_.SendMessage(dataConsumer, msg, len, ppid, cb); }
     void SendSctpData(const uint8_t* data, size_t len) override { listener_.SendSctpData(data, len); }
+    // overrides RTC::Consumer::Listener
+    void OnConsumerProducerClosed(RTC::Consumer *c) override {
+      ConsumerFactory::OnProducerClosed(dynamic_cast<Consumer *>(c));
+      RTC::Transport::OnConsumerProducerClosed(c);
+    }
   protected:
     static thread_local Shared shared_;
     static thread_local RTC::Router router_;

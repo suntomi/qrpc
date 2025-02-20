@@ -841,8 +841,16 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::NewStream(
 }
 StreamFactory ConnectionFactory::Connection::DefaultStreamFactory() {
   return [this](const Stream::Config &config, base::Connection &conn) -> std::shared_ptr<Stream> {
-    if (config.label == Stream::SYSCALL_NAME) {
-      return this->syscall_ = std::make_shared<SyscallStream>(conn, config);
+    if (Stream::IsSystem(config.label)) {
+      if (config.label == Stream::SYSCALL_NAME) {
+        return this->syscall_ = std::make_shared<SyscallStream>(conn, config);
+      } else if (config.label.substr(0, 7) == "$watch/") {
+        return this->WatchStream(config);
+      } else {
+        QRPC_LOGJ(error, {{"ev","unknown system stream"},{"label",config.label}});
+        ASSERT(false);
+        return nullptr;
+      }
     } else {
       return this->factory().stream_factory()(config, conn);
     }
@@ -878,6 +886,9 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::OpenStream(
   }
   logger::info({{"ev","new stream opened"},{"sid",s->id()},{"l",s->label()}});
   return s;
+}
+std::shared_ptr<Stream> ConnectionFactory::Connection::WatchStream(const Stream::Config &c) {
+  
 }
 void ConnectionFactory::Connection::Fin() {
   if (dtls_transport_ != nullptr) {
@@ -1506,25 +1517,24 @@ const std::string &ConnectionFactory::Connection::FindRtpIdFrom(std::string &cna
 int ConnectionFactory::Connection::SendToStream(
   const std::string &label, const char *data, size_t len
 ) {
-  bool found = false;
   for (auto &s : streams_) {
     // QRPC_LOGJ(info, {{"ev","send to stream"},{"label",s.second->config().label}});
     // currently, if multiple streams with same label, send to all of them
     if (s.second->config().label == label) {
       int r = s.second->Send(data, len);
       ASSERT(r >= 0);
-      found = true;
+      return r;
     }
   }
   // if not found, create new stream
-  if (!found && (OpenStream({
+  if (OpenStream({
     .label = label
   }, [this, data, len, &label](const Stream::Config &config, base::Connection &conn) {
     auto s = this->DefaultStreamFactory()(config, conn);
     QRPC_LOGJ(info, {{"ev","open and send to stream"},{"label",s->config().label},{"flabel",label}});
     s->Send(data, len);
     return s;
-  }) == nullptr)) {
+  }) == nullptr) {
     return QRPC_EALLOC;
   }
   return QRPC_OK;

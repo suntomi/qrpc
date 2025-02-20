@@ -34,6 +34,7 @@ namespace base {
     Connection &connection() { return conn_; }
     template <class T> const T &context() const { return *static_cast<T *>(context_); }
     template <class T> T &context() { return *static_cast<T *>(context_); }
+    static inline bool IsSystem(const std::string &label) { return label[0] == '$'; }
   public:
     virtual int Open();
     virtual void Close(const CloseReason &reason);

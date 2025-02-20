@@ -26,14 +26,24 @@ namespace rtp {
     Wrap(RTC::Shared* s, 
       const std::string& id, const std::string& producer_id,
       RTC::Consumer::Listener *l, const FBS::Transport::ConsumeRequest* d,
-      std::shared_ptr<Media> m
-    ) : C(s, id, producer_id, l, d), media_(m) {}
+      const MediaStreamConfig &config, std::shared_ptr<Media> m
+    ) : C(s, id, producer_id, l, d), media_path_(config.media_path), media_(m) {}
     ~Wrap() override {}
     Handler &handler() { return *dynamic_cast<Handler *>(C::listener); }
     ConsumerStatus status() const {
       return ConsumerStatus{.paused = C::IsPaused(), .producerPaused = C::IsProducerPaused()};
     }
+    void OnProducerClosed() {
+      for (auto &c : handler().listener().media_stream_configs()) {
+        if (c.media_path == media_path_) {
+          c.close();
+          return;
+        }
+      }
+      ASSERT(false);
+    }
   protected:
+    const std::string media_path_;
     std::shared_ptr<Media> media_;
   };
 	std::string ConsumerFactory::GenerateId(const std::string &id, const std::string &path) { 
@@ -47,7 +57,7 @@ namespace rtp {
     const auto kind = config.kind;
 		auto consumed_producer = peer.FindProducerByPath(lpath);
 		if (consumed_producer == nullptr) {
-			QRPC_LOGJ(error, {{"ev","fail to find consumed producer"},{"path",path}});
+			QRPC_LOGJ(error, {{"ev","fail to find consumed producer"},{"path",lpath},{"fpath",ProducerFactory::GenerateId(peer.rtp_id(), path)}});
 			return nullptr; // on reconnection but does not prepared producer yet, it is possible
 		}
     auto type = pipe ?
@@ -58,7 +68,7 @@ namespace rtp {
     auto encodings = consumed_producer->params().PackConsumableEncodings(fbb);
     auto id = GenerateId(handler_.rtp_id(), path);
     auto &producer_id = consumed_producer->id;
-    Handler::SetConsumerFactory([m](
+    Handler::SetConsumerFactory([config, m](
 			RTC::RtpParameters::Type type,
 			RTC::Shared* shared,
 			const std::string& id,
@@ -68,11 +78,11 @@ namespace rtp {
     ) mutable -> RTC::Consumer * {
       switch (type) {
         case RTC::RtpParameters::Type::SIMPLE:
-          return new Wrap<RTC::SimpleConsumer>(shared, id, producer_id, listener, data, m);
+          return new Wrap<RTC::SimpleConsumer>(shared, id, producer_id, listener, data, config, m);
         case RTC::RtpParameters::Type::SIMULCAST:
-          return new Wrap<RTC::SimulcastConsumer>(shared, id, producer_id, listener, data, m);
+          return new Wrap<RTC::SimulcastConsumer>(shared, id, producer_id, listener, data, config, m);
         case RTC::RtpParameters::Type::PIPE:
-          return new Wrap<RTC::PipeConsumer>(shared, id, producer_id, listener, data, m);
+          return new Wrap<RTC::PipeConsumer>(shared, id, producer_id, listener, data, config, m);
         default:
           QRPC_LOG(error, "invalid type: %d", type);
           return nullptr;
@@ -122,6 +132,21 @@ namespace rtp {
         return dynamic_cast<RTC::SimulcastConsumer *>(c)->FillBuffer(builder);
       case RTC::RtpParameters::Type::PIPE:
         return dynamic_cast<RTC::PipeConsumer *>(c)->FillBuffer(builder);
+      default:
+        logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});
+    }
+  }
+  void ConsumerFactory::OnProducerClosed(Consumer *c) {
+    switch (c->GetType()) {
+      case RTC::RtpParameters::Type::SIMPLE:
+        dynamic_cast<Wrap<RTC::SimpleConsumer>*>(c)->OnProducerClosed();
+        break;
+      case RTC::RtpParameters::Type::SIMULCAST:
+        dynamic_cast<Wrap<RTC::SimulcastConsumer>*>(c)->OnProducerClosed();
+        break;
+      case RTC::RtpParameters::Type::PIPE:
+        dynamic_cast<Wrap<RTC::PipeConsumer>*>(c)->OnProducerClosed();
+        break;
       default:
         logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});
     }

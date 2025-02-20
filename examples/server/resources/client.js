@@ -184,7 +184,7 @@ class QRPCMedia {
   async reconnect(c) {
     try {
       console.log(`try reconnect for ${this.path}`);
-      await c.viewMedia(this.path, {
+      await c.watchMedia(this.path, {
         options: Object.assign(this.options, { sync: true })
       }, true);
     } catch (e) {
@@ -884,9 +884,9 @@ class QRPClient {
       return { cpath: path, kind: undefined };
     }
   }
-  async viewMedia(path, {onopen, onclose, onpause, onresume, options}) {
+  async watchMedia(path, {onopen, onclose, onpause, onresume, options}) {
     if (!this.#handshaked()) {
-      throw new Error("subscribe media can only be called after handshake");
+      throw new Error("watchMedia can only be called after handshake");
     }
     const {cpath, kind} = this.#canonicalViewPath(path);
     const tracks = [];
@@ -899,7 +899,7 @@ class QRPClient {
         track = new QRPCTrack(path, media, null, null, undefined, {
           onopen, onclose, onpause, onresume
         });
-        // console.log("viewMedia: add track for", path);
+        // console.log("watchMedia: add track for", path);
         this.tracks[path] = track;
       }
       tracks.push(track);
@@ -913,7 +913,7 @@ class QRPClient {
       const remoteOffer = await this.syscall("consume", {path: cpath, options});
       await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
     } catch (e) {
-      console.log("viewMedia: remote negotiation failed", e.message);
+      console.log("watchMedia: remote negotiation failed", e.message);
       for (const t of tracks) {
         delete this.medias[t.media.path];
         delete this.tracks[t.path];
@@ -987,6 +987,9 @@ class QRPClient {
     }
     s.close();
     delete this.streams[path];
+  }
+  watchStream(path, options) {
+
   }
   async syscall(fn, args) {
     return new Promise((resolve, reject) => {
