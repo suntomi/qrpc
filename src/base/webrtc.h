@@ -247,7 +247,7 @@ namespace webrtc {
 			  const uint8_t* msg,
 			  size_t len, uint32_t ppid) override;
 			void OnSctpAssociationBufferedAmount(
-			  RTC::SctpAssociation* sctpAssociation, uint32_t len) override;   
+			  RTC::SctpAssociation* sctpAssociation, uint32_t len) override;
 
       // implements rtp::Handler::Listener
       const std::string &rtp_id() const override { return ufrag(); }
@@ -357,7 +357,7 @@ namespace webrtc {
   public:
     int Init();
     void Fin();
-    std::shared_ptr<rtp::Handler> FindHandler(const std::string &id);
+    std::shared_ptr<rtp::Handler> FindHandler(const std::string &cname);
     std::shared_ptr<Connection> FindFromUfrag(const IceUFrag &ufrag);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
     void ScheduleClose(Connection &c) {

@@ -6,7 +6,7 @@ class QRPCTrack {
     remote_op: "remote_op",
   };
   static path(canonical_path, kind) { return canonical_path + kind; }
-  constructor(path, media, stream, track, encodings, {onopen, onclose, onpause, onresume}) {
+  constructor(path, media, stream, track, encodings, {onopen, onclose, onupdate, onpause, onresume}) {
     this.path = path;
     this.media = media;
     this.media.addTrack(this);
@@ -16,6 +16,7 @@ class QRPCTrack {
     this.onclose = onclose;
     this.onpause = onpause || ((reason) => {});
     this.onresume = onresume || (() => {});
+    this.onupdate = onupdate || (() => {});
     this.track = track
     this.opened = false;
     this.pausedReasons = [];
@@ -48,6 +49,16 @@ class QRPCTrack {
       this.pausedReasons.splice(i, 1);
       !noCallback && this.onresume && this.onresume(this, reason);
     }
+  }
+  update({stream, track}) {
+    if (!this.transceiver) {
+      throw new Error("track is not started");
+    }
+    this.stream = stream;
+    this.transceiver.sender.replaceTrack(track);
+    this.track?.stop();
+    this.track = track;
+    this.onupdate(this);
   }
   async open(pc, midMediaPathMap) {
     if (this.direction !== "send" || this.track == null) {
@@ -105,7 +116,7 @@ class QRPCTrack {
       // once track is stopped, it cannot be reused for receiver at least in chrome browser.
       // for unknown reason (might be bug), 
       // if track is stopped, ontrack event of corresponding SDP media section always contains old 'readyState=ended' track.
-      // even if chrome statistics shows that track is active again (with different ssrc)
+      // even if chrome statistics shows that track is active again (even with different ssrc)
       // the reason I think this might be bug, 
       // is that track id does not change regardless SDP sends different msid for corresponding media section.
       // for workaround, we do not stop track for receiver.
@@ -577,8 +588,8 @@ class QRPClient {
     pc.close();
     return {localOffer, midPathMap};
   }
-  fixupLocalAnswer(localAnswer, midSsrcMap) {
-    // console.log("fixupLocalAnswer", midSsrcMap);
+  #fixupLocalAnswer(localAnswer, midSsrcMap) {
+    // console.log("#fixupLocalAnswer", midSsrcMap);
     const chunks = [];
     let chunk = [];
     const lines = localAnswer.split(/\r?\n/);
@@ -648,7 +659,7 @@ class QRPClient {
       }
     }
     const answer = await this.pc.createAnswer();
-    answer.sdp = this.fixupLocalAnswer(answer.sdp, midSsrcMap);
+    answer.sdp = this.#fixupLocalAnswer(answer.sdp, midSsrcMap);
     // console.log("local answer sdp", answer.sdp);
     await this.pc.setLocalDescription(answer);
     console.log(`apply sdpGen=${sdpGen} is finished`);
@@ -791,7 +802,7 @@ class QRPClient {
       return path;
     }
   }
-  async openMedia(path, {stream, encodings, options, onopen, onclose, onpause, onresume}) {
+  async openMedia(path, {stream, encodings, options, onopen, onclose, onupdate, onpause, onresume}) {
     const cpath = this.#canonicalOpenPath(path);
     console.log("openMedia", cpath, stream, encodings);
     if (!encodings) { throw new Error("encodings is mandatory"); }
@@ -812,7 +823,7 @@ class QRPClient {
       const path = QRPCTrack.path(cpath, t.kind);
       const media = this.#addMedia(cpath, "send", options);
       const track = new QRPCTrack(path, media, stream, t, encodings, {
-        onopen, onclose, onpause, onresume
+        onopen, onclose, onupdate, onpause, onresume
       });
       // console.log("openMedia: add track for", track.path);
       this.tracks[track.path] = track;
@@ -940,6 +951,25 @@ class QRPClient {
     } else {
       throw new Error("resumeMedia: no media for " + path);
     }
+  }
+  async updateMedia(path, {stream}) {
+    const cpath = this.#canonicalOpenPath(path);
+    const m = this.medias[cpath];
+    if (!m) {
+      throw new Error(`no media for ${cpath}`);
+    }
+    const tracks = [];
+    stream.getTracks().forEach(t => {
+      const track_path = QRPCTrack.path(cpath, t.kind);
+      const track = this.tracks[track_path];
+      if (track) {
+        track.update({stream, track: t});
+        tracks.push(track);
+      } else {
+        console.log(`no track for ${path}`);
+      }
+    });
+    return tracks;
   }
   async #closeTracks(paths) {
     const medias = [];

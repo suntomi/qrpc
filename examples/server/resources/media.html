@@ -40,7 +40,15 @@
         right: 0.5vw;
         z-index: 1;
       }
-      .audio-switch img {
+      .video-switch {
+        width: 5vw;
+        height: 5vw;
+        position: absolute;
+        bottom: 0.5vh;
+        right: 6.0vw;
+        z-index: 1;
+      }
+      .audio-switch img, .video-switch img {
         width: 100%;
         height: auto;
       }
@@ -140,6 +148,7 @@
         img.src = mediaIcon(track);
         img.alt = 'Loading...';
         audioSwitch.appendChild(img);
+        // audio pause/resume handler
         audioSwitch.addEventListener('click', async (event) => {
           console.log("audio switch", track.path, track.pausedReasons);
           event.stopPropagation(); // if it puts after await, not effective. I guess the callback is regarded as finished once await is happen.
@@ -166,6 +175,85 @@
         });
         return closeIcon;
       }
+      createVideoSwitchElement = (track) => {
+        const videoSwitch = document.createElement('div');
+        videoSwitch.id = `video-switch-${track.path.replace(/\//g, '-')}`;
+        videoSwitch.className = 'video-switch';
+        const img = document.createElement('img');
+        img.src = './display.svg';
+        img.alt = 'Loading...';
+        img.className = 'to-display';
+        videoSwitch.appendChild(img);
+        const toggle = async () => {
+          console.log("video switch", track.path, img.className);
+          if (img.className == 'to-display') {
+            const tracks = await c.updateMedia(track.directory, {stream: await navigator.mediaDevices.getDisplayMedia({
+              video: {width: {ideal: 1280}, height: {ideal: 720}}
+            })});
+            tracks[0].raw.onended = async () => {
+              console.log("display sharing ended", track.directory);
+              toggle(img);
+            };
+            img.className = 'to-camera';
+            img.src = './face.svg';
+          } else {
+            await c.updateMedia(track.directory, {stream: await navigator.mediaDevices.getUserMedia({
+              video: {width: {ideal: 1280}, height: {ideal: 720}}
+            })});
+            img.className = 'to-display';
+            img.src = './display.svg';
+          }
+        }
+        // video pause/resume handler
+        videoSwitch.addEventListener('click', async (event) => {
+          event.stopPropagation(); // if it puts after await, not effective. I guess the callback is regarded as finished once await is happen.
+          await toggle();
+        });
+        return videoSwitch;
+      }
+      createMediaContainerElement = (t, dom) => {
+        console.log("createMediaContainerElement", t.path);
+        const container_id = `media-${t.directory.replace(/\//g, '-')}`;
+        let container = document.getElementById(container_id);
+        if (!container) {
+          container = document.createElement('div');
+          container.className = 'media-container';
+          container.id = container_id;
+          // label text element
+          const label = document.createElement('div');
+          label.className = 'label';
+          label.textContent = t.directory;
+          container.appendChild(label);
+          dom.appendChild(container);
+        }
+        let mediaElement = document.getElementById(t.path);
+        if (!mediaElement) {
+          mediaElement = document.createElement(t.kind);
+          mediaElement.id = t.path;
+          mediaElement.autoplay = true;
+          mediaElement.srcObject = t.stream;
+          container.appendChild(mediaElement);
+          if (t.kind === 'video') {
+            // attach video ause/resume handler for entire container click event
+            container.mediaControlHandler = createMediaControlHandler(t);
+            container.addEventListener('click', container.mediaControlHandler);
+            if (!t.isReceiver) {
+              container.appendChild(createVideoSwitchElement(t));
+            }
+            // in case of bootstrapping pause, show overlay
+            if (t.paused) { container.appendChild(createOverlayElement(t)); }
+          } else if (t.kind === 'audio') {
+            // attach pause/resume handler for audio switch elemnt click event
+            const {audioSwitch, img} = createAudioSwitchElement(t);
+            container.appendChild(audioSwitch);
+            visualizeAudioVolume(mediaElement, img, t);
+          }
+          container.appendChild(createCloseIconElement(t));
+        } else {
+          mediaElement.srcObject = t.stream;
+        }
+        return container;
+      }      
       createMediaHandlerWithOptions = (dom, options) => {
         return {
           options,
@@ -189,6 +277,11 @@
               console.log("no media element in container:", container_id, "will be removed");
               container?.remove();
             }
+          },
+          // eg. video track replaced
+          onupdate: (track)=>{
+            console.log("media update", track.directory, track.kind);
+            createMediaContainerElement(track, dom);
           },
           // there is 3 reason to pause/resume media.
           // 1. local_op: user click pause button
@@ -289,46 +382,6 @@
           }
           visualize();
         });
-      }
-      createMediaContainerElement = (t, dom) => {
-        console.log("createMediaContainerElement", t.path);
-        const container_id = `media-${t.directory.replace(/\//g, '-')}`;
-        let container = document.getElementById(container_id);
-        if (!container) {
-          container = document.createElement('div');
-          container.className = 'media-container';
-          container.id = container_id;
-          // label text element
-          const label = document.createElement('div');
-          label.className = 'label';
-          label.textContent = t.directory;
-          container.appendChild(label);
-          dom.appendChild(container);
-        }
-        let mediaElement = document.getElementById(t.path);
-        if (!mediaElement) {
-          mediaElement = document.createElement(t.kind);
-          mediaElement.id = t.path;
-          mediaElement.autoplay = true;
-          mediaElement.srcObject = t.stream;
-          container.appendChild(mediaElement);
-          if (t.kind === 'video') {
-            // attach pause/resume handler for entire container click event
-            container.mediaControlHandler = createMediaControlHandler(t);
-            container.addEventListener('click', container.mediaControlHandler);
-            // in case of bootstrapping pause, show overlay
-            if (t.paused) { container.appendChild(createOverlayElement(t)); }
-          } else if (t.kind === 'audio') {
-            // attach pause/resume handler for audio switch elemnt click event
-            const {audioSwitch, img} = createAudioSwitchElement(t);
-            container.appendChild(audioSwitch);
-            visualizeAudioVolume(mediaElement, img, t);
-          }
-          container.appendChild(createCloseIconElement(t));
-        } else {
-          mediaElement.srcObject = t.stream;
-        }
-        return container;
       }
       openMedia = async (path, handler_and_options) => {
         await c.openMedia(path, Object.assign({}, handler_and_options, {
