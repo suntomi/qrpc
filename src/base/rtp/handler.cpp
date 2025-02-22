@@ -165,8 +165,7 @@ namespace rtp {
 	bool Handler::PrepareConsume(
       Handler &peer, const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
 			const std::map<Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
-			MediaStreamConfigs &media_stream_configs, std::vector<uint32_t> &generated_ssrcs,
-			std::map<std::string,Consumer*> &created_consumers
+			MediaStreamConfigs &media_stream_configs, std::map<std::string,Consumer*> &created_consumers
 	) {
 		auto path = peer.cname() + "/" + local_path;
 		const auto &kinds = media_kind.has_value() ? std::vector<Parameters::MediaKind>{media_kind.value()} : SupportedMediaKind();
@@ -235,7 +234,6 @@ namespace rtp {
 				continue;
 			}
 			config.rtcp.cname = peer.cname();
-			config.GetGeneratedSsrc(generated_ssrcs);
 			// if video consumer and there is no probator mid, generate probator mid => param pair
 			ccit = std::find_if(media_stream_configs.begin(), media_stream_configs.end(), [](const auto &c) {
 				return c.mid == RTC::RtpProbationGenerator::GetMidValue() && c.sender();

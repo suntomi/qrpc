@@ -485,9 +485,8 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           }
           auto path = pit->second.get<std::string>();
           std::string sdp;
-          std::map<uint32_t,std::string> ssrc_label_map;
           std::map<std::string,rtp::Consumer*> created_consumers;
-          if (!c.PrepareConsume(path, options_map, sync, sdp, ssrc_label_map, created_consumers)) {
+          if (!c.PrepareConsume(path, options_map, sync, sdp, created_consumers)) {
             RAISE("fail to prepare consume");
           }
           json status_map;
@@ -496,8 +495,8 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             status_map[kv.first] = st.ToJson();
           }
           Call("consume_ack",msgid,{
-            {"ssrc_label_map",ssrc_label_map},{"status_map",status_map},
-            {"mid_media_path_map",c.rtp_handler().mid_media_path_map()},{"sdp",sdp}
+            {"status_map",status_map},{"sdp",sdp},
+            {"mid_media_path_map",c.rtp_handler().mid_media_path_map()}
           });
         } else if (fn == "pause") {
           const auto pit = args.find("path");
@@ -591,8 +590,7 @@ void ConnectionFactory::Connection::InitRTP() {
 bool ConnectionFactory::Connection::PrepareConsume(
   const std::string &media_path, 
   const std::map<rtp::Parameters::MediaKind, ControlOptions> &options_map, bool sync,
-  std::string &sdp, std::map<uint32_t,std::string> &ssrc_label_map,
-  std::map<std::string,rtp::Consumer*> &created_consumers
+  std::string &sdp, std::map<std::string,rtp::Consumer*> &created_consumers
 ) {
   // TODO: support fullpath like $url/@cname/name. first should remove part before /@
   auto parsed = str::Split(media_path, "/");
@@ -627,10 +625,7 @@ bool ConnectionFactory::Connection::PrepareConsume(
   std::vector<uint32_t> generated_ssrcs;
   InitRTP();
   if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), media_kind, 
-    options_map, sync, mscs, generated_ssrcs, created_consumers)) {
-    for (const auto ssrc : generated_ssrcs) {
-      ssrc_label_map[ssrc] = media_path;
-    }
+    options_map, sync, mscs, created_consumers)) {
     auto proto = ice_server().GetSelectedSession()->proto();
     if (!SDP::GenerateAnswer(*this, proto, mscs, sdp)) {
       QRPC_LOGJ(error, {{"ev","fail to generate sdp"},{"reason",sdp}});

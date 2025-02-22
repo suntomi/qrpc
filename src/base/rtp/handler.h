@@ -190,8 +190,7 @@ namespace rtp {
     bool PrepareConsume(
       Handler &peer, const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
       const std::map<Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
-      MediaStreamConfigs &consume_configs, std::vector<uint32_t> &generated_ssrcs,
-      std::map<std::string,Consumer*> &created_consumers);
+      MediaStreamConfigs &consume_configs, std::map<std::string,Consumer*> &created_consumers);
     bool CloseMedia(
       const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
       MediaStreamConfigs &media_stream_configs, std::vector<std::string> &closed_paths, std::string &error);

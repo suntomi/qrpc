@@ -270,13 +270,6 @@ class QRPClient {
           promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
           return;
         }
-        if (!data.args.ssrc_label_map) {
-          promise.reject(new Error(`invalid response: no ssrc_label_map: ${JSON.stringify(data.args)}`));
-          return;
-        }
-        for (const pair of data.args.ssrc_label_map || []) {
-          this.ssrcLabelMap[pair[0]] = pair[1];
-        }
         for (const k in data.args.status_map || {}) {
           const st = data.args.status_map[k];
           const t = this.tracks[k];
@@ -293,7 +286,6 @@ class QRPClient {
         }
         Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
         console.log("midMediaPathMap => ", this.midMediaPathMap);
-        console.log("ssrcLabelMap => ", this.ssrcLabelMap);
         promise.resolve(data.args.sdp);
       } else if (data.fn == "produce") {
         throw new Error("currently, publish to other peer is not suported");
@@ -342,7 +334,6 @@ class QRPClient {
     // it is important to match them with SDP media section order
     this.sentTracks = []; 
     this.midMediaPathMap = {};
-    this.ssrcLabelMap = {};
     this.rpcPromises = {};
     this.sdpGen = 0;
     this.msgidSeed = 1;
@@ -1019,7 +1010,7 @@ class QRPClient {
     delete this.streams[path];
   }
   watchStream(path, options) {
-
+    return this.openStream(`$watch/${path}`, options);
   }
   async syscall(fn, args) {
     return new Promise((resolve, reject) => {

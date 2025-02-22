@@ -109,13 +109,6 @@ namespace rtp {
     }
     return r;
   }
-  void Parameters::GetGeneratedSsrc(std::vector<uint32_t> &generated_ssrcs) const {
-    auto seed = ssrc_seed;
-    for (auto &e : encodings) {
-      auto ssrc = seed++;
-      generated_ssrcs.emplace_back(ssrc);
-    }
-  }
   std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
   Parameters::PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const {
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>> r;

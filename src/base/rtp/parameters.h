@@ -62,7 +62,6 @@ namespace rtp {
     MakeProduceRequest(::flatbuffers::FlatBufferBuilder &fbb, const std::string &id, bool paused) const;
     std::vector<::flatbuffers::Offset<FBS::RtpParameters::RtpEncodingParameters>>
     PackConsumableEncodings(::flatbuffers::FlatBufferBuilder &fbb) const;
-    void GetGeneratedSsrc(std::vector<uint32_t> &generated_ssrcs) const;
     static std::optional<RTC::RtpHeaderExtensionUri::Type> FromUri(const std::string &uri);
     static void SetupHeaderExtensionMap();
   protected:
