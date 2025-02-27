@@ -81,6 +81,10 @@
   </head>
   <body>
     <div id="cname"></div>
+    <div>published tracks</div>
+    <div id="pubsList" class="media-list-container"></div>
+    <div>subscribed tracks</div>
+    <div id="subsList" class="media-list-container"></div>
     <div id="subscribe">
       <input type="text" id="idedit" placeholder="input connection id of other peer"/>
       <input type="text" id="lpath_sub" placeholder="input local path" value="webcam"/>
@@ -94,10 +98,11 @@
       <input type="checkbox" id="pub_video" checked/><label for="pub_video">video</label>
       <button id="pub">publish</button>
     </div>
-    <div>published tracks</div>
-    <div id="pubsList" class="media-list-container"></div>
-    <div>subscribed tracks</div>
-    <div id="subsList" class="media-list-container"></div>
+    <div id="chat">
+      <input type="text" id="editmsg" placeholder="input message"/>
+      <button id="sendmsg">send</button>
+      <textarea id="messages"></textarea>
+    </div>
     <button id="reconnect">reconnect</button>
 
     <script src="http://localhost:8888/client.js"></script>
@@ -107,6 +112,8 @@
       const pub = document.getElementById('pub');
       const sub = document.getElementById('sub');
       const reconnect = document.getElementById('reconnect');
+      const sendmsg = document.getElementById('sendmsg');
+      const messages = document.getElementById('messages');
       const parsedSearchParams = new URLSearchParams(window.location.search);
       const urlParameters = {};
       for (const [key, value] of parsedSearchParams.entries()) {
@@ -401,6 +408,14 @@
         const need_video = document.getElementById(video_checkbox_id).checked;
         return Object.assign({}, need_audio ? {} : {audio:{pause:true}}, need_video ? {} : {video:{pause:true}});
       }
+      addChatMessage = (id, text) => {
+        const line = `${id}: ${text}`;
+        if (message.value.length > 0) {
+          messages.value = (message.value + "\n" + line);
+        } else {
+          messages.value = line;
+        }
+      }
       onPublish = async (event) => {
         const lpath = document.getElementById('lpath_pub').value;
         const options = createPubSubOptions('pub_audio', 'pub_video');
@@ -414,11 +429,19 @@
         const path = `${id}/${lpath}`;
         console.log(`subscribe: input path = ${path}`, options);
         await c.watchMedia(path, createMediaHandlerWithOptions(subsList, options));
+        streams.receivers[id] = c.watchStream(`${id}/chat`, {
+          onmessage: (event) => addChatMessage(id, event.data)
+        })
       }
       onReconnect = (event) => {
         console.log("shutdown by UI");
         closed = 0;
         c.close();
+      }
+      onSendMessage = (event) => {
+        const msg = documen.getElementById('editmsg').value;
+        streams.sender.send(msg);
+        addChatMessage(cname, msg)
       }
       setupUI = (c) => {
         let idElement = document.getElementById("cname");
@@ -428,15 +451,18 @@
         pub.addEventListener('click', onPublish);
         sub.addEventListener('click', onSubscribe);
         reconnect.addEventListener('click', onReconnect);
+        sendmsg.addEventListener('click', onSendMessage);
       }
       cleanupUI = (c) => {
         pub.removeEventListener('click', onPublish);
         sub.removeEventListener('click', onSubscribe);
         reconnect.removeEventListener('click', onReconnect);
+        sendmsg.removeEventListener('click', onSendMessage);
       }
       //Create client
       const url = "http://localhost:8888/qrpc";
       const c = new QRPClient(url, urlParameters["cname"]);
+      const streams = {receivers:{}};
       const context = {};
       const MAX_RECONNECT = 1;
       let closed = 0;
@@ -444,6 +470,7 @@
         console.log("client onopen called");
         setupUI(c);
         await openMedia("webcam", createMediaHandlerWithOptions(pubsList));
+        streams.sender = c.openStream("chat", { onmessage: (event) => {} });
         return context;
       };
       c.onclose = () => {
