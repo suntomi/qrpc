@@ -72,11 +72,41 @@ namespace webrtc {
       int Call(const char *fn, const json &j);
       int Call(const char *fn);
     };
-    class WatcherStream : public AdhocStream {
-      WatcherStream(BaseConnection &c, const Config &config) :
-        AdhocStream(c, config, std::move(Handler(Nop())), std::move(ConnectHandler(Nop())), std::move(ShutdownHandler(Nop()))) {}
-      ~WatcherStream() {}
-      int OnRead(const char *, size_t) override {}
+    class SubscriberStream : public Stream {
+    public:
+      SubscriberStream(BaseConnection &c, const Config &config) : Stream(c, config) {}
+      ~SubscriberStream() {}
+      int OnRead(const char *p, size_t sz) override {
+        return QRPC_OK;
+      }
+      void OnShutdown() override {
+        auto &c = dynamic_cast<Connection &>(connection());
+        c.rtp_handler().UnsubscribeStream(this);
+        Stream::OnShutdown();
+      }
+    };
+    class PublisherStream : public Stream {
+    public:
+      PublisherStream(BaseConnection &c, const std::shared_ptr<Stream> &published_stream) :
+        Stream(c, published_stream->config()), published_stream_(published_stream) {
+        published_stream_->SetPublished(true);
+      }
+      ~PublisherStream() { published_stream_->SetPublished(false); }
+      int OnRead(const char *p, size_t sz) override {
+        auto &c = dynamic_cast<Connection &>(connection());
+        c.rtp_handler().EmitSubscribeStreams(published_stream_, p, sz);
+        return published_stream_->OnRead(p, sz);
+      }
+      void OnShutdown() override {
+        auto &c = dynamic_cast<Connection &>(connection());
+        c.rtp_handler().UnpublishStream(published_stream_);
+        published_stream_->OnShutdown();
+      }
+      void Close(const CloseReason &reason) override {
+        published_stream_->Close(reason);
+      }
+    protected:
+      std::shared_ptr<Stream> published_stream_;
     };
   public: // connections
     class Connection : public base::Connection, 
@@ -159,6 +189,8 @@ namespace webrtc {
       bool ConsumeMedia(const rtp::MediaStreamConfig &config, std::string &error);
       bool Consume(std::map<std::string,rtp::Consumer*> &created_consumers, std::string &error);
       bool CloseMedia(const std::string &path, std::vector<std::string> &closed_paths, std::string &sdp_or_error);
+      bool PublishStream(const std::string &path);
+      std::shared_ptr<Stream> SubscribeStream(const Stream::Config &c);
       inline void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();
       IceProber *InitIceProber(const std::string &ufrag, const std::string &pwd, uint64_t priority);
@@ -169,7 +201,6 @@ namespace webrtc {
       void TryParseRtpPacket(const uint8_t *p, size_t sz);
       std::shared_ptr<Stream> NewStream(const Stream::Config &c, const StreamFactory &sf);
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const StreamFactory &sf);
-      std::shared_ptr<Stream> WatchStream(const Stream::Config &c);
       StreamFactory DefaultStreamFactory();
       bool Timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
         return Session::CheckTimeout(last_active_, now, timeout, next_check);

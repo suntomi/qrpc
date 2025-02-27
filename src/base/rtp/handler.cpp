@@ -62,14 +62,9 @@ namespace rtp {
 		ASSERT(!r); // non null means failure
 		return ret;
 	}
-	static std::string to_string(std::thread::id id) {
-    std::stringstream ss;
-    ss << id;
-    return ss.str();
-  }
   thread_local Shared Handler::shared_;
 	thread_local Handler::RouterListener router_listener_;
-	thread_local RTC::Router Handler::router_(&shared_.get(), to_string(std::this_thread::get_id()), &router_listener_);
+	thread_local Router Handler::router_(&shared_.get(), &router_listener_);
 	const std::map<FBS::Request::Method, FBS::Request::Body> Handler::payload_map_ = {
 		{ FBS::Request::Method::TRANSPORT_CONSUME, FBS::Request::Body::Transport_ConsumeRequest },
 		{ FBS::Request::Method::TRANSPORT_PRODUCE, FBS::Request::Body::Transport_ProduceRequest },
@@ -345,18 +340,6 @@ namespace rtp {
 		}
 		return true;
 	}
-	bool Handler::Sync(const std::string &path, std::string &error) {
-		auto *c = FindConsumerByPath(path);
-		if (c == nullptr) {
-			error = "consumer to sync not found";
-			QRPC_LOGJ(error, {{"ev",error},{"path",path}});
-			ASSERT(false);
-			return false;
-		}
-		c->ProducerPaused();
-		c->ProducerResumed();
-		return true;
-	}
 	bool Handler::Ping(std::string &error) {
 		for (const auto &kv : producers()) {
       auto it = mid_media_path_map_.find(kv.second->GetRtpParameters().mid);
@@ -545,6 +528,42 @@ namespace rtp {
 			return false;
 		}
 		return true;
+	}
+	void Handler::PublishStream(const std::shared_ptr<base::Stream> &stream) {
+		published_streams_[stream->label()] = stream;
+		router_.Publish(stream.get());
+	}
+	bool Handler::UnpublishStream(const std::string &path) {
+		auto pit = published_streams_.find(path);
+		if (pit == published_streams_.end()) {
+			QRPC_LOGJ(warn, {{"ev","stream is not published"},{"path", path}});
+			return false;
+		}
+		UnpublishStream(pit->second);
+		return true;
+	}
+	void Handler::UnpublishStream(const std::shared_ptr<base::Stream> &stream) {
+		published_streams_.erase(stream->label());
+		for (auto *s : router_.SubscribersFor(stream.get())) {
+			s->Close(QRPC_CLOSE_REASON_REMOTE);
+		}
+		router_.Unpublish(stream.get());
+	}
+	void Handler::EmitSubscribeStreams(const std::shared_ptr<base::Stream> &stream, const void *p, size_t sz) {
+		for (auto *s : router_.SubscribersFor(stream.get())) {
+			s->Send(static_cast<const char *>(p), sz);
+		}
+	}
+	bool Handler::SubscribeStream(const std::string &path, const std::shared_ptr<base::Stream> &stream) {
+		auto pit = published_streams_.find(path);
+		if (pit == published_streams_.end()) {
+			QRPC_LOGJ(warn, {{"ev","stream is not published"},{"path", path}});
+			return false;
+		}
+		return router_.Subscribe(pit->second.get(), stream.get());
+	}
+	void Handler::UnsubscribeStream(const Stream *stream) {
+		router_.Unsubscribe(stream);
 	}
 }
 }

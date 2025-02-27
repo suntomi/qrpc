@@ -547,7 +547,6 @@ class QRPClient {
           console.log(`input again for ${m.path}`);
           m.opened = true;
           m.stopReconnect();
-          // await this.syscall("sync", {path: m.path});
           m.resume(QRPCTrack.PAUSE_REASON.remote_close);
         }
       } else if (this.connected) {
@@ -1021,7 +1020,8 @@ class QRPClient {
   }
   #setupStream(s, h) {
     const path = s.label;
-    s.onopen = (h.onopen && ((event) => {
+    s.onopen = (h.onopen && (async (event) => {
+      if (h.publish) { await this.syscall("publish_stream",{path}); }
       const ctx = h.onopen(s, event);
       if (ctx === false || ctx === null) {
         console.log(`close stream by application path=${path}`);
@@ -1030,7 +1030,9 @@ class QRPClient {
       } else {
         s.context = ctx;
       }
-    })) || ((event) => {});
+    })) || (async (event) => {
+      if (h.publish) { await this.syscall("publish_stream",{path}); }
+    });
     s.onclose = (h.onclose && ((event) => {
       h.onclose(s, event);
     })) || ((event) => {});

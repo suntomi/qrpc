@@ -12,6 +12,6 @@ namespace base {
     }
   }
   int Stream::Send(const char *data, size_t sz) {
-    return conn_.Send(*this, data, sz, binary_payload_);
+    return conn_.Send(*this, data, sz, binary_payload());
   }
 }

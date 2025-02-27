@@ -3,10 +3,12 @@
 #include "base/defs.h"
 #include "base/crypto.h"
 #include "base/media.h"
+#include "base/stream.h"
 
 #include "base/rtp/consumer.h"
 #include "base/rtp/parameters.h"
 #include "base/rtp/producer.h"
+#include "base/rtp/router.h"
 #include "base/rtp/shared.h"
 
 #include "RTC/RtpHeaderExtensionIds.hpp"
@@ -15,7 +17,6 @@
 #ifdef ENABLE_RTC_SENDER_BANDWIDTH_ESTIMATOR
 #include "RTC/SenderBandwidthEstimator.hpp"
 #endif
-#include "RTC/Router.hpp"
 #include "RTC/Transport.hpp"
 #include "RTC/TransportCongestionControlClient.hpp"
 #include "RTC/TransportCongestionControlServer.hpp"
@@ -200,7 +201,6 @@ namespace rtp {
     bool Pause(const std::string &path, std::string &error);
     bool Resume(const std::string &path, std::string &error);
     bool Ping(std::string &error);
-    bool Sync(const std::string &path, std::string &sdp);
     bool SetExtensionId(uint8_t id, RTC::RtpHeaderExtensionUri::Type uri);
     void UpdateMidMediaPathMap(const MediaStreamConfig &c) {
       mid_media_path_map_[c.mid] = c.media_path;
@@ -275,13 +275,21 @@ namespace rtp {
       uint32_t ppid,
       onQueuedCallback *cb = nullptr) override { listener_.SendMessage(dataConsumer, msg, len, ppid, cb); }
     void SendSctpData(const uint8_t* data, size_t len) override { listener_.SendSctpData(data, len); }
+  public:
+    void PublishStream(const std::shared_ptr<base::Stream> &stream);
+    void UnpublishStream(const std::shared_ptr<base::Stream> &stream);
+    bool UnpublishStream(const std::string &path);
+    void EmitSubscribeStreams(const std::shared_ptr<base::Stream> &stream, const void *p, size_t sz);
+    bool SubscribeStream(const std::string &path, const std::shared_ptr<base::Stream> &stream);
+    void UnsubscribeStream(const Stream *stream); // this need to be called method of Stream object itself
   protected:
     static thread_local Shared shared_;
-    static thread_local RTC::Router router_;
+    static thread_local Router router_;
     static const std::map<FBS::Request::Method, FBS::Request::Body> payload_map_;
     Listener &listener_;
     ProducerFactory producer_factory_; // should be declared prior to Producer* and Consumer* containers
     ConsumerFactory consumer_factory_;
+    std::map<std::string, std::shared_ptr<base::Stream>> published_streams_;
     std::map<Media::Id, std::shared_ptr<Media>> medias_;
     std::map<Media::Mid, std::string> mid_media_path_map_;
   };

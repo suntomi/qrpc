@@ -458,6 +458,26 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             status_map[kv.first] = kv.second->status().ToJson();
           }
           Call("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
+        } else if (fn == "publish_stream") {
+          const auto pit = args.find("path");
+          if (pit == args.end()) {
+            RAISE("no value for key 'path'");
+          }
+          const auto stit = args.find("stop");
+          auto stop = stit != args.end() && stit->second.get<bool>();
+          if (stop) {
+            if (!c.rtp_enabled()) {
+              RAISE("nothing published");
+            }
+            if (!c.rtp_handler().UnpublishStream(pit->second.get<std::string>())) {
+              RAISE("fail to publish");
+            }
+          } else {
+            if (!c.PublishStream(pit->second.get<std::string>())) {
+              RAISE("fail to publish");
+            }
+          }
+          Call("publish_stream_ack",msgid,{});
         } else if (fn == "consume") {
           QRPC_LOGJ(info, {{"ev","consume request"},{"args",args}});
           const auto pit = args.find("path");
@@ -518,18 +538,6 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             RAISE("fail to pause track:" + reason);
           }
           Call("resume_ack",msgid,{});
-        } else if (fn == "sync") {
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          std::string sdp;
-          if (!c.rtp_handler().Sync(pit->second.get<std::string>(), sdp)) {
-            RAISE("fail to sync:" + sdp);
-          }
-          Call("sync_ack",msgid,{
-            {"mid_media_path_map",c.rtp_handler().mid_media_path_map()},{"sdp",sdp}
-          });
         } else if (fn == "ping") {
           std::string error;
           if (!c.rtp_handler().Ping(error)) {
@@ -739,6 +747,21 @@ bool ConnectionFactory::Connection::ConsumeMedia(
     return false;
   }
 }
+bool ConnectionFactory::Connection::PublishStream(const std::string &path) {
+  InitRTP();
+  for (const auto &kv : streams_) {
+    if (kv.second->label() == path) {
+      // wrap original stream with PublisherStream
+      auto os = kv.second;
+      auto ps = std::make_shared<PublisherStream>(*this, os);
+      streams_[ps->id()] = ps;
+      rtp_handler().PublishStream(os);
+      return true;
+    }
+  }
+  QRPC_LOGJ(error, {{"ev","steram not found"},{"path",path}});
+  return false;
+}
 int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   if (ice_server_ != nullptr) {
     logger::warn({{"ev","already init"}});
@@ -840,7 +863,7 @@ StreamFactory ConnectionFactory::Connection::DefaultStreamFactory() {
       if (config.label == Stream::SYSCALL_NAME) {
         return this->syscall_ = std::make_shared<SyscallStream>(conn, config);
       } else if (config.label.substr(0, 7) == "$watch/") {
-        return this->WatchStream(config);
+        return this->SubscribeStream(config);
       } else {
         QRPC_LOGJ(error, {{"ev","unknown system stream"},{"label",config.label}});
         ASSERT(false);
@@ -882,8 +905,24 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::OpenStream(
   logger::info({{"ev","new stream opened"},{"sid",s->id()},{"l",s->label()}});
   return s;
 }
-std::shared_ptr<Stream> ConnectionFactory::Connection::WatchStream(const Stream::Config &c) {
-  
+std::shared_ptr<Stream> ConnectionFactory::Connection::SubscribeStream(const Stream::Config &c) {
+  auto parsed = str::Split("/", c.label.substr(7));
+  if (parsed.size() < 2) {
+    QRPC_LOGJ(error, {{"ev","invalid path: single path component"},{"path",c.label.substr(7)}});
+    return nullptr;
+  }
+  const auto h = factory().FindHandler(parsed[0]);
+  if (h == nullptr) {
+    QRPC_LOGJ(error, {{"ev","invalid path: handler not found"},{"cname",parsed[0]}});
+    return nullptr;
+  }
+  parsed.erase(parsed.begin());
+  auto s = std::make_shared<SubscriberStream>(*this, c);
+  if (!h->SubscribeStream(str::Join(parsed, "/"), s)) {
+    QRPC_LOGJ(error, {{"ev", "fail to subscribe"},{"path",c.label}});
+    return nullptr;
+  }
+  return s;
 }
 void ConnectionFactory::Connection::Fin() {
   if (dtls_transport_ != nullptr) {
