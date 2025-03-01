@@ -149,6 +149,7 @@ ConnectionFactory::FindHandler(const std::string &cname) {
     //   - so maybe this function acts like async function because it needs to query remote controller which knows where `cname` is
     // 2. create handler with that proxy connection
     QRPC_LOGJ(info, {{"ev","peer not found"},{"cname",cname}});
+    ASSERT(false);
     return nullptr;
   }
   return it->second->rtp_handler_;
@@ -469,7 +470,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             if (!c.rtp_enabled()) {
               RAISE("nothing published");
             }
-            if (!c.rtp_handler().UnpublishStream(pit->second.get<std::string>())) {
+            if (!c.UnpublishStream(pit->second.get<std::string>())) {
               RAISE("fail to publish");
             }
           } else {
@@ -747,6 +748,20 @@ bool ConnectionFactory::Connection::ConsumeMedia(
     return false;
   }
 }
+bool ConnectionFactory::Connection::UnpublishStream(const std::string &path) {
+  for (const auto &kv : streams_) {
+    if (kv.second->label() == path) {
+      auto ps = dynamic_cast<PublisherStream*>(kv.second.get());
+      auto ts = ps->target();
+      ASSERT(ts->id() == kv.second->id());
+      streams_[ts->id()] = ts;
+      rtp_handler().UnpublishStream(ts);
+      return true;
+    }
+  }
+  QRPC_LOGJ(error, {{"ev","steram not found"},{"path",path}});
+  return false;
+}
 bool ConnectionFactory::Connection::PublishStream(const std::string &path) {
   InitRTP();
   for (const auto &kv : streams_) {
@@ -754,6 +769,7 @@ bool ConnectionFactory::Connection::PublishStream(const std::string &path) {
       // wrap original stream with PublisherStream
       auto os = kv.second;
       auto ps = std::make_shared<PublisherStream>(*this, os);
+      ASSERT(os->id() == ps->id());
       streams_[ps->id()] = ps;
       rtp_handler().PublishStream(os);
       return true;
@@ -906,9 +922,15 @@ std::shared_ptr<Stream> ConnectionFactory::Connection::OpenStream(
   return s;
 }
 std::shared_ptr<Stream> ConnectionFactory::Connection::SubscribeStream(const Stream::Config &c) {
-  auto parsed = str::Split("/", c.label.substr(7));
+  if (c.label.substr(0, 7) != "$watch/") {
+    QRPC_LOGJ(error, {{"ev","invalid path: not subscribe path"},{"path",c.label}});
+    ASSERT(false);
+    return nullptr;
+  }
+  auto parsed = str::Split(c.label.substr(7), "/"); // remove first $watch
   if (parsed.size() < 2) {
     QRPC_LOGJ(error, {{"ev","invalid path: single path component"},{"path",c.label.substr(7)}});
+    ASSERT(false);
     return nullptr;
   }
   const auto h = factory().FindHandler(parsed[0]);

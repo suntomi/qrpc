@@ -533,15 +533,6 @@ namespace rtp {
 		published_streams_[stream->label()] = stream;
 		router_.Publish(stream.get());
 	}
-	bool Handler::UnpublishStream(const std::string &path) {
-		auto pit = published_streams_.find(path);
-		if (pit == published_streams_.end()) {
-			QRPC_LOGJ(warn, {{"ev","stream is not published"},{"path", path}});
-			return false;
-		}
-		UnpublishStream(pit->second);
-		return true;
-	}
 	void Handler::UnpublishStream(const std::shared_ptr<base::Stream> &stream) {
 		published_streams_.erase(stream->label());
 		for (auto *s : router_.SubscribersFor(stream.get())) {
@@ -550,7 +541,8 @@ namespace rtp {
 		router_.Unpublish(stream.get());
 	}
 	void Handler::EmitSubscribeStreams(const std::shared_ptr<base::Stream> &stream, const void *p, size_t sz) {
-		for (auto *s : router_.SubscribersFor(stream.get())) {
+		auto vec = router_.SubscribersFor(stream.get());
+		for (auto *s : vec) {
 			s->Send(static_cast<const char *>(p), sz);
 		}
 	}
@@ -558,6 +550,7 @@ namespace rtp {
 		auto pit = published_streams_.find(path);
 		if (pit == published_streams_.end()) {
 			QRPC_LOGJ(warn, {{"ev","stream is not published"},{"path", path}});
+			ASSERT(false);
 			return false;
 		}
 		return router_.Subscribe(pit->second.get(), stream.get());

@@ -49,7 +49,10 @@ namespace rtp {
           return;
         }
         auto &subscribers = pit->second;
-        std::remove(subscribers.begin(), subscribers.end(), subscriber);
+        subscribers.erase(
+          std::remove(subscribers.begin(), subscribers.end(), subscriber),
+          subscribers.end()
+        );
       } else {
         ASSERT(false);
       }

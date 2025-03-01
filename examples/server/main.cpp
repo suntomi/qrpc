@@ -114,34 +114,41 @@ int main(int argc, char *argv[]) {
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
         logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
-        auto req = json::parse(pl);
-        if (s.label() == "test") {
-            // echo + label name
-            return s.Send({
-                {"hello", s.label() + ":" + req["hello"].get<std::string>()},
-                {"ts", req["ts"].get<uint64_t>()},
-                {"count", req["count"].get<uint64_t>()}
-            }); // echo
-        } else if (s.label() == "test2") {
-            auto stream_name = req["streamName"].get<std::string>();
-            auto ns = s.connection().OpenStream({
-                .label = stream_name
-            });
-            ASSERT(ns != nullptr);
-        } else if (s.label() == "test3") {
-            auto count = req["count"].get<uint64_t>();
-            if (count >= 2) {
-                s.Close(QRPC_CLOSE_REASON_LOCAL, 0, "byebye");
-            } else {
-                return s.Send({{"count", count}});
+        try {
+            auto req = json::parse(pl);
+            if (s.label() == "test") {
+                // echo + label name
+                return s.Send({
+                    {"hello", s.label() + ":" + req["hello"].get<std::string>()},
+                    {"ts", req["ts"].get<uint64_t>()},
+                    {"count", req["count"].get<uint64_t>()}
+                }); // echo
+            } else if (s.label() == "test2") {
+                auto stream_name = req["streamName"].get<std::string>();
+                auto ns = s.connection().OpenStream({
+                    .label = stream_name
+                });
+                ASSERT(ns != nullptr);
+            } else if (s.label() == "test3") {
+                auto count = req["count"].get<uint64_t>();
+                if (count >= 2) {
+                    s.Close(QRPC_CLOSE_REASON_LOCAL, 0, "byebye");
+                } else {
+                    return s.Send({{"count", count}});
+                }
+            } else if (s.label() == "recv") {
+                auto die = req["die"].get<bool>();
+                if (die) {
+                    logger::info({{"ev","recv die"}});
+                    s.connection().Close();
+                } else {
+                    return s.Send({{"msg", "byebye"}});
+                }
             }
-        } else if (s.label() == "recv") {
-            auto die = req["die"].get<bool>();
-            if (die) {
-                logger::info({{"ev","recv die"}});
-                s.connection().Close();
-            } else {
-                return s.Send({{"msg", "byebye"}});
+        } catch (std::exception &ec_group_str) {
+            if (s.label() != "chat") {
+                logger::error({{"ev","fail to parse json"},{"l",s.label()},{"sid",s.id()}});
+                ASSERT(false);
             }
         }
         return 0;

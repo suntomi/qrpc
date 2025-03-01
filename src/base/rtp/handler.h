@@ -278,7 +278,6 @@ namespace rtp {
   public:
     void PublishStream(const std::shared_ptr<base::Stream> &stream);
     void UnpublishStream(const std::shared_ptr<base::Stream> &stream);
-    bool UnpublishStream(const std::string &path);
     void EmitSubscribeStreams(const std::shared_ptr<base::Stream> &stream, const void *p, size_t sz);
     bool SubscribeStream(const std::string &path, const std::shared_ptr<base::Stream> &stream);
     void UnsubscribeStream(const Stream *stream); // this need to be called method of Stream object itself

@@ -77,6 +77,11 @@
         width: 100%;
         height: auto;
       }
+      #chat textarea {
+        width: 99%;
+        height: 10vh;
+        margin-right: 1vw;
+      }
     </style>    
   </head>
   <body>
@@ -98,15 +103,17 @@
       <input type="checkbox" id="pub_video" checked/><label for="pub_video">video</label>
       <button id="pub">publish</button>
     </div>
+    <div>chat</div>
     <div id="chat">
+      <textarea id="messages" readonly></textarea><br/>
       <input type="text" id="editmsg" placeholder="input message"/>
       <button id="sendmsg">send</button>
-      <textarea id="messages"></textarea>
     </div>
     <button id="reconnect">reconnect</button>
 
     <script src="http://localhost:8888/client.js"></script>
     <script>
+      const cname = document.getElementById("cname");      
       const pubsList = document.getElementById('pubsList');
       const subsList = document.getElementById('subsList');
       const pub = document.getElementById('pub');
@@ -176,6 +183,7 @@
           event.stopPropagation();
           try {
             await c.closeMedia(track.directory);
+            streams.receivers[track.cname]?.close(); // close chat stream too
           } catch (e) {
             console.error(e);
           }
@@ -267,7 +275,7 @@
           onopen: (track)=>{
             console.log("media open", track.directory, track.id);
             createMediaContainerElement(track, dom);
-            // track.raw.onmute/onunmute behaviour is unstable for browsers,
+            // track.raw.onmute/onunmute behaviour is unstable among browsers,
             // use our callback onpause/onresume instead.
           },
           onclose: (track)=>{
@@ -340,6 +348,10 @@
                 throw new Error("audioIcon not found");
               }
             }
+            if (reason === QRPCTrack.PAUSE_REASON.remote_close) {
+              console.log("recover chat stream", track.directory, track.cname);
+              subscribeChat(track.cname);
+            }
           },
         };
       }
@@ -410,11 +422,18 @@
       }
       addChatMessage = (id, text) => {
         const line = `${id}: ${text}`;
-        if (message.value.length > 0) {
-          messages.value = (message.value + "\n" + line);
+        if (messages.value.length > 0) {
+          messages.value = (messages.value + "\n" + line);
         } else {
           messages.value = line;
         }
+        messages.scrollTop = messages.scrollHeight; // scroll to bottom
+      }
+      const decoder = new TextDecoder('utf-8');
+      subscribeChat = (id) => {
+        streams.receivers[id] = c.watchStream(`${id}/chat`, {
+          onmessage: (s, event) => addChatMessage(id, decoder.decode(event.data)),
+        });
       }
       onPublish = async (event) => {
         const lpath = document.getElementById('lpath_pub').value;
@@ -429,9 +448,7 @@
         const path = `${id}/${lpath}`;
         console.log(`subscribe: input path = ${path}`, options);
         await c.watchMedia(path, createMediaHandlerWithOptions(subsList, options));
-        streams.receivers[id] = c.watchStream(`${id}/chat`, {
-          onmessage: (event) => addChatMessage(id, event.data)
-        })
+        subscribeChat(id);
       }
       onReconnect = (event) => {
         console.log("shutdown by UI");
@@ -439,15 +456,12 @@
         c.close();
       }
       onSendMessage = (event) => {
-        const msg = documen.getElementById('editmsg').value;
+        const msg = document.getElementById('editmsg').value;
         streams.sender.send(msg);
-        addChatMessage(cname, msg)
+        addChatMessage(cname.innerText, msg)
       }
       setupUI = (c) => {
-        let idElement = document.getElementById("cname");
-        if (idElement) {
-          idElement.innerText = c.cname;
-        }
+        cname.innerText = c.cname;
         pub.addEventListener('click', onPublish);
         sub.addEventListener('click', onSubscribe);
         reconnect.addEventListener('click', onReconnect);
@@ -470,7 +484,7 @@
         console.log("client onopen called");
         setupUI(c);
         await openMedia("webcam", createMediaHandlerWithOptions(pubsList));
-        streams.sender = c.openStream("chat", { onmessage: (event) => {} });
+        streams.sender = c.openStream("chat", { onmessage: () => {}, publish: true });
         return context;
       };
       c.onclose = () => {

@@ -81,6 +81,7 @@ namespace webrtc {
       }
       void OnShutdown() override {
         auto &c = dynamic_cast<Connection &>(connection());
+        QRPC_LOGJ(info, {{"ev","subscriber stream shutdown"},{"cname",c.cname()},{"label",label()},{"rtp_id",c.rtp_id()},{"ptr",str::dptr(this)}});
         c.rtp_handler().UnsubscribeStream(this);
         Stream::OnShutdown();
       }
@@ -92,6 +93,7 @@ namespace webrtc {
         published_stream_->SetPublished(true);
       }
       ~PublisherStream() { published_stream_->SetPublished(false); }
+      std::shared_ptr<Stream> target() { return published_stream_; }
       int OnRead(const char *p, size_t sz) override {
         auto &c = dynamic_cast<Connection &>(connection());
         c.rtp_handler().EmitSubscribeStreams(published_stream_, p, sz);
@@ -190,6 +192,7 @@ namespace webrtc {
       bool Consume(std::map<std::string,rtp::Consumer*> &created_consumers, std::string &error);
       bool CloseMedia(const std::string &path, std::vector<std::string> &closed_paths, std::string &sdp_or_error);
       bool PublishStream(const std::string &path);
+      bool UnpublishStream(const std::string &path);
       std::shared_ptr<Stream> SubscribeStream(const Stream::Config &c);
       inline void OnTimer(qrpc_time_t now) {}
       int RunDtlsTransport();

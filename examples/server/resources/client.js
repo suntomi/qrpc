@@ -27,6 +27,11 @@ class QRPCTrack {
     return parsed[parsed.length - 1];
   }
   get raw() { return this.track; }
+  get cname() {
+    const parsed = this.path.split("/");
+    if (!this.isReceiver) { throw new Error("cname is only for receiver track"); }
+    return parsed[0];
+  }
   get directory() { return this.path.split("/").slice(0, -1).join("/"); }
   get mid() { return this.transceiver.mid; }
   get active() { return this.track != null; }
@@ -425,7 +430,6 @@ class QRPClient {
       const track = event.track;
       const tid = track.id;
       const receiver = event.receiver;
-      // TODO: unify this step by using event.transceiver.mid and this.midMediaPathMap
       let path = undefined;
       if (event.transceiver) {
         if (event.transceiver.mid === "probator") { return; }
@@ -526,6 +530,7 @@ class QRPClient {
     return result;
   }
   async #checkMedias(now) {
+    let mediaOpened = false;
     for (const k in this.medias) {
       const m = this.medias[k];
       if (m.isReceiver) {
@@ -549,9 +554,12 @@ class QRPClient {
           m.stopReconnect();
           m.resume(QRPCTrack.PAUSE_REASON.remote_close);
         }
-      } else if (this.connected) {
-        this.syscall("ping", {});
+      } else if (m.opened) {
+        mediaOpened = true;
       }
+    }
+    if (mediaOpened) {
+      this.syscall("ping", {});
     }
   }
   async #createOffer(tracks) {
@@ -1035,7 +1043,10 @@ class QRPClient {
     });
     s.onclose = (h.onclose && ((event) => {
       h.onclose(s, event);
-    })) || ((event) => {});
+      delete this.streams[path];
+    })) || ((event) => {
+      delete this.streams[path];
+    });
     s.onmessage = (event) => h.onmessage(s, event);
     this.streams[path] = s;
   }
