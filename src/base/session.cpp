@@ -71,7 +71,8 @@ namespace base {
     resolver_(rhs.resolver_),
     alarm_processor_(rhs.alarm_processor_),
     alarm_id_(AlarmProcessor::INVALID_ID),
-    session_timeout_(rhs.session_timeout_) {
+    session_timeout_(rhs.session_timeout_),
+    is_listener_(rhs.is_listener_) {
     if (rhs.alarm_id_ != AlarmProcessor::INVALID_ID) {
       rhs.loop_.alarm_processor().Cancel(rhs.alarm_id_);
       rhs.alarm_id_ = AlarmProcessor::INVALID_ID;
@@ -113,7 +114,7 @@ namespace base {
     }
     int r;
     if ((r = Syscall::SendTo(fd_, mmsg, size)) < 0) {
-      if (Syscall::WriteMayBlocked(r, false)) {
+      if (Syscall::IOMayBlocked(r, false)) {
         return count; // nothing should be sent
       }
       ASSERT(false);
@@ -139,7 +140,7 @@ namespace base {
       if (Syscall::SendTo(fd_, &h) < 0) {
         // reset with sent count (idx)
         Reset(idx);
-        if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+        if (Syscall::IOMayBlocked(Syscall::Errno(), false)) {
             return size - idx;
         }
         QRPC_LOGJ(error, {{"ev","SendTo fails"},{"fd",fd_},{"errno",Syscall::Errno()}});
@@ -180,7 +181,7 @@ namespace base {
     }
     int r;
     if ((r = Syscall::SendTo(fd_, mmsg, count)) < 0) {
-      if (Syscall::WriteMayBlocked(r, false)) {
+      if (Syscall::IOMayBlocked(r, false)) {
         return count; // nothing should be sent
       }
       ASSERT(false);
@@ -296,7 +297,7 @@ namespace base {
     int r = Syscall::RecvFrom(fd_, read_packets_.data(), batch_size_);
     if (r < 0) {
       int eno = Syscall::Errno();
-      if (Syscall::WriteMayBlocked(eno, false)) {
+      if (Syscall::IOMayBlocked(eno, false)) {
         return QRPC_EAGAIN;
       }
       logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
@@ -307,7 +308,7 @@ namespace base {
     int r = Syscall::RecvFrom(fd_, &read_packets_.data()->msg_hdr);
     if (r < 0) {
       int eno = Syscall::Errno();
-      if (Syscall::WriteMayBlocked(eno, false)) {
+      if (Syscall::IOMayBlocked(eno, false)) {
         return QRPC_EAGAIN;
       }
       logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});

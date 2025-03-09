@@ -108,7 +108,7 @@ namespace base {
         uint64_t expires;
       #if defined(__ENABLE_EPOLL__)
         if (Syscall::Read(fd_, &expires, sizeof(expires)) < 0) {
-          if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+          if (Syscall::IOMayBlocked(Syscall::Errno(), false)) {
             break;
           }
           logger::error({{"ev","read timerfd fails"},{"errno",Syscall::Errno()}});

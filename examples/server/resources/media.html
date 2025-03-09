@@ -111,7 +111,7 @@
     </div>
     <button id="reconnect">reconnect</button>
 
-    <script src="http://localhost:8888/client.js"></script>
+    <script src="./client.js"></script>
     <script>
       const cname = document.getElementById("cname");      
       const pubsList = document.getElementById('pubsList');
@@ -474,7 +474,7 @@
         sendmsg.removeEventListener('click', onSendMessage);
       }
       //Create client
-      const url = "http://localhost:8888/qrpc";
+      const url = `http://${window.location.host}/qrpc`;
       const c = new QRPClient(url, urlParameters["cname"]);
       const streams = {receivers:{}};
       const context = {};

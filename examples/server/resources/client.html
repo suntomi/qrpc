@@ -4,7 +4,7 @@
     <title>WebRTC with QRPC base</title>
   </head>
   <body>
-    <script src="http://localhost:8888/client.js"></script>
+    <script src="./client.js"></script>
     <script>
       showError = (err) => {
         showResult("error:" + err);
@@ -20,7 +20,7 @@
         div.innerText = result;
       };
       //Create whip client
-      const url = "http://localhost:8888/qrpc";
+      const url = `http://${window.location.host}/qrpc`;
       const c = new QRPClient(url);
       const context = { texts: ["aaaa", "bbbb", "cccc"] };
       const MAX_RECONNECT = 2;

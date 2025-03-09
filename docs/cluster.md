@@ -1,0 +1,29 @@
+- 各ノードごとに、他のノードと通信するためのHandlerをノードごとに１つずつ作る(ProxyHandlerと呼ぶ)
+- Handlerのproducerはremoteのproducerのトラフィックを受け取ってこのノードからremoteのproducerをconsumeしたいconsumerのproxyとなる(poxy producerと呼ぶ)
+- Handlerのconsumerはlocalのproducerをconsumeし、受け取ったトラフィックを対応するノードに送信する(proxy consumerと呼ぶ)
+- ProxyHandler間はtcpで通信する。
+- あるノードに接続したクライアントがそのノードにいないクライアントのmedia streamをconsumeするまでのステップは以下のようになる
+  - ConnectionFactory::Connection::PrepareConsume で見つかるHandlerがProxyHandlerになる
+  - rtp::Handler::PrepareConsumeはこのProxyHandlerとともに呼ばれる
+  - PrepareConsumeはlocal_pathでなく、full_pathを受け取るようにする。また、Handler::FindProducerByPathもfull_pathを受け取るようにし、ProxyHandlerとHandlerで実装を変える
+    - Handler::FindProducerByPathはパスの最初(cname)パートを削除して通常のproducer idを生成し、それによってproducerを探す
+    - ProxyHandler::FindProducerByPathは、full_pathから対応するmidを探し、それによってproxy producerを探す
+      - もしproxy producerがなかった場合は、新しく作る(したがって決してnullptrを返さない)
+        - rtp parameterをどのように知ることができるか
+        - proxy producerを作る前にremote側でconsumerを作る
+        - その際にremote側に何らかのコマンドを送る必要があるはず
+        - そのレスポンスとしてproxy producerのためのrtp parameterを返す
+      - proxy producerを作るためにリクエストを送った場合は、一旦リクエストの処理をsuspendし、remote側でconsumerを作るリクエストのレスポンスが戻ってきたタイミングでresumeされるようにする
+    - producerが得られたら、あとは通常と同じようにconsumerを作成し、クライアントがわにSDPを戻すことができる
+- proxyが挟まっている時、Rtcp、つまりRequestKeyFrame的なものは正しく動くのか？consumer => producer(proxy) => consumer(proxy) => producerみたいになるけど...
+  - 例えば、consumerがrequest key frameすると最終的にそのconsumerがsubscribeしているproducer(proxy)のRequestKeyFrameが呼ばれる。これはサーバー間接続を通じてremoteのサーバーに届く。この時にサーバー間接続で送信される時に付加された行き先情報を使ってremoteのサーバーの対応するproducerのReceiveRtcpPacketが呼ばれるようにする(proxy consumerのmidを付加すれば良い。受け取った側ではmidからmid_path_mapを使ってpathを調べ、含まれるcnameからhandler、local_pathからproducerを探す)
+- streamのwatchはこの枠組みの中でどのように実装されるべきか
+  - Handlerのlistenerだけで実装できるものになっているべき
+  - Handlerがwatchしているstreamのリストを持つ(listener経由で取得) 
+  - streamは他のHandlerの持つstreamをwatchする
+- あるノードに接続したクライアントがそのノードにいないクライアントのstreamをconsumeするまでのステップは以下のようになる
+  - まず、前提として通常のstreamが作成された場合に、publish_stream syscallを呼び出して、handlerにエントリーを作成する
+    - この際handlerはstringをキーとするマップでstreamを保持する
+  - $watch/${path}/(read|write)みたいなpathでstreamを開く
+  - ConnectionFactory::Connection::DefaultStreamFactory でWatchStreamが呼ばれる。この時WatcherStreamという特別なstreamが作成される
+    - 

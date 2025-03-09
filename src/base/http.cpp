@@ -548,7 +548,7 @@ namespace base {
         base64::encode(m_key_ptr, sizeof(m_key_ptr), out, sizeof(out));
         str::Vprintf(origin, sizeof(origin), "http://%s", host);
         auto r = WebSocketListener::send_handshake_request(fd(), host, out, origin, NULL);
-        if (r < 0) { return Syscall::WriteMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
+        if (r < 0) { return Syscall::IOMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
         return r;
     }
     int WebSocketSession::send_handshake_response() {
@@ -557,7 +557,7 @@ namespace base {
             return QRPC_EINVAL;
         }
         auto r = WebSocketListener::send_handshake_response(fd(), buffer);
-        if (r < 0) { return Syscall::WriteMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
+        if (r < 0) { return Syscall::IOMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
         return r;
     }
 }

@@ -77,7 +77,7 @@ public:
   that is, you actually need to see the new errno on write error caused by link change, 
   to add it to this list.
   */
-  static inline bool WriteMayBlocked(int eno, bool reachability_tracked) {
+  static inline bool IOMayBlocked(int eno, bool reachability_tracked) {
     if (eno == EAGAIN || eno == EWOULDBLOCK) {
       return true;
     } else if (reachability_tracked && (eno == EADDRNOTAVAIL || eno == ENETUNREACH)) {

@@ -375,11 +375,11 @@ namespace webrtc {
     template <class F> inline const F& to() const { return reinterpret_cast<const F &>(*this); }
     const std::string &fingerprint() const { return config_.fingerprint; }
     const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
-    const UdpSessionFactory::Config udp_listener_config() const {
-      return UdpSessionFactory::Config(config_.resolver, config_.session_timeout, config_.udp_batch_size, false);
+    const UdpListener::Config udp_listener_config() const {
+      return UdpListener::Config(config_.resolver, config_.session_timeout, config_.udp_batch_size, false);
     }
-    const SessionFactory::Config http_listener_config() const {
-      return SessionFactory::Config(config_.resolver, config_.http_timeout);
+    const TcpListener::Config http_listener_config() const {
+      return TcpListener::Config(config_.resolver, config_.http_timeout);
     }
     const std::string primary_proto() const {
       return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";
