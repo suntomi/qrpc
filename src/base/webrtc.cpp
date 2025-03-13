@@ -1752,7 +1752,7 @@ namespace client {
       return s.Request("POST", ep_.path.c_str(), h, 2, sdp.c_str(), sdp.length());
     }
     void HandleClose(HttpSession &, const CloseReason &r) override {
-      // in here, session that related with webrtc connection is not actively callbacked, 
+      // in here, session that related with webrtc connection should not be actively callbacked, 
       // so we can call CloseConnection
       if (r.code != QRPC_CLOSE_REASON_LOCAL || r.detail_code != QRPC_EGOAWAY) {
         QRPC_LOGJ(info, {{"ev","close webrtc connection by whip failure"},{"rc",r.code},{"dc",r.detail_code}});

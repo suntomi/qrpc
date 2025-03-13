@@ -182,7 +182,6 @@ namespace base {
         const HttpFSM &req() const { return fsm_; }
         const HttpFSM &fsm() const { return fsm_; }
         HttpFSM &fsm() { return fsm_; }
-        TcpSessionFactory &tcp_session_factory() { return factory().to<TcpSessionFactory>(); }
         int Request(const char *method, const char *path, 
             Header *h = nullptr, size_t hsz = 0, const char *body = nullptr, size_t bsz = 0) {
             char buffer[4096];
@@ -296,7 +295,7 @@ namespace base {
         };
     public:
         // https://superuser.com/a/1271864 says chrome timeout is 300s
-        HttpClient(Loop &l, Resolver &r) : TcpClient(l, r, qrpc_time_sec(300)) {}
+        HttpClient(Loop &l, Resolver &r, const MaybeCertPair &p) : TcpClient(l, r, qrpc_time_sec(300), p) {}
         bool Connect(const std::string &host, int port, Processor *p) {
             return TcpSessionFactory::Connect(host, port, [this, p](Fd fd, const Address &addr) {
                 return new HttpClientSession(*this, fd, addr, p);
@@ -327,7 +326,7 @@ namespace base {
             Closer ccb_;
         };
     public:
-        AdhocHttpClient(Loop &l, Resolver &r) : HttpClient(l, r) {}
+        AdhocHttpClient(Loop &l, Resolver &r, const MaybeCertPair &p = std::nullopt) : HttpClient(l, r, p) {}
         bool Connect(const std::string &host, int port, Sender &&scb, Receiver &&rcb) {
             return HttpClient::Connect(host, port, new Processor(std::move(scb), std::move(rcb)));
         }

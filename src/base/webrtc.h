@@ -350,6 +350,7 @@ namespace webrtc {
       std::string fingerprint_algorithm;
       bool in6{false};
       Resolver &resolver{NopResolver::Instance()};
+      MaybeCertPair certpair{std::nullopt};
 
       // derived from above config values
       std::string fingerprint;
@@ -503,10 +504,10 @@ namespace webrtc {
     };
   public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.resolver),
+      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.resolver, config.certpair),
       tcp_clients_(), udp_clients_() {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.resolver),
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.resolver, config.certpair),
       tcp_clients_(), udp_clients_() {}
     ~Client() override { Fin(); }
   public:

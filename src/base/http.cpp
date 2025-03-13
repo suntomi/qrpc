@@ -205,12 +205,18 @@ namespace base {
                 // server or client websocket handshake
                 else if (hdrstr("Sec-WebSocket-Key", tok, sizeof(tok)) ||
                          hdrstr("Sec-WebSocket-Accept", tok, sizeof(tok))) {
+                    recvctx().bd = nullptr;
+                    recvctx().bl = 0;
                     return state_websocket_establish;
                 }
                 else if (rc() == HRC_OK){
                     return state_error;
                 }
-                else { return state_recv_finish; }
+                else {
+                    recvctx().bd = nullptr;
+                    recvctx().bl = 0;
+                    return state_recv_finish;
+                }
             }
             /* lf found. */
             else if (recvctx().n_hd < MAX_HEADER) {

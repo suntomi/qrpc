@@ -6,32 +6,43 @@
 namespace base {
     class TcpSessionFactory : public SessionFactory {
     public:
-        class AbstractTcpSession : public Session, public IoProcessor {
+        struct Config : public SessionFactory::Config {
+            Config(
+                Resolver &r, qrpc_time_t session_timeout, bool is_listner, const MaybeCertPair &p
+            ) : SessionFactory::Config(r, session_timeout, is_listner, p) {}
+            static inline Config Default() { 
+                // default no timeout
+                return Config(NopResolver::Instance(), qrpc_time_sec(0), false, std::nullopt);
+            }
         public:
-            AbstractTcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) : Session(f, fd, addr) {}
-            DISALLOW_COPY_AND_ASSIGN(AbstractTcpSession);
-            inline void MigrateTo(AbstractTcpSession *newsession) {
+            std::string cert, privkey;
+        };
+    public:
+        class TcpSession : public Session, public IoProcessor {
+        public:
+            TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) :
+                Session(f, fd, addr), handshaker_(Handshaker::Create(*this)) {}
+            DISALLOW_COPY_AND_ASSIGN(TcpSession);
+            inline Handshaker &hs() { return *handshaker_; }
+            inline const Handshaker &hs() const { return *handshaker_; }
+            TcpSessionFactory &tcp_session_factory() { return factory().to<TcpSessionFactory>(); }
+            inline void MigrateTo(TcpSession *newsession) {
+                ASSERT(this != newsession && newsession != nullptr && newsession->fd() == fd_);
                 factory().loop().ModProcessor(fd_, newsession);
                 fd_ = INVALID_FD; // invalidate fd_ so that SessionFactory::Close will not close fd_
+                hs().MigrateTo(newsession->hs());
+                tcp_session_factory().UpdateSession(*newsession);
             }
-            inline bool migrated() const { return fd_ == INVALID_FD; }
+            inline bool migrated() const { return fd_ == INVALID_FD && hs().migrated(); }
             // implements Session
-            const char *proto() const { return "TCP"; }
-        };
-        template <class HS = PlainHandshaker>
-        class TcpSessionBase : public AbstractTcpSession {
-        public:
-            TcpSessionBase(TcpSessionFactory &f, Fd fd, const Address &addr) :
-                AbstractTcpSession(f, fd, addr), handshaker_(*this) {}
-            DISALLOW_COPY_AND_ASSIGN(TcpSessionBase);
-            inline HS &hs() { return handshaker_; }
+            const char *proto() const override { return "TCP"; }
             // implements IoProcessor
             void OnEvent(Fd fd, const Event &e) override {
                 ASSERT(fd == fd_);
                 int r;
                 if (!hs().finished()) {
-                    if (!hs().finished() || (r = hs().Handshake(*this, fd, e)) < 0) {
-                        return;
+                    if ((r = hs().Handshake(*this, fd, e)) < 0) {
+                        return; // handshake is not finished yet, go on
                     }
                     if ((r = OnConnect()) < 0) {
                         Close(QRPC_CLOSE_REASON_LOCAL, r);
@@ -59,25 +70,29 @@ namespace base {
                 }
             }
         protected:
-            HS handshaker_;
+            Handshaker *handshaker_;
         };
-        typedef TcpSessionBase<PlainHandshaker> TcpSession;
-        typedef TcpSessionBase<TlsHandshaker> TlsSession;
     public:
         TcpSessionFactory(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
-            SessionFactory(l, std::move(m), c), sessions_() {}
+            SessionFactory(l, std::move(m), c), sessions_() { Init(); }
         TcpSessionFactory(TcpSessionFactory &&rhs) :
-            SessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {}
+            SessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {
+            tls_ctx_ = rhs.tls_ctx_;
+            rhs.tls_ctx_ = nullptr;
+        }
         ~TcpSessionFactory() override { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(TcpSessionFactory);
-        void Fin() { FinSessions(sessions_); }
+        void Fin() {
+            FinSessions(sessions_);
+            SessionFactory::Fin();
+        }
         // implements SessionFactory
         Session *Open(const Address &a, FactoryMethod m) override {
             Fd fd = Syscall::Connect(a.sa(), a.salen());
             if (fd == INVALID_FD) {
                 return nullptr;
             }
-            auto s = dynamic_cast<AbstractTcpSession *>(Create(fd, a, m));
+            auto s = dynamic_cast<TcpSession *>(Create(fd, a, m));
             int r; // EV_WRITE only for waiting for establishing connection
             if ((r = loop_.Add(s->fd(), s, Loop::EV_WRITE)) < 0) {
                 s->Close(QRPC_CLOSE_REASON_SYSCALL, r);
@@ -100,6 +115,9 @@ namespace base {
             sessions_[fd] = s;
             return s;
         }
+        void UpdateSession(Session &s) {
+            sessions_[s.fd()] = &s;
+        }
         qrpc_time_t CheckTimeout() override { return CheckSessionTimeout(sessions_); }
     protected:
         // deletion timing of Session* is severe, so we want to have full control of it.
@@ -107,22 +125,26 @@ namespace base {
     };
     class TcpClient : public TcpSessionFactory {
     public:
-        struct Config : public SessionFactory::Config {
-            Config(Resolver &r, qrpc_time_t st) : SessionFactory::Config(r, st, false) {}
+        struct Config : public TcpSessionFactory::Config {
+            Config(Resolver &r, qrpc_time_t st, const MaybeCertPair p) :
+                TcpSessionFactory::Config(r, st, false, p) {}
         };
     public:
-        TcpClient(Loop &l, Resolver &r, qrpc_time_t timeout = qrpc_time_sec(120)) : 
-            TcpSessionFactory(l, [this](Fd fd, const Address &a) -> Session* {
-                DIE("client should not call this, provide factory via SessionFactory::Connect");
-                return (Session *)nullptr;
-            }, Config(r, timeout)) {}
+        TcpClient(
+            Loop &l, Resolver &r, qrpc_time_t timeout = qrpc_time_sec(120),
+            const MaybeCertPair &p = std::nullopt
+        ) : TcpSessionFactory(l, [this](Fd fd, const Address &a) -> Session* {
+            DIE("client should not call this, provide factory via SessionFactory::Connect");
+            return (Session *)nullptr;
+        }, Config(r, timeout, p)) {}
         TcpClient(TcpClient &&rhs) : TcpSessionFactory(std::move(rhs)) {}
         DISALLOW_COPY_AND_ASSIGN(TcpClient);
     };
     class TcpListener : public TcpSessionFactory, public IoProcessor {
     public:
-        struct Config : public SessionFactory::Config {
-            Config(Resolver &r, qrpc_time_t st) : SessionFactory::Config(r, st, true) {}
+        struct Config : public TcpSessionFactory::Config {
+            Config(Resolver &r, qrpc_time_t st, const MaybeCertPair &p = std::nullopt) :
+                TcpSessionFactory::Config(r, st, true, p) {}
             static inline Config Default() { 
                 // default no timeout
                 return Config(NopResolver::Instance(), qrpc_time_sec(0));
@@ -189,7 +211,7 @@ namespace base {
                 }
                 auto a = Address(sa, salen);
                 logger::info({{"ev","accept"},{"proto","tcp"},{"lfd",fd_},{"fd",afd},{"a",a.str()}});
-                auto s = dynamic_cast<AbstractTcpSession *>(Create(afd, a, factory_method_));
+                auto s = dynamic_cast<TcpSession *>(Create(afd, a, factory_method_));
                 int r;
                 if ((r = loop_.Add(s->fd(), s, Loop::EV_READ)) < 0) {
                     s->Close(QRPC_CLOSE_REASON_SYSCALL, r);

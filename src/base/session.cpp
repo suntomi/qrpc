@@ -71,14 +71,61 @@ namespace base {
     resolver_(rhs.resolver_),
     alarm_processor_(rhs.alarm_processor_),
     alarm_id_(AlarmProcessor::INVALID_ID),
+    cert_(rhs.cert_), privkey_(rhs.privkey_),
     session_timeout_(rhs.session_timeout_),
     is_listener_(rhs.is_listener_) {
     if (rhs.alarm_id_ != AlarmProcessor::INVALID_ID) {
       rhs.loop_.alarm_processor().Cancel(rhs.alarm_id_);
       rhs.alarm_id_ = AlarmProcessor::INVALID_ID;
     }
+    if (rhs.tls_ctx_ != nullptr) {
+      tls_ctx_ = rhs.tls_ctx_;
+      rhs.tls_ctx_ = nullptr;
+    }
     Init();
   }
+
+  void SessionFactory::Init() {
+      if (session_timeout() > 0) {
+          alarm_id_ = alarm_processor_.Set(
+              [this]() { return this->CheckTimeout(); }, qrpc_time_now() + session_timeout()
+          );
+      }
+      if (!need_tls()) { return; }
+      char err_buf[256];
+      tls_ctx_ = SSL_CTX_new(TLS_method());
+      if (tls_ctx_ == nullptr) {
+          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+          logger::die({{"ev", "Failed to create SSL context"}, {"err", err_buf}});
+      }
+      // サーバー証明書のロード
+      if (SSL_CTX_use_certificate_file(tls_ctx_, cert_.c_str(), SSL_FILETYPE_PEM) <= 0) {
+          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+          logger::die({{"ev", "Failed to load certificate"}, {"err", err_buf}});
+      }
+
+      // 秘密鍵のロード
+      if (SSL_CTX_use_PrivateKey_file(tls_ctx_, privkey_.c_str(), SSL_FILETYPE_PEM) <= 0) {
+          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+          logger::die({{"ev", "Failed to load private key"}, {"err", err_buf}});
+      }
+
+      // 秘密鍵と証明書の整合性確認
+      if (SSL_CTX_check_private_key(tls_ctx_) != 1) {
+          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+          logger::die({{"ev", "Private key does not match the certificate"}, {"err", err_buf}});
+      }						
+  }
+  void SessionFactory::Fin() {
+      if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+          alarm_processor_.Cancel(alarm_id_);
+          alarm_id_ = AlarmProcessor::INVALID_ID;
+      }
+      if (tls_ctx_ != nullptr) {
+          SSL_CTX_free(tls_ctx_);
+          tls_ctx_ = nullptr;
+      }
+  }  
 
   bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref) {
     auto q = new SessionDnsQuery(*this, m, eh);

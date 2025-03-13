@@ -1,21 +1,18 @@
 #include "base/handshaker.h"
+#include "base/session.h"
 
 namespace base {
-  static thread_local SSL_CTX *ctx_ = nullptr;
-  class Initializer {
-  public:
-    Initializer() {
-      ctx_ = SSL_CTX_new(TLS_method());
+  Handshaker *Handshaker::Create(Session &s) {    
+    if (s.factory().need_tls()) {
+      return new TlsHandshaker(s);
+    } else {
+      return new PlainHandshaker(s);
     }
-    ~Initializer() {
-      if (ctx_ != nullptr) {
-        SSL_CTX_free(ctx_);
-      }
-    }
-  };
-  SSL_CTX *TlsHandshaker::ctx() {
-    static Initializer init;
-    ASSERT(ctx_ != nullptr);
-    return ctx_;
+  }
+  TlsHandshaker::TlsHandshaker(Session &s) : Handshaker() {
+    // create SSL object
+    ssl_ = SSL_new(dynamic_cast<TcpSession &>(s).tcp_session_factory().tls_ctx());
+    if (ssl_ == nullptr) { logger::die({{"ev","SSL_new() fails"}}); }
+    SSL_set_fd(ssl_, s.fd());
   }
 }

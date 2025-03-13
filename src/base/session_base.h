@@ -9,20 +9,31 @@
 #include "base/macros.h"
 #include "base/resolver.h"
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
 #include <functional>
 
 namespace base {
+		class CertificatePair {
+		public:
+			std::string cert, privkey;
+		};
+		typedef std::optional<CertificatePair> MaybeCertPair;
     class SessionFactory {
     public:
         struct Config {
-            Config(Resolver &r, qrpc_time_t st, bool is_listener) :
-              resolver(r), session_timeout(st), is_listener(false) {}
+            Config(Resolver &r, qrpc_time_t st, bool is_listener, const MaybeCertPair p = std::nullopt) :
+              resolver(r), session_timeout(st), is_listener(false), certpair(p.has_value() ? p.value() : CertificatePair()) {}
+						inline const std::string &cert() const { return certpair.cert; }
+						inline const std::string &privkey() const { return certpair.privkey; }
             static inline Config Default() { 
                 // default no timeout
                 return Config(NopResolver::Instance(), qrpc_time_sec(0), false);
             }
         public:
             Resolver &resolver;
+						CertificatePair certpair;
             qrpc_time_t session_timeout;
             bool is_listener;
         };
@@ -125,8 +136,8 @@ namespace base {
             }
         protected:
             bool Close(const CloseReason &reason) {
-                if (!closed()) {
-                    logger::info({
+                if (!closed()) { 
+                    logger::info({ // it is possible that fd_ is invalid_fd at here, because of migration
                         {"ev","close"},{"fd",fd()},{"a",addr().str()},
                         {"code",reason.code},{"dcode",reason.detail_code},{"rmsg",reason.msg}
                     });
@@ -176,10 +187,11 @@ namespace base {
     public:
         SessionFactory(Loop &l, FactoryMethod &&m) :
             loop_(l), resolver_(NopResolver::Instance()), alarm_processor_(l.alarm_processor()),
-            factory_method_(m), session_timeout_(0ULL), is_listener_(false) { Init(); }
+            factory_method_(m), cert_(), privkey_(), session_timeout_(0ULL), is_listener_(false) { Init(); }
         SessionFactory(Loop &l, FactoryMethod &&m, Config c) :
             loop_(l), resolver_(c.resolver), alarm_processor_(l.alarm_processor()),
-            factory_method_(m), session_timeout_(c.session_timeout), is_listener_(c.is_listener) { Init(); }
+            factory_method_(m), cert_(c.cert()), privkey_(c.privkey()),
+						session_timeout_(c.session_timeout), is_listener_(c.is_listener) { Init(); }
         SessionFactory(SessionFactory &&rhs);
         virtual ~SessionFactory() { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(SessionFactory);
@@ -188,6 +200,8 @@ namespace base {
         inline AlarmProcessor &alarm_processor() { return alarm_processor_; }
         inline qrpc_time_t session_timeout() const { return session_timeout_; }
         inline bool is_listener() const { return is_listener_; }
+        inline bool need_tls() const { return !cert_.empty() && !privkey_.empty(); }
+        inline SSL_CTX *tls_ctx() const { return tls_ctx_; }
         template <class F> F &to() { return static_cast<F&>(*this); }
         template <class F> const F &to() const { return static_cast<const F&>(*this); }
         bool Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref = AF_INET);
@@ -203,19 +217,8 @@ namespace base {
             }
         }
     protected:
-        inline void Init() {
-            if (session_timeout() > 0) {
-                alarm_id_ = alarm_processor_.Set(
-                    [this]() { return this->CheckTimeout(); }, qrpc_time_now() + session_timeout()
-                );
-            }
-        }
-        inline void Fin() {
-            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-                alarm_processor_.Cancel(alarm_id_);
-                alarm_id_ = AlarmProcessor::INVALID_ID;
-            }
-        }
+        void Init();
+        void Fin();
         template <class SESSIONS>
         qrpc_time_t CheckSessionTimeout(SESSIONS &sessions) {
             qrpc_time_t now = qrpc_time_now();
@@ -251,6 +254,8 @@ namespace base {
         Resolver &resolver_;
         AlarmProcessor &alarm_processor_;
         AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
+				std::string cert_, privkey_;
+				SSL_CTX *tls_ctx_{nullptr};
         qrpc_time_t session_timeout_;
         bool is_listener_;
     };
