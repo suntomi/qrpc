@@ -9,6 +9,7 @@ namespace base {
     bool finished() const { return finished_; }
     virtual int Handshake(Session &s, Fd fd, const IoProcessor::Event &ev) = 0;
     virtual int Read(Session &s, char *p, size_t sz) = 0;
+    virtual int Write(Session &s, const char *p, size_t sz) = 0;
     virtual void MigrateTo(Handshaker &hs) = 0;
     virtual bool migrated() const = 0;
     static Handshaker *Create(Session &s);
@@ -19,7 +20,7 @@ namespace base {
   class PlainHandshaker : public Handshaker {
   public:
     PlainHandshaker(Session &s) : Handshaker() {}
-    int Handshake(Session &s, Fd fd, const IoProcessor::Event &ev) {
+    int Handshake(Session &s, Fd fd, const IoProcessor::Event &ev) override {
       if (Loop::Writable(ev)) {
         int r;
         if ((r = s.factory().loop().Mod(fd, Loop::EV_READ)) < 0) {
@@ -30,15 +31,11 @@ namespace base {
       }
       return QRPC_OK;
     }
-    int Read(Session &s, char *p, size_t sz) {
-      if ((sz = Syscall::Read(s.fd(), p, sz)) < 0) {
-        int err = Syscall::Errno();
-        if (Syscall::IOMayBlocked(err, false)) {
-          return;
-        }
-        s.Close(QRPC_CLOSE_REASON_SYSCALL, err, Syscall::StrError(err));
-      }
-      return sz;
+    int Read(Session &s, char *p, size_t sz) override {
+      return Syscall::Read(s.fd(), p, sz);
+    }
+    int Write(Session &s, const char *p, size_t sz) override {
+      return Syscall::Write(s.fd(), p, sz);
     }
     void MigrateTo(Handshaker &hs) override {
       auto ths = dynamic_cast<Handshaker *>(&hs);
@@ -56,7 +53,7 @@ namespace base {
     }
     SSL *ssl() { return ssl_; }
     static SSL_CTX *ctx();
-    int Handshake(Session &s, Fd fd, const IoProcessor::Event &ev) {
+    int Handshake(Session &s, Fd fd, const IoProcessor::Event &ev) override {
       ASSERT(ssl_ != nullptr);
       int r;
       // サーバーモードかクライアントモードか
@@ -90,7 +87,7 @@ namespace base {
         return QRPC_ESYSCALL;
       } 
     }
-    int Read(Session &s, char *p, size_t sz) {
+    int Read(Session &s, char *p, size_t sz) override {
       ASSERT(ssl_ != nullptr);
       int r = SSL_read(ssl_, p, sz);
       if (r > 0) {
@@ -106,6 +103,9 @@ namespace base {
         s.Close(QRPC_CLOSE_REASON_PROTOCOL, ssl_err, err_buf);
         return QRPC_ESYSCALL;
       }        
+    }
+    int Write(Session &s, const char *p, size_t sz) override {
+      return SSL_write(ssl_, p, sz);
     }
     void MigrateTo(Handshaker &hs) override {
       auto ths = dynamic_cast<TlsHandshaker *>(&hs);

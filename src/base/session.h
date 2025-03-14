@@ -25,7 +25,7 @@ namespace base {
             DISALLOW_COPY_AND_ASSIGN(TcpSession);
             inline Handshaker &hs() { return *handshaker_; }
             inline const Handshaker &hs() const { return *handshaker_; }
-            TcpSessionFactory &tcp_session_factory() { return factory().to<TcpSessionFactory>(); }
+            inline TcpSessionFactory &tcp_session_factory() { return factory().to<TcpSessionFactory>(); }
             inline void MigrateTo(TcpSession *newsession) {
                 ASSERT(this != newsession && newsession != nullptr && newsession->fd() == fd_);
                 factory().loop().ModProcessor(fd_, newsession);
@@ -34,6 +34,8 @@ namespace base {
                 tcp_session_factory().UpdateSession(*newsession);
             }
             inline bool migrated() const { return fd_ == INVALID_FD && hs().migrated(); }
+            inline int Write(const char *p, size_t sz) { return hs().Write(*this, p, sz); }
+            inline int Read(char *p, size_t sz) { return hs().Read(*this, p, sz); }
             // implements Session
             const char *proto() const override { return "TCP"; }
             // implements IoProcessor
@@ -53,7 +55,7 @@ namespace base {
                     while (true) {
                         char buffer[4096];
                         int sz = sizeof(buffer);
-                        if ((sz = hs().Read(*this, buffer, sz)) < 0) {
+                        if ((sz = Read(buffer, sz)) < 0) {
                             int err = Syscall::Errno();
                             if (Syscall::IOMayBlocked(err, false)) {
                                 return;

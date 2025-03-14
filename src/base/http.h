@@ -460,7 +460,7 @@ namespace base {
             void reset() { m_len = 0; }
             inline int drain(WebSocketSession &c, size_t remain) {
                 int r; 
-                if ((r = c.read_body_and_fd(c.fd(), m_buff + m_len, remain)) <= 0) {
+                if ((r = c.read_body_and_fd(m_buff + m_len, remain)) <= 0) {
                     return r;
                 }
                 m_len += r;
@@ -542,7 +542,7 @@ namespace base {
             // https://datatracker.ietf.org/doc/html/rfc6455#section-5.3
             // masking is only applied to client => server frame transmit
             bool masked = is_client();
-            if ((r = WebSocketSession::write_frame(fd_, p, sz, opcode_binary_frame, masked)) < 0) {
+            if ((r = WebSocketSession::write_frame(p, sz, opcode_binary_frame, masked)) < 0) {
                 if (r != QRPC_EAGAIN) {
                     Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
                 }
@@ -550,7 +550,7 @@ namespace base {
             return r;
         }
         qrpc_time_t OnShutdown() override {
-            WebSocketSession::write_frame(fd(), "", 0, opcode_connection_close, false);
+            WebSocketSession::write_frame("", 0, opcode_connection_close, false);
             return 0;
         }
         // implements IoProcessor (override Session's one)
@@ -558,7 +558,7 @@ namespace base {
             int r;
             // this is invalid after Close is called
             while (get_state() < state_established) {
-                if ((r = handshake(fd, Loop::Readable(e), Loop::Writable(e))) < 0) {
+                if ((r = handshake(Loop::Readable(e), Loop::Writable(e))) < 0) {
                     if (r != QRPC_EAGAIN) {
                         Close(QRPC_CLOSE_REASON_SYSCALL, Syscall::Errno(), Syscall::StrError());
                     }
@@ -568,7 +568,7 @@ namespace base {
             size_t sz = 4096;
             while (true) {
                 char buffer[sz];
-                if ((r = read_frame(fd, buffer, sz)) < 0) {
+                if ((r = read_frame(buffer, sz)) < 0) {
                     if (r == QRPC_EAGAIN) {
                         return;
                     }
@@ -592,7 +592,7 @@ namespace base {
         // sometimes, first a few frame of websocket received with handshake request.
         // in this timing, receiver is still HTTP mode and store such frame data into
         // body buffer of m_sm. so, we need to consume such data before handling data in socket.
-        inline int read_body_and_fd(Fd fd, char *p, size_t l) {
+        inline int read_body_and_fd(char *p, size_t l) {
             size_t bl = m_sm.bodylen() - m_sm_body_read;
             size_t copied = 0;
             if (bl > 0) {
@@ -605,7 +605,7 @@ namespace base {
                     return copied;
                 }
             }
-            copied += Syscall::Read(fd, p, l);
+            copied += Read(p, l);
             return copied;
         }
         inline void ConsumeBody(size_t l) { m_sm_body_read += l; }
@@ -717,7 +717,7 @@ namespace base {
                 return 0;
             }
         }
-        inline int drain_recv_data(Fd fd, bool &finished) {
+        inline int drain_recv_data(bool &finished) {
             int r; size_t remain = frame_size() - m_read, n_read;
             analyze_frame(n_read);
             if (n_read > 0) {
@@ -735,7 +735,7 @@ namespace base {
             finished = (remain <= 0);
             return QRPC_OK;
         }
-        inline int read_frame(Fd fd, char *p, size_t l) {
+        inline int read_frame(char *p, size_t l) {
             int r; size_t remain, n_read;
             char *orgp = p;
         retry:
@@ -744,7 +744,7 @@ namespace base {
             case state_established:
                 init_frame(); /* fall through */
             case state_recv_frame: {
-                if ((r = read_body_and_fd(fd, m_frame_buff + m_flen, sizeof(Frame) - m_flen)) <= 0) {
+                if ((r = read_body_and_fd(m_frame_buff + m_flen, sizeof(Frame) - m_flen)) <= 0) {
                     TRACE("read_frame read_body_and_fd fail %d %d\n", r, Syscall::Errno());
                     if (r == 0) { return r; }
                     if (Syscall::EAgain()) {
@@ -795,7 +795,7 @@ namespace base {
                     }
                     n_read = l;
                     if (n_read > remain) { n_read = remain; }
-                    if ((r = read_body_and_fd(fd, p, n_read)) <= 0) {
+                    if ((r = read_body_and_fd(p, n_read)) <= 0) {
                         if (r == 0) { return r; }
                         if (Syscall::EAgain()) {
                             goto again;
@@ -813,7 +813,7 @@ namespace base {
                 case opcode_connection_close: {
                     /* body has 2 byte to indicate why connection close */
                     bool finished;
-                    if ((r = drain_recv_data(fd, finished)) <= 0) {
+                    if ((r = drain_recv_data(finished)) <= 0) {
                         if (r == 0) { return r; }
                         if (Syscall::EAgain()) {
                             if (m_frame.masked()) {
@@ -835,7 +835,7 @@ namespace base {
                 case opcode_ping:
                 case opcode_pong: {
                     bool finished;
-                    if ((r = drain_recv_data(fd, finished)) <= 0) {
+                    if ((r = drain_recv_data(finished)) <= 0) {
                         if (r == 0) { return r; }
                         if (Syscall::EAgain()) {
                             goto again;
@@ -849,7 +849,7 @@ namespace base {
                                     get_mask(), m_mask_idx);
                             }
                             /* return pong */
-                            WebSocketSession::write_frame(fd,
+                            write_frame(
                                 m_ctrl_frame.m_buff,
                                 m_ctrl_frame.m_len,
                                 opcode_pong,
@@ -880,7 +880,7 @@ namespace base {
             return QRPC_EINVAL;
         }
         /* no fragmentation support (TODO) */
-        static inline int write_frame(Fd fd, const char *p, size_t l,
+        inline int write_frame(const char *p, size_t l,
             opcode opc = opcode_binary_frame, bool masked = true, bool fin = true) {
             char buff[sizeof(Frame)]; uint32_t rnd; uint8_t idx = 0;
             Frame *pf = reinterpret_cast<Frame *>(buff);
@@ -926,12 +926,10 @@ namespace base {
                     hl = sizeof(frm.ext.nomask);
                 }
             }
-            if (Syscall::Write(fd, buff, hl) < 0) {
+            if (Write(buff, hl) < 0) {
                 return QRPC_ESYSCALL;
             }
-            int r = (masked ?
-                Syscall::Write(fd, mask_payload(const_cast<char *>(p), l, rnd, idx), l) :
-                Syscall::Write(fd, p, l));
+            int r = (masked ? Write(mask_payload(const_cast<char *>(p), l, rnd, idx), l) : Write(p, l));
             /* cannot send all packet */
             if (r < 0 || ((size_t)r) < l) {
                 ASSERT(Syscall::Errno() == EPIPE);
@@ -1012,9 +1010,9 @@ namespace base {
                 return QRPC_EINVAL;
             }
         }
-        int handshake(Fd fd, int r, int w) {
+        int handshake(int r, int w) {
             char rbf[4096]; int rsz;
-            TRACE("WebSocketSession::handshake: %d %d %d %d\n", fd, get_state(), r, w);
+            TRACE("WebSocketSession::handshake: %d %d %d %d\n", fd(), get_state(), r, w);
             switch(get_state()) {
             case state_client_handshake: {
                 if (!w) { return QRPC_EAGAIN; }
@@ -1027,7 +1025,7 @@ namespace base {
             case state_client_handshake_2:
             case state_server_handshake: {
                 if (!r) { return QRPC_EAGAIN; }
-                if ((rsz = Syscall::Read(fd, rbf, sizeof(rbf))) < 0) { 
+                if ((rsz = Read(rbf, sizeof(rbf))) < 0) { 
                     return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
                 }
                 TRACE("receive handshake packet [%s](%u)\n", rbf, rsz);
