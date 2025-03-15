@@ -7,6 +7,27 @@ namespace base {
   typedef SessionFactory::FactoryMethod FactoryMethod;
   typedef SessionFactory::Session::CloseReason CloseReason;
 
+  std::string CertificatePair::TryAutogen(const std::vector<std::string> &ifaddrs) {
+    if (!need_autogen()) { return ""; }
+    std::pair<std::string, std::string> cp;
+    auto r = cert::gen(cp, ifaddrs);
+    if (!r.empty()) {
+      return r;
+    }
+    QRPC_LOGJ(info, {{"ev","autogen certpair"},{"cert",cp.first},{"pkey",cp.second}});
+    auto certpath = Syscall::MkTemp("/tmp/qrpc_auto_cert");
+    auto privkeypath = Syscall::MkTemp("/tmp/qrpc_auto_pkey");
+    if (Syscall::WriteFile(certpath, cp.first.c_str(), cp.first.size()) < 0) {
+      return "Failed to write certificate";
+    }
+    if (Syscall::WriteFile(privkeypath, cp.second.c_str(), cp.second.size()) < 0) {
+      return "Failed to write private key";
+    }
+    cert = certpath;
+    privkey = privkeypath;
+    return "";
+  }
+
   struct DnsQuery : public AsyncResolver::Query {
     int port_;
     static CloseReason CreateAresCloseReason(int status) {

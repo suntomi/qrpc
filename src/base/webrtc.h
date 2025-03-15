@@ -380,7 +380,7 @@ namespace webrtc {
       return UdpListener::Config(config_.resolver, config_.session_timeout, config_.udp_batch_size, false);
     }
     const TcpListener::Config http_listener_config() const {
-      return TcpListener::Config(config_.resolver, config_.http_timeout);
+      return TcpListener::Config(config_.resolver, config_.http_timeout, config_.certpair);
     }
     const std::string primary_proto() const {
       return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";

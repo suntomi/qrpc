@@ -15,11 +15,16 @@
 #include <functional>
 
 namespace base {
-		class CertificatePair {
-		public:
-			std::string cert, privkey;
-		};
-		typedef std::optional<CertificatePair> MaybeCertPair;
+    class CertificatePair {
+    public:
+        std::string cert, privkey;
+    public:
+        bool need_autogen() const {
+            return !Syscall::FileExists(cert) && !Syscall::FileExists(privkey);
+        }
+        std::string TryAutogen(const std::vector<std::string> &ifaddrs);
+    };
+    typedef std::optional<CertificatePair> MaybeCertPair;
     class SessionFactory {
     public:
         struct Config {

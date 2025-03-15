@@ -129,5 +129,13 @@ namespace base {
 
       return p - dst;
     }
-  }    
+  }
+  namespace cert {
+    std::string gen(
+      std::pair<std::string, std::string> &pair,
+      const std::vector<std::string>& hostnames,
+      int validityDays = 365,
+      int bits = 2048
+    );
+  }
 }

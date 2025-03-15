@@ -321,6 +321,13 @@ int ConnectionFactory::Config::Derive() {
     logger::info({{"ev","add configured ip"},{"ip",ip}});
     ifaddrs.push_back(ip);
   }
+  if (certpair.has_value()) {
+    std::string r = certpair.value().TryAutogen(ifaddrs);
+    if (!r.empty()) {
+      logger::die({{"ev","fail to generate certpair"},{"reason",r}});
+      return QRPC_EDEPS;
+    }
+  }
   return QRPC_OK;
 }
 
