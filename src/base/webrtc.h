@@ -350,21 +350,24 @@ namespace webrtc {
       std::string fingerprint_algorithm;
       bool in6{false};
       Resolver &resolver{NopResolver::Instance()};
+      
+      // might be derived from above config values
       MaybeCertPair certpair{std::nullopt};
 
       // derived from above config values
       std::string fingerprint;
       std::vector<std::string> ifaddrs;
-    public:
+    protected:
+      friend class ConnectionFactory;
       int Derive();
     };
   public:
     ConnectionFactory(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
-      loop_(l), config_(config), factory_method_(fm), stream_factory_(sf), connections_() {}
+      loop_(l), config_(std::move(config)), factory_method_(fm), stream_factory_(sf), connections_() { Init(); }
     ConnectionFactory(Loop &l, Config &&config, StreamFactory &&sf) :
-      loop_(l), config_(config), factory_method_([](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
+      loop_(l), config_(std::move(config)), factory_method_([](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
         return new Connection(cf, role);
-      }), stream_factory_(sf), connections_() {}
+      }), stream_factory_(sf), connections_() { Init(); }
     virtual ~ConnectionFactory() { Fin(); }
   public:
     Loop &loop() { return loop_; }
@@ -391,6 +394,7 @@ namespace webrtc {
   public:
     int Init();
     void Fin();
+    int Start();
     std::shared_ptr<rtp::Handler> FindHandler(const std::string &cname);
     std::shared_ptr<Connection> FindFromUfrag(const IceUFrag &ufrag);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);

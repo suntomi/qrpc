@@ -567,12 +567,12 @@ public:
     }
     return addrs;
   }
-  static std::string MkTemp(const std::string &pattern = "") {
+  static std::string MakeTempFile(const std::string &pattern = "") {
     char buf[256];
     if (pattern.empty()) {
       strcpy(buf, "/tmp/tmp.XXXXXX");
     } else {
-      snprintf(buf, sizeof(buf), "/tmp/%s.XXXXXX", pattern);
+      snprintf(buf, sizeof(buf), "%s.XXXXXX", pattern.c_str());
     }
     if (mkstemp(buf) == -1) {
       logger::error({{"ev","mkstemp() fails"},{"errno",Errno()}});

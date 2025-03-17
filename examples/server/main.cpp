@@ -111,6 +111,7 @@ int main(int argc, char *argv[]) {
         .connection_timeout = qrpc_time_sec(60),
         .consent_check_interval = qrpc_time_sec(10),
         .fingerprint_algorithm = "sha-256",
+        .certpair = CertificatePair::Default(),
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
         logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});

@@ -8,14 +8,12 @@ namespace base {
     public:
         struct Config : public SessionFactory::Config {
             Config(
-                Resolver &r, qrpc_time_t session_timeout, bool is_listner, const MaybeCertPair &p
-            ) : SessionFactory::Config(r, session_timeout, is_listner, p) {}
+                Resolver &r, qrpc_time_t session_timeout, bool is_listener, const MaybeCertPair &p
+            ) : SessionFactory::Config(r, session_timeout, is_listener, p) {}
             static inline Config Default() { 
                 // default no timeout
                 return Config(NopResolver::Instance(), qrpc_time_sec(0), false, std::nullopt);
             }
-        public:
-            std::string cert, privkey;
         };
     public:
         class TcpSession : public Session, public IoProcessor {
@@ -35,6 +33,7 @@ namespace base {
             }
             inline bool migrated() const { return fd_ == INVALID_FD && hs().migrated(); }
             inline int Write(const char *p, size_t sz) { return hs().Write(*this, p, sz); }
+            inline int Writev(const char *pp[], size_t *psz, size_t sz) { return hs().Writev(*this, pp, psz, sz); }
             inline int Read(char *p, size_t sz) { return hs().Read(*this, p, sz); }
             // implements Session
             const char *proto() const override { return "TCP"; }
@@ -44,7 +43,7 @@ namespace base {
                 int r;
                 if (!hs().finished()) {
                     if ((r = hs().Handshake(*this, fd, e)) < 0) {
-                        return; // handshake is not finished yet, go on
+                        return; // handshake is not finished yet, go on (or closed)
                     }
                     if ((r = OnConnect()) < 0) {
                         Close(QRPC_CLOSE_REASON_LOCAL, r);
@@ -56,12 +55,7 @@ namespace base {
                         char buffer[4096];
                         int sz = sizeof(buffer);
                         if ((sz = Read(buffer, sz)) < 0) {
-                            int err = Syscall::Errno();
-                            if (Syscall::IOMayBlocked(err, false)) {
-                                return;
-                            }
-                            Close(QRPC_CLOSE_REASON_SYSCALL, err, Syscall::StrError(err));
-                            break;
+                            break; // close may called in each handshaker
                         }
                         if (sz == 0 || (sz = OnRead(buffer, sz)) < 0) {
                             Close((migrated() ? QRPC_CLOSE_REASON_MIGRATED :
@@ -76,7 +70,7 @@ namespace base {
         };
     public:
         TcpSessionFactory(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
-            SessionFactory(l, std::move(m), c), sessions_() { Init(); }
+            SessionFactory(l, std::move(m), c), sessions_() {}
         TcpSessionFactory(TcpSessionFactory &&rhs) :
             SessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {
             tls_ctx_ = rhs.tls_ctx_;
@@ -84,10 +78,7 @@ namespace base {
         }
         ~TcpSessionFactory() override { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(TcpSessionFactory);
-        void Fin() {
-            FinSessions(sessions_);
-            SessionFactory::Fin();
-        }
+        void Fin() { FinSessions(sessions_); }
         // implements SessionFactory
         Session *Open(const Address &a, FactoryMethod m) override {
             Fd fd = Syscall::Connect(a.sa(), a.salen());
@@ -162,7 +153,6 @@ namespace base {
         Fd fd() const { return fd_; }
         int port() const { return port_; }
         void Fin() {
-            TcpSessionFactory::Fin();
             if (fd_ != INVALID_FD) {
                 loop_.Del(fd_);
                 Syscall::Close(fd_);
@@ -201,6 +191,7 @@ namespace base {
         }
     protected:
         void Accept() {
+            ASSERT(is_listener());
             while (true) {
                 struct sockaddr_storage sa;
                 socklen_t salen = sizeof(sa);
@@ -368,6 +359,7 @@ namespace base {
         UdpSessionFactory(UdpSessionFactory &&rhs) : SessionFactory(std::move(rhs)),
             batch_size_(rhs.batch_size_), stream_write_(rhs.stream_write_),
             write_buffers_(std::move(rhs.write_buffers_)) {}
+        ~UdpSessionFactory() override {}
         DISALLOW_COPY_AND_ASSIGN(UdpSessionFactory);
     public:
         Fd CreateSocket(int port, bool *overflow_supported) {
@@ -514,7 +506,7 @@ namespace base {
         UdpListener(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
             UdpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0),
             overflow_supported_(false), sessions_(),
-            read_packets_(batch_size_), read_buffers_(batch_size_) { SetupPacket(); }
+            read_packets_(batch_size_), read_buffers_(batch_size_) { Init(); }
         UdpListener(UdpListener &&rhs);
         ~UdpListener() override { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(UdpListener);
@@ -522,6 +514,7 @@ namespace base {
         Fd fd() const { return fd_; }
         int port() const { return port_; }
     public:
+        void Init() { SetupPacket(); }
         void Fin() {
             FinSessions(sessions_);
             if (fd_ != INVALID_FD) {

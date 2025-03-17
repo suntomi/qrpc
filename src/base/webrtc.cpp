@@ -27,14 +27,8 @@ namespace base {
 namespace webrtc {
 
 // ConnectionFactory
-int ConnectionFactory::Init() {
+int ConnectionFactory::Start() {
   int r;
-  if ((r = GlobalInit(alarm_processor())) < 0) {
-    return r;
-  }
-  if ((r = config_.Derive()) < 0) {
-    return r;
-  }
   if ((r = Setup())) {
     return r;
   }
@@ -43,6 +37,16 @@ int ConnectionFactory::Init() {
       [this]() { return this->CheckTimeout(); },
       qrpc_time_now() + config_.connection_timeout
     );
+  }
+  return QRPC_OK;
+}
+int ConnectionFactory::Init() {
+  int r;
+  if ((r = GlobalInit(alarm_processor())) < 0) {
+    return r;
+  }
+  if ((r = config_.Derive()) < 0) {
+    return r;
   }
   return QRPC_OK;
 }
@@ -291,11 +295,11 @@ std::shared_ptr<Connection> ConnectionFactory::Create(
 
 // ConnectionFactory::Config
 int ConnectionFactory::Config::Derive() {
+  // derive auto configured values
   for (auto fp : RTC::DtlsTransport::GetLocalFingerprints()) {
     auto fpit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(fingerprint_algorithm);
     if (fpit == RTC::DtlsTransport::GetString2FingerprintAlgorithm().end()) {
       logger::die({{"ev","invalid fingerprint algorithm name"},{"algo", fingerprint_algorithm}});
-      return QRPC_EDEPS;
     }
     // TODO: SHA256 is enough?
     if (fp.algorithm == fpit->second) {
@@ -304,7 +308,6 @@ int ConnectionFactory::Config::Derive() {
   }
   if (fingerprint.length() <= 0) {
     logger::die({{"ev","no fingerprint for algorithm"},{"algo", fingerprint_algorithm}});
-    return QRPC_EDEPS;
   }
   if (ip.length() <= 0) {
     for (auto &a : Syscall::GetIfAddrs()) {
@@ -315,18 +318,17 @@ int ConnectionFactory::Config::Derive() {
     }
     if (ifaddrs.size() <= 0) {
       logger::die({{"ev","no if address detected"},{"in6",in6}});
-      return QRPC_EDEPS;
     }
   } else {
     logger::info({{"ev","add configured ip"},{"ip",ip}});
     ifaddrs.push_back(ip);
   }
-  if (certpair.has_value()) {
-    std::string r = certpair.value().TryAutogen(ifaddrs);
-    if (!r.empty()) {
-      logger::die({{"ev","fail to generate certpair"},{"reason",r}});
-      return QRPC_EDEPS;
-    }
+  if (certpair.has_value() && certpair.value().empty()) {
+    QRPC_LOGJ(info, {
+      {"ev","set hostname to empty certpair for auto generation"},
+      {"hostnames",ifaddrs},{"cert",certpair.value().cert},{"privkey",certpair.value().privkey}}
+    );
+    certpair.value().hostnames = ifaddrs;
   }
   return QRPC_OK;
 }
@@ -1921,7 +1923,7 @@ bool Client::Connect(const std::string &host, int port, const std::string &path)
       {.protocol = ConnectionFactory::Port::TCP, .port = 0}
     };
     int r;
-    if ((r = Init()) < 0) {
+    if ((r = Start()) < 0) {
       QRPC_LOGJ(error, {{"ev","fail to init conection factory"},{"rc",r}});
       return r;
     }
@@ -1984,8 +1986,8 @@ bool Listener::Listen(
     {.protocol = ConnectionFactory::Port::UDP, .port = port},
     {.protocol = ConnectionFactory::Port::TCP, .port = port}
   };
-  if ((r = Init()) < 0) {
-    logger::error({{"ev","fail to init server"},{"rc",r}});
+  if ((r = Start()) < 0) {
+    logger::error({{"ev","fail to start server"},{"rc",r}});
     return false;
   }
   router_.Route(std::regex(path), [this](HttpSession &s, std::cmatch &) {

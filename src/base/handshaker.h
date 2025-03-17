@@ -10,6 +10,7 @@ namespace base {
     virtual int Handshake(Session &s, Fd fd, const IoProcessor::Event &ev) = 0;
     virtual int Read(Session &s, char *p, size_t sz) = 0;
     virtual int Write(Session &s, const char *p, size_t sz) = 0;
+    virtual int Writev(Session &s, const char *pp[], qrpc_size_t *psz, qrpc_size_t sz)  = 0;
     virtual void MigrateTo(Handshaker &hs) = 0;
     virtual bool migrated() const = 0;
     static Handshaker *Create(Session &s);
@@ -32,10 +33,21 @@ namespace base {
       return QRPC_OK;
     }
     int Read(Session &s, char *p, size_t sz) override {
-      return Syscall::Read(s.fd(), p, sz);
+      int r = Syscall::Read(s.fd(), p, sz);
+      if (r < 0) {
+        int err = Syscall::Errno();
+        if (Syscall::IOMayBlocked(err, false)) {
+            return r;
+        }
+        s.Close(QRPC_CLOSE_REASON_SYSCALL, err, Syscall::StrError(err));
+      }
+      return r;
     }
     int Write(Session &s, const char *p, size_t sz) override {
       return Syscall::Write(s.fd(), p, sz);
+    }
+    int Writev(Session &s, const char *pp[], qrpc_size_t *psz, qrpc_size_t sz) override {
+      return Syscall::Writev(s.fd(), pp, psz, sz);
     }
     void MigrateTo(Handshaker &hs) override {
       auto ths = dynamic_cast<Handshaker *>(&hs);
@@ -53,59 +65,28 @@ namespace base {
     }
     SSL *ssl() { return ssl_; }
     static SSL_CTX *ctx();
-    int Handshake(Session &s, Fd fd, const IoProcessor::Event &ev) override {
-      ASSERT(ssl_ != nullptr);
-      int r;
-      // サーバーモードかクライアントモードか
-      if (s.factory().is_listener()) {
-        r = SSL_accept(ssl_);
-      } else {
-        r = SSL_connect(ssl_);
-      }
-      if (r == 1) {
-        finish();
-        return QRPC_OK;
-      }
-      int ssl_err = SSL_get_error(ssl_, r);
-      if (ssl_err == SSL_ERROR_WANT_READ) {
-        if ((r = s.factory().loop().Mod(fd, Loop::EV_READ)) < 0) {
-          s.Close(QRPC_CLOSE_REASON_SYSCALL, r);
-          return QRPC_ESYSCALL;
-        }
-        return QRPC_OK; // イベントループで待機
-      } else if (ssl_err == SSL_ERROR_WANT_WRITE) {
-        if ((r = s.factory().loop().Mod(fd, Loop::EV_WRITE)) < 0) {
-          s.Close(QRPC_CLOSE_REASON_SYSCALL, r);
-          return QRPC_ESYSCALL;
-        }
-        return QRPC_OK; // イベントループで待機
-      } else {
-        char err_buf[4096];
-        ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-        QRPC_LOGJ(error, {{"ev", "SSL handshake error"}, {"code", ssl_err}, {"err", err_buf}});
-        s.Close(QRPC_CLOSE_REASON_PROTOCOL, ssl_err, err_buf);
-        return QRPC_ESYSCALL;
-      } 
-    }
-    int Read(Session &s, char *p, size_t sz) override {
-      ASSERT(ssl_ != nullptr);
-      int r = SSL_read(ssl_, p, sz);
-      if (r > 0) {
-        return r; // 読み込み成功
-      }
-      int ssl_err = SSL_get_error(ssl_, r);
-      if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
-        return QRPC_EAGAIN;
-      } else {
-        char err_buf[4096];
-        ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-        QRPC_LOGJ(error, {{"ev", "SSL read error"}, {"code", ssl_err}, {"err", err_buf}});
-        s.Close(QRPC_CLOSE_REASON_PROTOCOL, ssl_err, err_buf);
-        return QRPC_ESYSCALL;
-      }        
-    }
+    int Handshake(Session &s, Fd fd, const IoProcessor::Event &ev) override;
+    int Read(Session &s, char *p, size_t sz) override;
     int Write(Session &s, const char *p, size_t sz) override {
       return SSL_write(ssl_, p, sz);
+    }
+    int Writev(Session &s, const char *pp[], qrpc_size_t *psz, qrpc_size_t sz) override {
+      size_t tsz = 0;
+      for (size_t i = 0; i < sz; i++) {
+        tsz += psz[i];
+      }
+      char *p = (char *)Syscall::MemAlloc(tsz);
+      if (p == nullptr) {
+        return QRPC_EALLOC;
+      }
+      size_t off = 0;
+      for (size_t i = 0; i < sz; i++) {
+        Syscall::MemCopy(p + off, pp[i], psz[i]);
+        off += psz[i];
+      }
+      int r = SSL_write(ssl_, p, tsz);
+      Syscall::MemFree(p);
+      return r;
     }
     void MigrateTo(Handshaker &hs) override {
       auto ths = dynamic_cast<TlsHandshaker *>(&hs);

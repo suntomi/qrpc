@@ -18,27 +18,28 @@ namespace base {
     class CertificatePair {
     public:
         std::string cert, privkey;
+        std::vector<std::string> hostnames;
     public:
-        bool need_autogen() const {
-            return !Syscall::FileExists(cert) && !Syscall::FileExists(privkey);
+        bool empty() const {
+          return (!Syscall::FileExists(cert) || !Syscall::FileExists(privkey)) && hostnames.empty();
         }
-        std::string TryAutogen(const std::vector<std::string> &ifaddrs);
+        bool need_autogen() const { return hostnames.size() > 0; }
+        std::string TryAutoGen();
+        static inline CertificatePair Default() { return CertificatePair(); }
     };
     typedef std::optional<CertificatePair> MaybeCertPair;
     class SessionFactory {
     public:
         struct Config {
             Config(Resolver &r, qrpc_time_t st, bool is_listener, const MaybeCertPair p = std::nullopt) :
-              resolver(r), session_timeout(st), is_listener(false), certpair(p.has_value() ? p.value() : CertificatePair()) {}
-						inline const std::string &cert() const { return certpair.cert; }
-						inline const std::string &privkey() const { return certpair.privkey; }
+              resolver(r), session_timeout(st), is_listener(is_listener), certpair(p) {}
             static inline Config Default() { 
                 // default no timeout
                 return Config(NopResolver::Instance(), qrpc_time_sec(0), false);
             }
         public:
             Resolver &resolver;
-						CertificatePair certpair;
+						MaybeCertPair certpair;
             qrpc_time_t session_timeout;
             bool is_listener;
         };
@@ -192,11 +193,11 @@ namespace base {
     public:
         SessionFactory(Loop &l, FactoryMethod &&m) :
             loop_(l), resolver_(NopResolver::Instance()), alarm_processor_(l.alarm_processor()),
-            factory_method_(m), cert_(), privkey_(), session_timeout_(0ULL), is_listener_(false) { Init(); }
+            factory_method_(m), certpair_(std::nullopt), session_timeout_(0ULL), is_listener_(false) { Init(); }
         SessionFactory(Loop &l, FactoryMethod &&m, Config c) :
             loop_(l), resolver_(c.resolver), alarm_processor_(l.alarm_processor()),
-            factory_method_(m), cert_(c.cert()), privkey_(c.privkey()),
-						session_timeout_(c.session_timeout), is_listener_(c.is_listener) { Init(); }
+            factory_method_(m), certpair_(c.certpair), session_timeout_(c.session_timeout), 
+            is_listener_(c.is_listener) { Init(); }
         SessionFactory(SessionFactory &&rhs);
         virtual ~SessionFactory() { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(SessionFactory);
@@ -205,7 +206,7 @@ namespace base {
         inline AlarmProcessor &alarm_processor() { return alarm_processor_; }
         inline qrpc_time_t session_timeout() const { return session_timeout_; }
         inline bool is_listener() const { return is_listener_; }
-        inline bool need_tls() const { return !cert_.empty() && !privkey_.empty(); }
+        inline bool need_tls() const { return certpair_.has_value(); }
         inline SSL_CTX *tls_ctx() const { return tls_ctx_; }
         template <class F> F &to() { return static_cast<F&>(*this); }
         template <class F> const F &to() const { return static_cast<const F&>(*this); }
@@ -259,7 +260,7 @@ namespace base {
         Resolver &resolver_;
         AlarmProcessor &alarm_processor_;
         AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
-				std::string cert_, privkey_;
+				MaybeCertPair certpair_;
 				SSL_CTX *tls_ctx_{nullptr};
         qrpc_time_t session_timeout_;
         bool is_listener_;

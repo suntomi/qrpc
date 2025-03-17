@@ -58,7 +58,6 @@ namespace base {
         err = "Failed to convert BIGNUM to ASN1_INTEGER";
         goto end;
       }
-      BN_free(bn);
       if (X509_set_serialNumber(x509, serialNumber) != 1) {
         err = "Failed to set serial number";
         goto end;
@@ -113,9 +112,9 @@ namespace base {
       
       std::string san;
       for (size_t i = 0; i < hostnames.size(); i++) {
-          if (i > 0) san += ",";
-          san += "DNS:" + hostnames[i];
+          san += "DNS:" + hostnames[i] + ",";
       }
+      san += "DNS:localhost";
       X509_EXTENSION* ext = X509V3_EXT_conf_nid(
         nullptr, &ctx, NID_subject_alt_name, 
         const_cast<char*>(san.c_str()));

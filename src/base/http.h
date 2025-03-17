@@ -217,9 +217,9 @@ namespace base {
             if (body != nullptr) {
                 ptrs[hsz + 2] = body;
                 sizes[hsz + 2] = bsz;
-                return Syscall::Writev(fd_, ptrs, sizes, hsz + 3);
+                return Writev(ptrs, sizes, hsz + 3);
             } else {
-                return Syscall::Writev(fd_, ptrs, sizes, hsz + 2);
+                return Writev(ptrs, sizes, hsz + 2);
             }
         }
         virtual Callback &callback() = 0;
@@ -569,13 +569,9 @@ namespace base {
             while (true) {
                 char buffer[sz];
                 if ((r = read_frame(buffer, sz)) < 0) {
-                    if (r == QRPC_EAGAIN) {
-                        return;
-                    }
-                    Close(QRPC_CLOSE_REASON_SYSCALL, r);
                     break;
                 }
-                if (r == 0 || (r = OnRead(buffer, (size_t)r)) < 0) {
+                if (r == 0 || (r = OnRead(buffer, (size_t)r)) < 0) { // EOF or protocol error
                     Close(r == 0 ? QRPC_CLOSE_REASON_REMOTE : QRPC_CLOSE_REASON_LOCAL, r);
                     break;
                 }
@@ -1112,7 +1108,7 @@ namespace base {
             return ws;
         }
     public:
-        static inline int send_handshake_request(Fd fd,
+        static inline int send_handshake_request(TcpSession &s,
             const char *host, const char *key, const char *origin, const char *protocol = nullptr) {
             /*
             * send client handshake
@@ -1142,9 +1138,9 @@ namespace base {
                     "Sec-WebSocket-Version: 13\r\n\r\n",
                     host, key, origin, protocol ? proto_header : "");
             TRACE("ws request %s\n", buff);
-            return Syscall::Write(fd, buff, sz);
+            return s.Write(buff, sz);
         }
-        static inline int send_handshake_response(Fd fd, const char *accept_key) {
+        static inline int send_handshake_response(TcpSession &s, const char *accept_key) {
             /*
             * send server handshake
             * ex)
@@ -1161,7 +1157,7 @@ namespace base {
                     "Sec-WebSocket-Accept: %s\r\n\r\n",
                     accept_key);
             TRACE("ws response %s\n", buff);
-            return Syscall::Write(fd, buff, sz);
+            return s.Write(buff, sz);
         }
     };
 
