@@ -182,8 +182,9 @@
           console.log("close", track.path);
           event.stopPropagation();
           try {
+            const receiver = track.isReceiver ? track.cname : cname;
             await c.closeMedia(track.directory);
-            streams.receivers[track.cname]?.close(); // close chat stream too
+            streams.receivers[receiver]?.close(); // close chat stream too
           } catch (e) {
             console.error(e);
           }

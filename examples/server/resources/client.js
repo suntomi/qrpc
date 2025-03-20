@@ -316,7 +316,7 @@ class QRPClient {
         promise.resolve(data.args.sdp);
       } else if (
         data.fn == "resume_ack" || data.fn == "pause_ack" || data.fn == "close_ack" ||
-        data.fn == "sync_ack" || data.fn == "ping_ack"
+        data.fn == "sync_ack" || data.fn == "ping_ack" || data.fn == "publish_stream_ack"
       ) {
         promise.resolve();
       } else {

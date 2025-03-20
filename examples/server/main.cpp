@@ -68,6 +68,7 @@ public:
 };
 
 int main(int argc, char *argv[]) {
+    bool secure = (argc > 1) && !std::string(argv[1]).empty();
     bool alive = true;
     Loop l; {
     if (l.Open(1024) < 0) {
@@ -111,7 +112,7 @@ int main(int argc, char *argv[]) {
         .connection_timeout = qrpc_time_sec(60),
         .consent_check_interval = qrpc_time_sec(10),
         .fingerprint_algorithm = "sha-256",
-        .certpair = CertificatePair::Default(),
+        .certpair = secure ? std::optional(CertificatePair::Default()) : std::nullopt,
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
         logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
