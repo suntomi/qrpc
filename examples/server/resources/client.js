@@ -389,8 +389,10 @@ class QRPClient {
     // Store pc object and token
     this.pc = pc;
     this.initIce();
-    this.#setupCallbacks(pc);
-    await this.#handshake();
+    const waiter = new Promise((resolve) => {
+      this.#setupCallbacks(pc, resolve);
+    });
+    await this.#handshake(waiter);
   }
   async #createPeerConnection() {
     if (!this.cert) {
@@ -405,7 +407,7 @@ class QRPClient {
       certificates: [this.cert]
     });
   }
-  #setupCallbacks(pc) {
+  #setupCallbacks(pc, resolve) {
     // Listen for data channels
     pc.ondatachannel = (event) => {       
       const s = event.channel;
@@ -471,6 +473,7 @@ class QRPClient {
       switch(pc.connectionState) {
         case "connected":
           // The connection has become fully connected
+          resolve();
           break;
         case "disconnected":
         case "failed":
@@ -687,8 +690,11 @@ class QRPClient {
       throw new Error("handshake only called once in a session");
     }
     // generate syscall stream (it also ensures that SDP for data channel is generated)
-    this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM, {
-      onmessage: this.#syscallMessageHandler.bind(this)
+    const syscallReady = new Promise((resolve, reject) => {
+      this.syscallStream = this.openStream(QRPClient.SYSCALL_STREAM, {
+        onmessage: this.#syscallMessageHandler.bind(this),
+        onopen: (s, e) => resolve(e), onerror: (s, e) => reject(e)
+      });
     });
     const sdpGen = this.#incSdpGen();
     const sentTracks = [...this.sentTracks];
@@ -730,6 +736,7 @@ class QRPClient {
       console.log("id", this.id);
 
       await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
+      await syscallReady;
       if (this.onopen) {
         this.context = await this.onopen();
       }  
@@ -1043,6 +1050,12 @@ class QRPClient {
     });
     s.onclose = (h.onclose && ((event) => {
       h.onclose(s, event);
+      delete this.streams[path];
+    })) || ((event) => {
+      delete this.streams[path];
+    });
+    s.onerror = (h.onerror && ((event) => {
+      h.onerror(s, event);
       delete this.streams[path];
     })) || ((event) => {
       delete this.streams[path];
