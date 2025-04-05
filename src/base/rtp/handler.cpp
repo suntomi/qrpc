@@ -153,7 +153,7 @@ namespace rtp {
 			}
 			QRPC_LOGJ(info, {{"ev","media closed"},{"path",media_path}});
 			closed_paths.push_back(media_path);
-			ccit->close();
+			ccit->Close();
 		}
 		return true;
 	}
@@ -424,7 +424,7 @@ namespace rtp {
 			h.SendToStream(stream_label, data, len);
 		}
 	}
-	bool Handler::CloseStream(const MediaStreamConfig &config, std::string &error) {
+	bool Handler::CloseStream(MediaStreamConfig &config, std::string &error) {
 		if (config.sender()) {
 			auto *c = FindConsumerByPath(config.media_path);
 			if (c != nullptr) {
@@ -437,6 +437,22 @@ namespace rtp {
 		} else if (config.receiver()) {
 			auto *p = FindProducerByPath(config.media_path);
 			if (p != nullptr) {
+				// preserve ssrcs related with the producer. because if chrome has 2 tabs which connects to qrpc server, 
+				// later one does not send rid/mid to the server. so remember ssrc => rid mapping of previous setting and 
+				auto &map_ref = ssrc_rid_complement_map_;
+				for (const auto &kv : p->GetRtpStreams()) {
+					const auto &rid = kv.first->GetRid();
+					const auto ssrc = kv.first->GetSsrc();
+					if (!rid.empty()) {
+						auto it = map_ref.find(ssrc);
+						if (it == map_ref.end()) {
+							QRPC_LOGJ(info, {{"ev","new complement rid mapping"},{"ssrc",ssrc},{"rid",rid},{"media_path",config.media_path}});
+							map_ref[ssrc] = { .rid = rid, .complemented = false };
+						} else {
+							it->second.complemented = false;
+						}
+					}
+				}
 				CloseProducer(p);
 			} else {
 				error = "no producer found for path:" + config.media_path;
@@ -479,6 +495,31 @@ namespace rtp {
 		}
 		puts("================================");
 #endif
+	}
+	void Handler::ReceiveRtpPacket(RTC::RtpPacket* packet) {
+		auto ssrc = packet->GetSsrc();
+		auto it = ssrc_rid_complement_map_.find(ssrc);
+		if (it != ssrc_rid_complement_map_.end() && !it->second.complemented) {
+			// Apply the Transport RTP header extension id for rid so ReadRid can work properly
+			packet->SetRidExtensionId(this->recvRtpHeaderExtensionIds.rid);
+			std::string rid;
+			if (!packet->ReadRid(rid) || rid.empty()) {
+				QRPC_LOGJ(info, {{"ev","complement rid"},{"ssrc",ssrc},{"rid",rid},{"rid_ext_id", ext_ids().rid}});
+				packet->UpdateExtensions({
+					RTC::RtpPacket::GenericExtension(
+						ext_ids().rid, it->second.rid.length(), 
+						const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(it->second.rid.c_str()))
+					)
+				});
+#if !defined(NDEBUG)
+				// check rid set correctly
+				packet->SetRidExtensionId(this->recvRtpHeaderExtensionIds.rid);
+				ASSERT(packet->ReadRid(rid) && rid == it->second.rid);
+#endif
+			}
+			it->second.complemented = true;
+		}
+		RTC::Transport::ReceiveRtpPacket(packet);
 	}
 	Producer *Handler::Produce(const MediaStreamConfig &p) {
 		auto producer = producer_factory_.Create(p);

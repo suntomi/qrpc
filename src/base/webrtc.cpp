@@ -1607,7 +1607,7 @@ int ConnectionFactory::Connection::SendToStream(
 
 void ConnectionFactory::Connection::RecvStreamClosed(uint32_t ssrc) {
   if (srtp_recv_ != nullptr) {
-    QRPC_LOGJ(info, {{"ev","recv stream closed"},{"ssrc",ssrc},{"cname",cname_}});
+    // QRPC_LOGJ(info, {{"ev","recv stream closed"},{"ssrc",ssrc},{"cname",cname_}});
     srtp_recv_->RemoveStream(ssrc);
   }
 }

@@ -36,7 +36,7 @@ namespace rtp {
     void OnProducerManuallyClosed() {
       for (auto &c : handler().listener().media_stream_configs()) {
         if (c.media_path == media_path_) {
-          c.close();
+          c.Close();
           return;
         }
       }

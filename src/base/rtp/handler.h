@@ -39,6 +39,7 @@ namespace rtp {
     inline bool sender() const { return direction == Direction::SEND; }
     inline bool receiver() const { return direction == Direction::RECV; }
     inline bool probator() const { return mid == RTC::RtpProbationGenerator::GetMidValue(); }
+    inline bool closed() const { return this->close_flag != 0; }
     inline const std::string media_stream_track_id() const {
       return probator() ? mid : media_path;
     }
@@ -65,10 +66,8 @@ namespace rtp {
       }
     }
     bool GenerateCN(std::string &cname) const;
-    bool closed() const { return this->close_flag != 0; }
-    void close() { this->close_flag = 1; }
-    // ok to reset to 0
-    void Reuse() { this->reuse_count++; }
+    void Close() { this->close_flag = 1; }
+    void Reuse() { this->reuse_count++; } // ok to reset to 0
     void Reconnect() { this->reconnect_count++; }
     void Reset() {
       auto new_seed = GenerateSsrc();
@@ -83,7 +82,12 @@ namespace rtp {
     std::string media_path;
     Direction direction{ Direction::RECV };
     ControlOptions options;
+    std::map<uint32_t, std::string> related_ssrcs; // for producer, previously related ssrcs and rid (if any)
     uint8_t close_flag{0}, reuse_count{0}, reconnect_count{0};
+  };
+  struct RidComplement {
+    std::string rid;
+    bool complemented;
   };
   class MediaStreamConfigs : public std::vector<MediaStreamConfig> {
   public:
@@ -197,7 +201,7 @@ namespace rtp {
       MediaStreamConfigs &media_stream_configs, std::vector<std::string> &closed_paths, std::string &error);
     bool Consume(Handler &peer, const MediaStreamConfig &config, std::string &error);
     bool ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error);
-    bool CloseStream(const MediaStreamConfig &config, std::string &error);
+    bool CloseStream(MediaStreamConfig &config, std::string &error);
     bool Pause(const std::string &path, std::string &error);
     bool Resume(const std::string &path, std::string &error);
     bool Ping(std::string &error);
@@ -252,7 +256,7 @@ namespace rtp {
     void CloseProducer(Producer *p);
     void DumpChildren(); // dump consumer and producer created by this handler
   public:
-    void ReceiveRtpPacket(RTC::RtpPacket* packet) { RTC::Transport::ReceiveRtpPacket(packet); }
+    void ReceiveRtpPacket(RTC::RtpPacket* packet);
     void ReceiveRtcpPacket(RTC::RTCP::Packet* packet) { RTC::Transport::ReceiveRtcpPacket(packet); }
     void DataSent(size_t len) { RTC::Transport::DataSent(len); }
     void Connected() { RTC::Transport::Connected(); }
@@ -291,6 +295,7 @@ namespace rtp {
     std::map<std::string, std::shared_ptr<base::Stream>> published_streams_;
     std::map<Media::Id, std::shared_ptr<Media>> medias_;
     std::map<Media::Mid, std::string> mid_media_path_map_;
+    std::map<uint32_t, RidComplement> ssrc_rid_complement_map_;
   };
 }
 }
