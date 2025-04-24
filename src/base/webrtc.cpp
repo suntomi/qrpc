@@ -529,6 +529,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             {"mid_media_path_map",c.rtp_handler().mid_media_path_map()}
           });
         } else if (fn == "pause") {
+          if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
           const auto pit = args.find("path");
           if (pit == args.end()) {
             RAISE("no value for key 'path'");
@@ -539,6 +540,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           }
           Call("pause_ack",msgid,{});
         } else if (fn == "resume") {
+          if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
           const auto pit = args.find("path");
           if (pit == args.end()) {
             RAISE("no value for key 'path'");
@@ -550,6 +552,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           Call("resume_ack",msgid,{});
         } else if (fn == "ping") {
           std::string error;
+          if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
           if (!c.rtp_handler().Ping(error)) {
             RAISE("fail to ping:" + error);
           }
