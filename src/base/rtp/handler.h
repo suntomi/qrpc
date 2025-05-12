@@ -56,14 +56,12 @@ namespace rtp {
     inline const std::string media_stream_id() const {
       if (probator()) { return mid; }
       auto cs = str::Split(media_path, "/");
-      if (cs.size() == 3) {
-        return cs[0] + "/" + cs[1] + "/" + std::to_string(this->reuse_count);
-      } else if (cs.size() == 2) {
-        return cs[0] + "/" + std::to_string(this->reuse_count);
-      } else {
+      if (cs.size() <= 1) {
         ASSERT(false);
         return "";
       }
+      cs[cs.size() - 1] = std::to_string(this->reuse_count);
+      return str::Join(cs, "/");
     }
     bool GenerateCN(std::string &cname) const;
     void Close() { this->close_flag = 1; }
@@ -85,9 +83,10 @@ namespace rtp {
     std::map<uint32_t, std::string> related_ssrcs; // for producer, previously related ssrcs and rid (if any)
     uint8_t close_flag{0}, reuse_count{0}, reconnect_count{0};
   };
-  struct RidComplement {
+  struct StreamRecoveryContext {
     std::string rid;
-    bool complemented;
+    uint32_t rtp_roc; // rollover counter for recovered rtp stream, to work srtp decryption works correctly
+    bool recovered;
   };
   class MediaStreamConfigs : public std::vector<MediaStreamConfig> {
   public:
@@ -145,6 +144,7 @@ namespace rtp {
         uint32_t ppid,
         onQueuedCallback* = nullptr)                             = 0;
       virtual void SendSctpData(const uint8_t* data, size_t len) = 0;
+      virtual bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, MediaStreamConfig::Direction dir) = 0;
       virtual const Config &GetRtpConfig() const = 0;
     };
     typedef Listener::onSendCallback onSendCallback;
@@ -158,6 +158,7 @@ namespace rtp {
     inline const absl::flat_hash_map<std::string, RTC::Consumer*> &consumers() const { return this->mapConsumers; }
     inline const absl::flat_hash_map<std::string, RTC::Producer*> &producers() const { return this->mapProducers; }
     inline const std::map<Media::Mid, Media::Id> mid_media_path_map() const { return mid_media_path_map_; }
+    inline std::map<uint32_t, StreamRecoveryContext> &ssrc_stream_recovery_map() { return ssrc_stream_recovery_map_; }
     inline int SendToStream(const std::string &path, const char *data, size_t len) {
       return listener_.SendToStream(path, data, len);
     }
@@ -295,7 +296,7 @@ namespace rtp {
     std::map<std::string, std::shared_ptr<base::Stream>> published_streams_;
     std::map<Media::Id, std::shared_ptr<Media>> medias_;
     std::map<Media::Mid, std::string> mid_media_path_map_;
-    std::map<uint32_t, RidComplement> ssrc_rid_complement_map_;
+    std::map<uint32_t, StreamRecoveryContext> ssrc_stream_recovery_map_;
   };
 }
 }

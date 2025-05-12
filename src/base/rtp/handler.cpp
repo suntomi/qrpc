@@ -439,17 +439,26 @@ namespace rtp {
 			if (p != nullptr) {
 				// preserve ssrcs related with the producer. because if chrome has 2 tabs which connects to qrpc server, 
 				// later one does not send rid/mid to the server. so remember ssrc => rid mapping of previous setting and 
-				auto &map_ref = ssrc_rid_complement_map_;
+				auto &map_ref = ssrc_stream_recovery_map_;
 				for (const auto &kv : p->GetRtpStreams()) {
 					const auto &rid = kv.first->GetRid();
 					const auto ssrc = kv.first->GetSsrc();
 					if (!rid.empty()) {
+						// also records rollover counter because chrome keep rollover counter even if media section is reused by another track.
+						uint32_t roc;
+						if (!listener().GetRtpRoc(ssrc, roc, config.direction)) {
+							QRPC_LOGJ(info, {{"ev", "fail to get roc"},{"ssrc", ssrc},{"rid", rid}});
+							ASSERT(false);
+							continue;
+						}
 						auto it = map_ref.find(ssrc);
 						if (it == map_ref.end()) {
-							QRPC_LOGJ(info, {{"ev","new complement rid mapping"},{"ssrc",ssrc},{"rid",rid},{"media_path",config.media_path}});
-							map_ref[ssrc] = { .rid = rid, .complemented = false };
+							QRPC_LOGJ(info, {{"ev","new complement rid mapping"},{"ssrc",ssrc},{"rid",rid},{"media_path",config.media_path},{"roc",roc}});
+							map_ref[ssrc] = { .rid = rid, .rtp_roc = roc, .recovered = false, };
 						} else {
-							it->second.complemented = false;
+							QRPC_LOGJ(info, {{"ev","update complement rid mapping"},{"ssrc",ssrc},{"rid",rid},{"media_path",config.media_path},{"roc",roc}});
+							it->second.recovered = false;
+							it->second.rtp_roc = roc;
 						}
 					}
 				}
@@ -498,13 +507,12 @@ namespace rtp {
 	}
 	void Handler::ReceiveRtpPacket(RTC::RtpPacket* packet) {
 		auto ssrc = packet->GetSsrc();
-		auto it = ssrc_rid_complement_map_.find(ssrc);
-		if (it != ssrc_rid_complement_map_.end() && !it->second.complemented) {
-			// Apply the Transport RTP header extension id for rid so ReadRid can work properly
+		auto it = ssrc_stream_recovery_map_.find(ssrc);
+		if (it != ssrc_stream_recovery_map_.end() && !it->second.recovered) {
 			packet->SetRidExtensionId(this->recvRtpHeaderExtensionIds.rid);
 			std::string rid;
 			if (!packet->ReadRid(rid) || rid.empty()) {
-				QRPC_LOGJ(info, {{"ev","complement rid"},{"ssrc",ssrc},{"rid",rid},{"rid_ext_id", ext_ids().rid}});
+				QRPC_LOGJ(info, {{"ev","complement rid"},{"ssrc",ssrc},{"rid",rid},{"recover_rid",it->second.rid},{"rid_ext_id", ext_ids().rid}});
 				packet->UpdateExtensions({
 					RTC::RtpPacket::GenericExtension(
 						ext_ids().rid, it->second.rid.length(), 
@@ -517,7 +525,7 @@ namespace rtp {
 				ASSERT(packet->ReadRid(rid) && rid == it->second.rid);
 #endif
 			}
-			it->second.complemented = true;
+			it->second.recovered = true;
 		}
 		RTC::Transport::ReceiveRtpPacket(packet);
 	}

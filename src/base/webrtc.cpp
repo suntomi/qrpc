@@ -21,7 +21,13 @@
 #include "RTC/RtpPacket.hpp"
 #include "RTC/RTCP/Packet.hpp"
 
+#include <srtp.h>
+
 #include <algorithm>
+
+extern "C" {
+  void *srtp_get_stream(srtp_t srtp, uint32_t ssrc);
+}
 
 namespace base {
 namespace webrtc {
@@ -1218,6 +1224,57 @@ int ConnectionFactory::Connection::OnRtcpDataReceived(Session *session, const ui
 void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t sz) {
   // Decrypt the SRTP packet.
   auto decrypted = this->srtp_recv_->DecryptSrtp(const_cast<uint8_t*>(p), &sz);
+  if (!decrypted) {
+    // if roc exists, set it to corresponding stream and retry decryption
+    auto *packet = RTC::RtpPacket::Parse(p, sz);
+    auto ssrc = packet->GetSsrc();
+    auto rit = rtp_handler_->ssrc_stream_recovery_map().find(ssrc);
+    if (rit == rtp_handler_->ssrc_stream_recovery_map().end()) {
+      QRPC_LOGJ(warn, {{"ev","RTP packet received, but decryption fails (no recovery info)"},
+        {"proto","srtp"},{"ssrc",ssrc},
+        {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
+      });
+      delete packet;
+      return;
+    }
+    bool stream_added = srtp_get_stream(srtp_recv_->context(), htonl(ssrc)) != nullptr;
+    QRPC_LOGJ(warn, {{"ev","try recovery RTP stream context"},
+      {"proto","srtp"},{"ssrc",ssrc},
+      {"roc",rit->second.rtp_roc},{"seq",packet->GetSequenceNumber()},
+      {"stream_added",stream_added}
+    });
+    if (!stream_added) {
+      // create and add new stream for the ssrc, because libsrtp never add actual stream for it unless payload authentication passed,
+      // but authentication always fails if we do not set roc, which requires actual stream to exist
+      auto policy = RTC::SrtpSession::CreatePolicy(RTC::SrtpSession::Type::INBOUND, ssrc, srtp_crypto_suite_,
+        const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(srtp_remote_key_.c_str())), srtp_remote_key_.size());
+      if (srtp_stream_add(srtp_recv_->context(), &policy) != srtp_err_status_ok) {
+        QRPC_LOGJ(warn, {{"ev","fail to add stream to srtp"},{"ssrc",ssrc}});
+        ASSERT(false);
+        delete packet;
+        return;
+      }
+    } else {
+      QRPC_LOGJ(warn, {{"ev","stream already added"},{"ssrc",ssrc}});
+    }
+    // after adding stream, we can set roc to the stream, then decryption should be ok
+    auto roc = rit->second.rtp_roc;
+    if (srtp_stream_set_roc(srtp_recv_->context(), ssrc, roc) != srtp_err_status_ok) {
+      QRPC_LOGJ(warn, {{"ev","fail to set roc to stream"},{"ssrc",packet->GetSsrc()}});
+      ASSERT(false);
+      delete packet;
+      return;
+    }
+    if (!this->srtp_recv_->DecryptSrtp(const_cast<uint8_t*>(p), &sz)) {
+      QRPC_LOGJ(warn, {
+        {"ev","RTP packet received, but decryption fails (retry fails)"},
+        {"proto","srtp"},{"ssrc",packet->GetSsrc()},
+        {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
+      });
+      ASSERT(false);
+    }
+    delete packet;
+  }
   auto *packet = RTC::RtpPacket::Parse(p, sz);
   if (packet == nullptr) {
     QRPC_LOGJ(warn, {{"proto","rtcp"},
@@ -1227,16 +1284,7 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
     ASSERT(false);
     return;
   }
-  if (!decrypted) {
-    QRPC_LOGJ(warn, {
-      {"ev","RTP packet received, but decryption fails"},
-      {"proto","srtp"},{"ssrc",packet->GetSsrc()},
-      {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
-    });
-    delete packet;
-  } else {
-    rtp_handler_->ReceiveRtpPacket(packet); // deletes packet
-  }
+  rtp_handler_->ReceiveRtpPacket(packet); // deletes packet
 }
 int ConnectionFactory::Connection::OnRtpDataReceived(Session *session, const uint8_t *p, size_t sz) {
   TRACK();
@@ -1409,6 +1457,9 @@ void ConnectionFactory::Connection::OnDtlsTransportConnected(
     logger::error({{"ev","error creating SRTP sending session"},{"reason",error.what()}});
   }
   try {
+    // preserve remote key for initializing streams of srtp_recv_ session
+    srtp_crypto_suite_ = srtpCryptoSuite;
+    srtp_remote_key_.assign(reinterpret_cast<const char *>(srtpRemoteKey), srtpRemoteKeyLen);
     srtp_recv_.reset(new RTC::SrtpSession(
       RTC::SrtpSession::Type::INBOUND, srtpCryptoSuite, srtpRemoteKey, srtpRemoteKeyLen));
     OnDtlsEstablished();
@@ -1703,6 +1754,14 @@ void ConnectionFactory::Connection::SendRtcpCompoundPacket(RTC::RTCP::CompoundPa
 		this->ice_server_->GetSelectedSession()->Send(reinterpret_cast<const char *>(data), sz);
 		// Increase send transmission.
 		rtp_handler_->DataSent(sz);
+}
+bool ConnectionFactory::Connection::GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) {
+  auto srtp_session = dir == rtp::MediaStreamConfig::Direction::SEND ? srtp_send_.get() : srtp_recv_.get();
+  if (srtp_session == nullptr) {
+    ASSERT(false);
+    return false;
+  }
+  return srtp_stream_get_roc(srtp_session->context(), ssrc, &roc) == srtp_err_status_ok;
 }
 
 // client::WhipHttpProcessor, client::TcpSession, client::UdpSession

@@ -146,11 +146,12 @@ namespace rtp {
 		return "/p/" + rtp_id + "/" + path;
 	}
   Producer *ProducerFactory::Create(const MediaStreamConfig &p) {
+		ASSERT(p.receiver());
 		auto &fbb = Handler::GetFBB();
     auto m = handler_.FindFrom(p, false);
 		auto id = GenerateId(handler_.rtp_id(), p.media_path);
 		try {
-			Handler::SetProducerFactory([m, op = p](
+			Handler::SetProducerFactory([m, &op = p](
 				RTC::Shared* shared,
 		  	const std::string& id,
 		  	RTC::Producer::Listener *listener,

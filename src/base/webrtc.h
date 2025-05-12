@@ -309,6 +309,7 @@ namespace webrtc {
         rtp::Handler::QueueCB* = nullptr) override { ASSERT(false); }
       void SendSctpData(const uint8_t* data, size_t len) override { ASSERT(false); }
       const rtp::Handler::Config &GetRtpConfig() const override { return factory().config().rtp; }
+      bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) override;
     protected:
       qrpc_time_t last_active_;
       ConnectionFactory &factory_;
@@ -318,6 +319,8 @@ namespace webrtc {
       std::unique_ptr<RTC::DtlsTransport> dtls_transport_; // DTLS
       std::unique_ptr<RTC::SctpAssociation> sctp_association_; // SCTP
       std::unique_ptr<RTC::SrtpSession> srtp_send_, srtp_recv_; // SRTP
+      std::string srtp_remote_key_;
+      RTC::SrtpSession::CryptoSuite srtp_crypto_suite_{RTC::SrtpSession::CryptoSuite::AES_CM_128_HMAC_SHA1_80};
       std::shared_ptr<rtp::Handler> rtp_handler_; // RTP, RTCP
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       std::shared_ptr<SyscallStream> syscall_;

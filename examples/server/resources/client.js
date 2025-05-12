@@ -499,9 +499,9 @@ class QRPClient {
         this.endOfcandidates = true;
       }
     }
-    this.timer = setInterval(async () => {
+    this.timer = setInterval(() => {
       const now = (new Date()).getTime();
-      await this.#checkMedias(now);
+      this.#checkMedias(now);
     }, 1000); // 1秒ごとにチェック
   }
   parseLocalOffer(localOffer) {
@@ -532,7 +532,7 @@ class QRPClient {
     }
     return result;
   }
-  async #checkMedias(now) {
+  #checkMedias(now) {
     let mediaOpened = false;
     for (const k in this.medias) {
       const m = this.medias[k];
@@ -811,6 +811,7 @@ class QRPClient {
     const cpath = this.#canonicalOpenPath(path);
     console.log("openMedia", cpath, stream, encodings);
     if (!encodings) { throw new Error("encodings is mandatory"); }
+    if (encodings.length > 3) { throw new Error("encodings more than 3 may not be treated correctly"); }
     const ridScalabilityModeMap = {};
     let index = 0;
     encodings.forEach(e => {
