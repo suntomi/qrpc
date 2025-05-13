@@ -338,6 +338,130 @@ bool test_address() {
 }
 
 bool test_sdp() {
+auto ffsdp = R"sdp(
+v=0
+o=mozilla...THIS_IS_SDPARTA-99.0 8920281456325908719 0 IN IP4 0.0.0.0
+s=-
+t=0 0
+a=fingerprint:sha-256 7E:CA:45:33:7C:AC:13:54:4D:DC:94:93:E0:B4:E1:13:DA:86:C5:E9:C8:DD:BC:92:0D:4A:5D:C4:EB:B8:76:DE
+a=group:BUNDLE 0 1
+a=ice-options:trickle
+a=msid-semantic:WMS *
+m=audio 9 UDP/TLS/RTP/SAVPF 109 9 0 8 101
+c=IN IP4 0.0.0.0
+a=sendrecv
+a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
+a=extmap:2/recvonly urn:ietf:params:rtp-hdrext:csrc-audio-level
+a=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid
+a=fmtp:109 maxplaybackrate=48000;stereo=1;useinbandfec=1
+a=fmtp:101 0-15
+a=ice-pwd:e2bc5018ff4315d032fb7a529ec68e23
+a=ice-ufrag:873b3eeb
+a=mid:0
+a=msid:- {a8276c69-47dd-4873-be4e-015ab80fc90b}
+a=rtcp-mux
+a=rtpmap:109 opus/48000/2
+a=rtpmap:9 G722/8000/1
+a=rtpmap:0 PCMU/8000
+a=rtpmap:8 PCMA/8000
+a=rtpmap:101 telephone-event/8000/1
+a=setup:actpass
+a=ssrc:1979536866 cname:{3bb24ca0-9b81-473c-b912-22eaa550383b}
+m=video 9 UDP/TLS/RTP/SAVPF 120 124 121 125 126 127 97 98 105 106 103 104 99 100 123 122 119
+c=IN IP4 0.0.0.0
+a=sendrecv
+a=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid
+a=extmap:4 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
+a=extmap:5 urn:ietf:params:rtp-hdrext:toffset
+a=extmap:6/recvonly http://www.webrtc.org/experiments/rtp-hdrext/playout-delay
+a=extmap:7 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01
+a=fmtp:126 profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1
+a=fmtp:97 profile-level-id=42e01f;level-asymmetry-allowed=1
+a=fmtp:105 profile-level-id=42001f;level-asymmetry-allowed=1;packetization-mode=1
+a=fmtp:103 profile-level-id=42001f;level-asymmetry-allowed=1
+a=fmtp:120 max-fs=12288;max-fr=60
+a=fmtp:124 apt=120
+a=fmtp:121 max-fs=12288;max-fr=60
+a=fmtp:125 apt=121
+a=fmtp:127 apt=126
+a=fmtp:98 apt=97
+a=fmtp:106 apt=105
+a=fmtp:104 apt=103
+a=fmtp:100 apt=99
+a=fmtp:119 apt=122
+a=ice-pwd:e2bc5018ff4315d032fb7a529ec68e23
+a=ice-ufrag:873b3eeb
+a=mid:1
+a=msid:- {03dc3b2f-6415-4ce8-8626-5dc6273645db}
+a=rtcp-fb:120 nack
+a=rtcp-fb:120 nack pli
+a=rtcp-fb:120 ccm fir
+a=rtcp-fb:120 goog-remb
+a=rtcp-fb:120 transport-cc
+a=rtcp-fb:121 nack
+a=rtcp-fb:121 nack pli
+a=rtcp-fb:121 ccm fir
+a=rtcp-fb:121 goog-remb
+a=rtcp-fb:121 transport-cc
+a=rtcp-fb:126 nack
+a=rtcp-fb:126 nack pli
+a=rtcp-fb:126 ccm fir
+a=rtcp-fb:126 goog-remb
+a=rtcp-fb:126 transport-cc
+a=rtcp-fb:97 nack
+a=rtcp-fb:97 nack pli
+a=rtcp-fb:97 ccm fir
+a=rtcp-fb:97 goog-remb
+a=rtcp-fb:97 transport-cc
+a=rtcp-fb:105 nack
+a=rtcp-fb:105 nack pli
+a=rtcp-fb:105 ccm fir
+a=rtcp-fb:105 goog-remb
+a=rtcp-fb:105 transport-cc
+a=rtcp-fb:103 nack
+a=rtcp-fb:103 nack pli
+a=rtcp-fb:103 ccm fir
+a=rtcp-fb:103 goog-remb
+a=rtcp-fb:103 transport-cc
+a=rtcp-fb:99 nack
+a=rtcp-fb:99 nack pli
+a=rtcp-fb:99 ccm fir
+a=rtcp-fb:99 goog-remb
+a=rtcp-fb:99 transport-cc
+a=rtcp-fb:123 nack
+a=rtcp-fb:123 nack pli
+a=rtcp-fb:123 ccm fir
+a=rtcp-fb:123 goog-remb
+a=rtcp-fb:123 transport-cc
+a=rtcp-fb:122 nack
+a=rtcp-fb:122 nack pli
+a=rtcp-fb:122 ccm fir
+a=rtcp-fb:122 goog-remb
+a=rtcp-fb:122 transport-cc
+a=rtcp-mux
+a=rtcp-rsize
+a=rtpmap:120 VP8/90000
+a=rtpmap:124 rtx/90000
+a=rtpmap:121 VP9/90000
+a=rtpmap:125 rtx/90000
+a=rtpmap:126 H264/90000
+a=rtpmap:127 rtx/90000
+a=rtpmap:97 H264/90000
+a=rtpmap:98 rtx/90000
+a=rtpmap:105 H264/90000
+a=rtpmap:106 rtx/90000
+a=rtpmap:103 H264/90000
+a=rtpmap:104 rtx/90000
+a=rtpmap:99 AV1/90000
+a=rtpmap:100 rtx/90000
+a=rtpmap:123 ulpfec/90000
+a=rtpmap:122 red/90000
+a=rtpmap:119 rtx/90000
+a=setup:actpass
+a=ssrc:145062281 cname:{3bb24ca0-9b81-473c-b912-22eaa550383b}
+a=ssrc:3009270279 cname:{3bb24ca0-9b81-473c-b912-22eaa550383b}
+a=ssrc-group:FID 145062281 3009270279
+)sdp";
 auto sdp = R"sdp(
 offer sdp v=0
 o=- 8958639376013724045 2 IN IP4 127.0.0.1
@@ -518,8 +642,8 @@ a=setup:actpass
 a=mid:2
 a=sctp-port:5000
 a=max-message-size:262144
-})sdp";
-    auto s = base::webrtc::SDP(sdp);
+)sdp";
+    auto s = base::webrtc::SDP(ffsdp);
     QRPC_LOGJ(info, s);
     ASSERT(false);
     return true;

@@ -259,16 +259,32 @@ namespace rtp {
       kind = kindit->second;
     }
     this->mid = midit->get<std::string>();
+    auto portit = section.find("port");
+    if (portit == section.end()) {
+      answer = "section: no value for key 'port'";
+      ASSERT(false);
+      return false;
+    }
+    network.port = portit->get<uint16_t>();
+    if (network.port == 0) {
+      answer = "section: 0 is not allowed value for key 'port'";
+      ASSERT(false);
+      return false;
+    }
     auto rtcpit = section.find("rtcp");
     if (rtcpit != section.end()) {
       FIND_OR_RAISE(ait, rtcpit, "address");
       FIND_OR_RAISE(ipvit, rtcpit, "ipVer");
       FIND_OR_RAISE(ntit, rtcpit, "netType");
-      FIND_OR_RAISE(portit, rtcpit, "port");
+      FIND_OR_RAISE(portit2, rtcpit, "port");
       network.address = ait->get<std::string>();
       network.ip_ver = ipvit->get<uint16_t>();
       network.net_type = ntit->get<std::string>();
-      network.port = portit->get<uint16_t>();
+      if (network.port != portit2->get<uint16_t>()) {
+        answer = str::Format("rtcp port mismatch: %u != %u", network.port, portit2->get<uint16_t>());
+        ASSERT(false);
+        return false;
+      }
     }
     auto extmit = section.find("ext");
     if (extmit == section.end()) {
@@ -522,11 +538,35 @@ namespace rtp {
         }
       }
     }
-    auto has_ssrcs = false;
+    auto has_simulcast = false;
+    auto scit = section.find("simulcast");
+    if (scit != section.end()) {
+      has_simulcast = true;
+      FIND_OR_RAISE(dit, scit, "dir1");
+      FIND_OR_RAISE(lit, scit, "list1");
+      auto dir1 = dit->get<std::string>();
+      auto &rids = dir1 == "send" ? simulcast.send_rids : simulcast.recv_rids;
+      rids = lit->get<std::string>();
+      for (auto &rid : str::Split(rids, ";")) {
+        auto it = rid_scalability_mode_map.find(rid);
+        auto scalability_mode = it != rid_scalability_mode_map.end() ? it->second : "";
+        AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
+      }
+      auto d2it = scit->find("dir2");
+      if (d2it != scit->end()) {
+        FIND_OR_RAISE(l2it, scit, "list2");
+        auto dir2 = d2it->get<std::string>();
+        auto &rids = dir2 == "send" ? simulcast.send_rids : simulcast.recv_rids;
+        rids = l2it->get<std::string>();
+        for (auto &rid : str::Split(rids, ";")) {
+          auto it = rid_scalability_mode_map.find(rid);
+          auto scalability_mode = it != rid_scalability_mode_map.end() ? it->second : "";
+          AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
+        }
+      }
+    }
     auto ssrcit = section.find("ssrcs");
-    if (ssrcit != section.end()) {
-      has_ssrcs = true;
-      bool found = false;
+    if (!has_simulcast && ssrcit != section.end()) {
       for (auto it = ssrcit->begin(); it != ssrcit->end(); it++) {
         auto ait = it->find("attribute");
         if (ait == it->end()) {
@@ -547,7 +587,6 @@ namespace rtp {
               ssrcit->second.msid = values[0];
               ssrcit->second.track_id = values[1];
             }
-            found = true;
           }
         } else if (ait->get<std::string>() == "cname") {
           auto idit = it->find("id");
@@ -575,43 +614,6 @@ namespace rtp {
           }
         }
       }
-      if (!found) {
-        answer = str::Format("fail to find ssrc/trackid relation");
-        QRPC_LOGJ(warn, {{"ev","failed to parse pt"},{"ssrcs",*ssrcit}});
-        ASSERT(false);
-        return false;
-      }
-    }
-    auto scit = section.find("simulcast");
-    if (scit != section.end()) {
-      if (has_ssrcs) {
-        answer = str::Format("does not support both a=ssrcs and a=simulcast attributes");
-        QRPC_LOGJ(warn, {{"ev","failed to parse pt"},{"ssrcs",*ssrcit}});
-        ASSERT(false);
-        return false;
-      }
-      FIND_OR_RAISE(dit, scit, "dir1");
-      FIND_OR_RAISE(lit, scit, "list1");
-      auto dir1 = dit->get<std::string>();
-      auto &rids = dir1 == "send" ? simulcast.send_rids : simulcast.recv_rids;
-      rids = lit->get<std::string>();
-      for (auto &rid : str::Split(rids, ";")) {
-        auto it = rid_scalability_mode_map.find(rid);
-        auto scalability_mode = it != rid_scalability_mode_map.end() ? it->second : "";
-        AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
-      }
-      auto d2it = scit->find("dir2");
-      if (d2it != scit->end()) {
-        FIND_OR_RAISE(l2it, scit, "list2");
-        auto dir2 = d2it->get<std::string>();
-        auto &rids = dir2 == "send" ? simulcast.send_rids : simulcast.recv_rids;
-        rids = l2it->get<std::string>();
-        for (auto &rid : str::Split(rids, ";")) {
-          auto it = rid_scalability_mode_map.find(rid);
-          auto scalability_mode = it != rid_scalability_mode_map.end() ? it->second : "";
-          AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
-        }
-      }
     }
     // cap also need headerExtensions parameter for checking which header extension supported
     cap.headerExtensions = this->headerExtensions;
@@ -631,7 +633,7 @@ namespace rtp {
     }
     if (network.port != 0 && network.ip_ver != 0) {
       sdplines += str::Format(
-        "a=rtcp:%llu %s IP%llu %s\na=rtcp-mux\na=rtcp-rsize",
+        "a=rtcp:%llu %s IP%llu %s\na=rtcp-mux\na=rtcp-rsize\n",
         network.port,
         network.address.c_str(),
         network.ip_ver,
@@ -646,14 +648,14 @@ namespace rtp {
         ASSERT(false);
         continue;
       }
-      sdplines += str::Format("\na=extmap:%u %s", hs[i].type, urit->second.c_str());
+      sdplines += str::Format("a=extmap:%u %s\n", hs[i].type, urit->second.c_str());
     }
     for (size_t i = 0; i < this->codecs.size(); i++) {
       auto &c = this->codecs[i];
       auto mimeTypeVec = str::Split(c.mimeType.ToString(), "/");
       if (c.channels > 1) {
         sdplines += str::Format(
-          "\na=rtpmap:%llu %s/%llu/%llu",
+          "a=rtpmap:%llu %s/%llu/%llu\n",
           c.payloadType,
           mimeTypeVec[1].c_str(),
           c.clockRate,
@@ -661,7 +663,7 @@ namespace rtp {
         );
       } else {
         sdplines += str::Format(
-          "\na=rtpmap:%llu %s/%llu",
+          "a=rtpmap:%llu %s/%llu\n",
           c.payloadType,
           mimeTypeVec[1].c_str(),
           c.clockRate
@@ -670,12 +672,12 @@ namespace rtp {
       for (auto &rtcpfb : c.rtcpFeedback) {
         if (rtcpfb.parameter.empty()) {
           sdplines += str::Format(
-            "\na=rtcp-fb:%llu %s",
+            "a=rtcp-fb:%llu %s\n",
             c.payloadType, rtcpfb.type.c_str()
           );
         } else {
           sdplines += str::Format(
-            "\na=rtcp-fb:%llu %s %s",
+            "a=rtcp-fb:%llu %s %s\n",
             c.payloadType, rtcpfb.type.c_str(), rtcpfb.parameter.c_str()
           );
         }
@@ -714,12 +716,12 @@ namespace rtp {
       }
       if (paramsline.empty()) {
         sdplines += str::Format(
-          "\na=fmtp:%llu x-google-start-bitrate=1000",
+          "a=fmtp:%llu x-google-start-bitrate=1000\n",
           c.payloadType
         );
       } else {
         sdplines += str::Format(
-          "\na=fmtp:%llu %s\na=fmtp:%llu x-google-start-bitrate=1000",
+          "a=fmtp:%llu %s\na=fmtp:%llu x-google-start-bitrate=1000\n",
           c.payloadType, paramsline.c_str(), c.payloadType
         );
       }
@@ -728,53 +730,52 @@ namespace rtp {
     bool has_ssrc = false;
     if (cname.empty()) {
       for (auto &kv : ssrcs) {
-        ssrcline += str::Format("\na=ssrc:%u cname:%s", kv.first, kv.second.cname.c_str());
+        ssrcline += str::Format("a=ssrc:%u cname:%s\n", kv.first, kv.second.cname.c_str());
         has_ssrc = true;
       }
     } else {
       // QRPC_LOGJ(info, {{"ev","cname is not empty"},{"encodings_size",encodings.size()},{"cname",cname}});
       // ASSERT(encodings.size() > 0);
       for (auto &e : encodings) {
-        ssrcline += str::Format("\na=ssrc:%u cname:%s", e.ssrc, cname.c_str());
+        ssrcline += str::Format("a=ssrc:%u cname:%s\n", e.ssrc, cname.c_str());
         has_ssrc = true;
         if (e.hasRtx) {
-          ssrcline += str::Format("\na=ssrc:%u cname:%s", e.rtx.ssrc, cname.c_str());
+          ssrcline += str::Format("a=ssrc:%u cname:%s\n", e.rtx.ssrc, cname.c_str());
         }
       }
     }
     if (has_ssrc) {
       for (auto &e : encodings) {
         if (e.hasRtx) {
-          ssrcline += str::Format("\na=ssrc-group:FID %u %u", e.ssrc, e.rtx.ssrc);
+          ssrcline += str::Format("a=ssrc-group:FID %u %u\n", e.ssrc, e.rtx.ssrc);
         }
       }
       // QRPC_LOGJ(info, {{"ev","add ssrcline"},{"ssrcline",ssrcline}});
       sdplines += ssrcline;
     }
-    std::string scline = "\na=simulcast:";
+    std::string scline = "a=simulcast:";
     bool has_sc = false;
     if (!simulcast.recv_rids.empty()) {
       for (auto s : str::Split(simulcast.recv_rids, ";")) {
-        sdplines += str::Format("\na=rid:%s send", s.c_str());
+        sdplines += str::Format("a=rid:%s send\n", s.c_str());
       }
       scline += str::Format(
-        "send %s", simulcast.recv_rids.c_str()
+        "send %s\n", simulcast.recv_rids.c_str()
       );
       has_sc = true;
     }
     if (!simulcast.send_rids.empty()) {
       for (auto s : str::Split(simulcast.send_rids, ";")) {
-        sdplines += str::Format("\na=rid:%s recv", s.c_str());
+        sdplines += str::Format("a=rid:%s recv\n", s.c_str());
       }
       scline += str::Format(
-        " recv %s", simulcast.send_rids.c_str()
+        " recv %s\n", simulcast.send_rids.c_str()
       );
       has_sc = true;
     }
     if (has_sc) {
       sdplines += scline;
     }
-    sdplines += "\n";
     return sdplines;
   }
 }
