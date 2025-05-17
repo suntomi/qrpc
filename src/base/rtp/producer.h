@@ -14,6 +14,7 @@ namespace rtp {
   class Handler;
   class Parameters;
   class MediaStreamConfig;
+  class RemoteAnswer;
   struct ProducerStatus {
     bool paused{ false };
     json ToJson() const;
@@ -23,19 +24,21 @@ namespace rtp {
   public:
     Producer(
       RTC::Shared* s, const std::string& id, Listener* l, 
-      const Parameters &original_params,
-      const FBS::Transport::ProduceRequest *p, std::shared_ptr<Media> m
-    ) : RTC::Producer(s, id, l, p), params_(original_params), media_(m) {}
+      Handler &handler, const FBS::Transport::ProduceRequest *p, std::shared_ptr<Media> m
+    ) : RTC::Producer(s, id, l, p), handler_(handler), media_(m) {}
     ~Producer() override {}
-    inline const Parameters &params() const { return params_; }
-    inline const std::string &media_path() const { return media_->label() + "/" + Parameters::FromMediaKind(params_.kind); }
+    const Parameters *params() const;
+    inline const std::string &media_path() const { return media_->label() + "/" + Parameters::FromMediaKind(GetKind()); }
     ProducerStatus status() const;
   public:
     static bool consumer_params(
       const RTC::RtpParameters &consumed_producer_params, const Capability &consumer_capability, Parameters &p
     );
+    bool ApplyAnswer(const RemoteAnswer &answer, std::string &error);
   protected:
-    Parameters params_;
+    bool ReplaceEncodings(std::vector<RTC::RtpEncodingParameters> &encodings, uint32_t old_ssrc, uint32_t new_ssrc);
+  protected:
+    Handler &handler_;
     std::shared_ptr<Media> media_;
   };
   class ProducerFactory {

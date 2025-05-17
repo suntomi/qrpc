@@ -46,6 +46,9 @@ namespace rtp {
     }
     const Parameters ToProbator() const;
     static std::string FromMediaKind(MediaKind k);
+    static inline std::string FromMediaKind(RTC::Media::Kind k) {
+      return FromMediaKind(static_cast<MediaKind>(static_cast<int>(k)));
+    }
     static std::optional<MediaKind> ToMediaKind(const std::string &kind);
     inline const std::string &RtpProtocol() const { return rtp_proto; }
     inline std::string MediaKindName() const { return FromMediaKind(kind); }
@@ -54,6 +57,35 @@ namespace rtp {
       const std::string &scalability_mode);
     void AddEncoding(uint32_t ssrc, uint32_t rtx_ssrc, 
       uint64_t pt, uint64_t rtxpt, bool dtx);
+    inline bool FixSsrc(uint32_t old_ssrc, uint32_t new_ssrc) {
+			if (!ReplaceEncodings(encodings, old_ssrc, new_ssrc)) {
+        ASSERT(false);
+				return false;
+			}
+			auto ssrcsit = this->ssrcs.find(old_ssrc);
+			if (ssrcsit == this->ssrcs.end()) {
+        ASSERT(false);
+				return false;
+			} else {
+				this->ssrcs[new_ssrc] = ssrcsit->second;
+        this->ssrcs.erase(ssrcsit);
+			}
+      return true;
+    }
+    static inline bool ReplaceEncodings(
+      std::vector<RTC::RtpEncodingParameters> &encodings, uint32_t old_ssrc, uint32_t new_ssrc
+    ) {
+        auto it = std::find_if(
+          encodings.begin(), encodings.end(),
+          [ssrc = old_ssrc](const auto &e) { return e.ssrc == ssrc; }
+        );
+        if (it == encodings.end()) {
+          ASSERT(false);
+          return false;
+        }
+        it->ssrc = new_ssrc;
+        return true;
+    }    
     static inline uint32_t GenerateSsrc() {
       return random::gen(100000000, 900000000);
     }

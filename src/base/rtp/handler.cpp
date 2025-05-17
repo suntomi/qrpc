@@ -174,12 +174,21 @@ namespace rtp {
 				continue;
 			}
 			// to find producer from peer, need to use local_path (path without cname and media kind)
-			auto consumed_producer = peer.FindProducerByPath(local_path + kind);
+			const auto *consumed_producer = peer.FindProducerByPath(local_path + kind);
 			if (consumed_producer == nullptr) {
 				QRPC_LOGJ(info, {
 					{"ev","ignore media because corresponding producer of peer not found"},
 					{"path",local_path + kind},{"peer",peer.rtp_id()}
 				});
+				continue;
+			}
+			auto params = consumed_producer->params();
+			if (params == nullptr) {
+				QRPC_LOGJ(error, {
+					{"ev","fail to get producer rtp params"},
+					{"path",local_path + kind},{"mid",consumed_producer->GetRtpParameters().mid}
+				});
+				ASSERT(false);
 				continue;
 			}
 			// set place holder for consumer that may be created
@@ -220,10 +229,10 @@ namespace rtp {
 				MediaStreamConfig::ControlOptions() : options_map.find(k)->second;
 			// copy additional parameter from producer that affects sdp generation
 			config.kind = k;
-			config.network = consumed_producer->params().network;
-			config.rtp_proto = consumed_producer->params().rtp_proto;
+			config.network = params->network;
+			config.rtp_proto = params->rtp_proto;
 			// generate rtp parameter from this handler_'s capabality (of corresponding producer) and consumed_producer's encodings
-			if (!Producer::consumer_params(consumed_producer->params(), capit->second, config)) {
+			if (!Producer::consumer_params(*params, capit->second, config)) {
 				QRPC_LOGJ(error, {{"ev","fail to generate cosuming params"}});
 				ASSERT(false);
 				continue;
@@ -424,6 +433,22 @@ namespace rtp {
 			h.SendToStream(stream_label, data, len);
 		}
 	}
+	void Handler::TryRidComplement(uint32_t ssrc) {
+		auto it = ssrc_stream_recovery_map_.find(ssrc);
+		if (it != ssrc_stream_recovery_map_.end()) {
+			it->second.try_rid_complement = true;
+			auto rid = it->second.rid;
+			auto roc = it->second.rtp_roc;
+			QRPC_LOGJ(info, {{"ev","try complement rid"},{"ssrc",ssrc},{"rid",rid},{"roc",roc}});
+		}
+	}
+	void Handler::FixListnerSsrcMap(Producer *p, uint32_t old_ssrc, uint32_t new_ssrc) {
+		auto it = rtpListener.ssrcTable.find(old_ssrc);
+		if (it != rtpListener.ssrcTable.end()) {
+			rtpListener.ssrcTable.erase(it);
+		}
+		rtpListener.ssrcTable[new_ssrc] = p;
+	}
 	bool Handler::CloseStream(MediaStreamConfig &config, std::string &error) {
 		if (config.sender()) {
 			auto *c = FindConsumerByPath(config.media_path);
@@ -454,10 +479,10 @@ namespace rtp {
 						auto it = map_ref.find(ssrc);
 						if (it == map_ref.end()) {
 							QRPC_LOGJ(info, {{"ev","new complement rid mapping"},{"ssrc",ssrc},{"rid",rid},{"media_path",config.media_path},{"roc",roc}});
-							map_ref[ssrc] = { .rid = rid, .rtp_roc = roc, .recovered = false, };
+							map_ref[ssrc] = { .rid = rid, .rtp_roc = roc, .try_rid_complement = true, };
 						} else {
 							QRPC_LOGJ(info, {{"ev","update complement rid mapping"},{"ssrc",ssrc},{"rid",rid},{"media_path",config.media_path},{"roc",roc}});
-							it->second.recovered = false;
+							it->second.try_rid_complement = true;
 							it->second.rtp_roc = roc;
 						}
 					}
@@ -508,7 +533,7 @@ namespace rtp {
 	void Handler::ReceiveRtpPacket(RTC::RtpPacket* packet) {
 		auto ssrc = packet->GetSsrc();
 		auto it = ssrc_stream_recovery_map_.find(ssrc);
-		if (it != ssrc_stream_recovery_map_.end() && !it->second.recovered) {
+		if (it != ssrc_stream_recovery_map_.end() && it->second.try_rid_complement) {
 			packet->SetRidExtensionId(this->recvRtpHeaderExtensionIds.rid);
 			std::string rid;
 			if (!packet->ReadRid(rid) || rid.empty()) {
@@ -525,7 +550,7 @@ namespace rtp {
 				ASSERT(packet->ReadRid(rid) && rid == it->second.rid);
 #endif
 			}
-			it->second.recovered = true;
+			it->second.try_rid_complement = false;
 		}
 		RTC::Transport::ReceiveRtpPacket(packet);
 	}
@@ -535,6 +560,22 @@ namespace rtp {
 		// fbb.Finish(producer->FillBuffer(fbb));
 		// puts(Dump<FBS::Producer::DumpResponse>("producer", "FBS.Producer.DumpResponse", fbb).c_str());
 		return producer;
+	}
+	bool Handler::ApplyAnswer(const std::string &mid, const RemoteAnswer &answer, std::string &error) {
+		auto found = false;
+		for (const auto &kv : this->mapProducers) {
+			auto p = dynamic_cast<Producer *>(kv.second);
+			QRPC_LOGJ(info, {{"ev","try apply answer"},{"mid",mid},{"producer_mid",p->GetRtpParameters().mid}});
+			if (p->GetRtpParameters().mid == mid) {
+				if (!p->ApplyAnswer(answer, error)) {
+					QRPC_LOGJ(error, {{"ev","fail to apply answer"},{"mid",mid},{"error",error}});
+					return false;
+				}
+				found = true;
+				break;
+			}
+		}
+		return found;
 	}
 	void Handler::UpdateByCapability(const Capability &cap) {
 		for (const auto &he : cap.headerExtensions) {

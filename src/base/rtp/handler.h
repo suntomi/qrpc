@@ -83,10 +83,31 @@ namespace rtp {
     std::map<uint32_t, std::string> related_ssrcs; // for producer, previously related ssrcs and rid (if any)
     uint8_t close_flag{0}, reuse_count{0}, reconnect_count{0};
   };
+  struct RemoteAnswer {
+    RemoteAnswer() : ssrc_fixups() {}
+    RemoteAnswer(const json &j) : ssrc_fixups() {
+      auto it = j.find("ssrc_fixups");
+      if (it != j.end()) {
+        bool processed = false;
+        for (auto &pair : *it) {
+          QRPC_LOGJ(info, {{"ev","ssrc fixup pair"},{"pair",pair}});
+          auto from = pair[0].get<uint32_t>();
+          auto to = pair[1].get<uint32_t>();
+          ssrc_fixups[from] = to;
+          processed = true;
+        }
+        ASSERT(processed);
+      } else {
+        QRPC_LOGJ(warn, {{"ev","no ssrc fixup found"},{"src",j}});
+        ASSERT(false);
+      }
+    }
+    std::map<uint32_t, uint32_t> ssrc_fixups;
+  };
   struct StreamRecoveryContext {
-    std::string rid;
+    std::string rid, mid;
     uint32_t rtp_roc; // rollover counter for recovered rtp stream, to work srtp decryption works correctly
-    bool recovered;
+    bool try_rid_complement{false};
   };
   class MediaStreamConfigs : public std::vector<MediaStreamConfig> {
   public:
@@ -103,6 +124,14 @@ namespace rtp {
         }
       }
       return this->emplace_back();
+    }
+    inline MediaStreamConfig *FindSlot(const std::string &mid) {
+      for (auto &c : *this) {
+        if (c.mid == mid) {
+          return &c;
+        }
+      }
+      return nullptr;
     }
   };
   class Handler : public RTC::Transport {
@@ -193,6 +222,7 @@ namespace rtp {
     }
     void Close();
     Producer *Produce(const MediaStreamConfig &p);
+    bool ApplyAnswer(const std::string &mid, const RemoteAnswer &answer, std::string &error);
     bool PrepareConsume(
       Handler &peer, const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
       const std::map<Parameters::MediaKind, MediaStreamConfig::ControlOptions> options_map, bool sync,
@@ -212,22 +242,6 @@ namespace rtp {
 			QRPC_LOGJ(info, {{"ev","new mid label map"},{"map",mid_media_path_map_}});
     }
     void UpdateByCapability(const Capability &cap);
-    std::string FindLabelByMid(const std::string &mid) const {
-      auto it = mid_media_path_map_.find(mid);
-      if (it == mid_media_path_map_.end()) {
-        return "";
-      }
-      auto label_kind = str::Split(it->second, "/");
-      if (label_kind.size() == 3) {
-        return label_kind[1];
-      } else if (label_kind.size() == 2) {
-        return label_kind[0];
-      } else {
-        QRPC_LOGJ(error, {{"ev","invalid label_kind"},{"label_kind",label_kind}});
-        ASSERT(false);
-        return "";
-      }
-    }
     std::shared_ptr<Media> FindFrom(const Parameters &p, bool consumer);
     std::shared_ptr<Media> FindFrom(const std::string &label, bool consumer);
     inline Producer *FindProducerByPath(const std::string &path) const {
@@ -255,6 +269,8 @@ namespace rtp {
     }
     void CloseConsumer(Consumer *c);
     void CloseProducer(Producer *p);
+    void TryRidComplement(uint32_t ssrc);
+    void FixListnerSsrcMap(Producer *p, uint32_t old_ssrc, uint32_t new_ssrc);
     void DumpChildren(); // dump consumer and producer created by this handler
   public:
     void ReceiveRtpPacket(RTC::RtpPacket* packet);

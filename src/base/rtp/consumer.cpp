@@ -62,10 +62,16 @@ namespace rtp {
 		}
     auto type = pipe ?
       RTC::RtpParameters::Type::PIPE :
-      (consumed_producer->params().encodings.size() > 1 ? RTC::RtpParameters::Type::SIMULCAST : RTC::RtpParameters::Type::SIMPLE);
+      (consumed_producer->GetRtpParameters().encodings.size() > 1 ? RTC::RtpParameters::Type::SIMULCAST : RTC::RtpParameters::Type::SIMPLE);
     auto m = handler_.FindFrom(path, true);
 		::flatbuffers::FlatBufferBuilder fbb;
-    auto encodings = consumed_producer->params().PackConsumableEncodings(fbb);
+    auto params = consumed_producer->params();
+    if (params == nullptr) {
+      QRPC_LOGJ(error, {{"ev","failed to get producer rtp params"},{"path",path},{"mid",consumed_producer->GetRtpParameters().mid}});
+      ASSERT(false);
+      return nullptr;
+    }
+    auto encodings = params->PackConsumableEncodings(fbb);
     auto id = GenerateId(handler_.rtp_id(), path);
     auto &producer_id = consumed_producer->id;
     Handler::SetConsumerFactory([config, m](

@@ -50,7 +50,7 @@ namespace base {
         err = "Failed to create BIGNUM";
         goto end;
       }
-      if (BN_pseudo_rand(bn, 64, 0, 0) != 1) {
+      if (BN_rand(bn, 64, 0, 0) != 1) {
         err = "Failed to generate random serial number";
         goto end;
       }

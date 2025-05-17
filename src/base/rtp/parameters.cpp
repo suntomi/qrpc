@@ -631,9 +631,10 @@ namespace rtp {
     if (kind == MediaKind::APP) {
       return sdplines;
     }
+    sdplines += "a=rtcp-mux\na=rtcp-rsize\n";
     if (network.port != 0 && network.ip_ver != 0) {
       sdplines += str::Format(
-        "a=rtcp:%llu %s IP%llu %s\na=rtcp-mux\na=rtcp-rsize\n",
+        "a=rtcp:%llu %s IP%llu %s\n",
         network.port,
         network.address.c_str(),
         network.ip_ver,

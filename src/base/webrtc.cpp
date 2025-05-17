@@ -423,7 +423,22 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           RAISE("no value for key 'args'");
         }
         const auto &args = ait->get<std::map<std::string,json>>();
-        if (fn == "produce") {
+        if (fn == "remote_answer") {
+          // remote_answer receives answer information per mid
+          const auto mmit = args.find("midMap");
+          if (mmit == args.end()) {
+            RAISE("no value for key 'midMap'");
+          }
+          for (const auto &kv : mmit->second.get<std::map<std::string,json>>()) {
+            const auto &mid = kv.first;
+            const auto &answer = kv.second;
+            std::string error;
+            if (!c.rtp_handler().ApplyAnswer(mid, answer, error)) {
+              RAISE(error);
+            }
+          }
+          Call("remote_answer_ack",msgid,{});
+        } else if (fn == "produce") {
           const auto sdpit = args.find("sdp");
           if (sdpit == args.end()) {
             RAISE("no value for key 'sdp'");
@@ -1251,7 +1266,8 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
         {"proto","srtp"},{"ssrc",packet->GetSsrc()},{"roc",roc},
         {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
       });
-      ASSERT(false);
+      // encryption back to work as usual after a few times reach here (eg. firefox), so remove assertion
+      // ASSERT(false);
     }
     delete packet;
   }
@@ -1643,6 +1659,9 @@ void ConnectionFactory::Connection::RecvStreamClosed(uint32_t ssrc) {
   if (srtp_recv_ != nullptr) {
     // QRPC_LOGJ(info, {{"ev","recv stream closed"},{"ssrc",ssrc},{"cname",cname_}});
     srtp_recv_->RemoveStream(ssrc);
+    // reset try_rid_complement to true because this receive stream close may caused by buggy browser behavior 
+    // (second webpage that connect to our server does not send rid excpet very first time)
+    rtp_handler().TryRidComplement(ssrc);
   }
 }
 void ConnectionFactory::Connection::SendStreamClosed(uint32_t ssrc) {

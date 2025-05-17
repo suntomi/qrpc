@@ -316,7 +316,8 @@ class QRPClient {
         promise.resolve(data.args.sdp);
       } else if (
         data.fn == "resume_ack" || data.fn == "pause_ack" || data.fn == "close_ack" ||
-        data.fn == "sync_ack" || data.fn == "ping_ack" || data.fn == "publish_stream_ack"
+        data.fn == "sync_ack" || data.fn == "ping_ack" || data.fn == "publish_stream_ack" ||
+        data.fn == "remote_answer_ack"
       ) {
         promise.resolve();
       } else {
@@ -335,6 +336,7 @@ class QRPClient {
     this.streams = {};
     this.medias = {};
     this.tracks = {};
+    this.syscall_ready = false;
     // we use array to keep sent track add order.
     // it is important to match them with SDP media section order
     this.sentTracks = []; 
@@ -368,7 +370,7 @@ class QRPClient {
     return promise;
   }
   #handshaked() {
-    return this.sdpGen > 0;
+    return this.syscall_ready;
   }
   #incSdpGen() {
     this.sdpGen++;
@@ -506,31 +508,41 @@ class QRPClient {
   }
   parseLocalOffer(localOffer) {
     const result = {}
-    let currentMid, currentSsrc;
+    let currentMid, currentSsrcs;
     const lines = localOffer.split(/\r?\n/);
     lines.push("m=dummy"); // ensure last section processed
     for (const l of lines) {
       if (l.startsWith("m=")) {
         currentMid = undefined;
-        currentSsrc = undefined;
+        currentSsrcs = {};
       } else if (l.startsWith("a=mid:")) {
         if (!currentMid) {
           // a=mid:$mid_value
           currentMid = l.slice(6).trim();
-          if (currentSsrc) {
-            result[currentMid] = currentSsrc;
-          }
+          result[currentMid] = currentSsrcs;
         } else {
           throw new Error(`invalid find a=mid line twice before reset by m= line ${currentMid},${l.slice(6)}`);
         }
       } else if (l.startsWith("a=ssrc:")) {
-        currentSsrc = l.slice(7).split(/\s/,1)[0].trim();
+        //a=ssrc:$ssrc_value $attribute_name:$attribute_value
+        const parsed = l.slice(7).split(/\s/,2);
+        const ssrc = parsed[0].trim();
+        const attrName = parsed[1].split(/:/, 1)[0].trim();
+        console.log("ssrc/attrName", ssrc, attrName);
+        if (!currentSsrcs[ssrc]) {
+          currentSsrcs[ssrc] = [];
+        }
+        currentSsrcs[ssrc].push(attrName);
         if (currentMid) {
-          result[currentMid] = currentSsrc;
+          result[currentMid] = currentSsrcs;
         }
       }
     }
-    return result;
+    // result will be like { [mid]: { [ssrc]: [attr1, attr2, ...] } }
+    // filter element that has multiple ssrcs (dedupe lines with same ssrc), probably simulcast media section of firefox
+    return Object.fromEntries(
+      Object.entries(result).filter(v => Object.keys(v[1]).length == 1).map(v => [v[0], Object.keys(v[1])[0]])
+    );
   }
   #checkMedias(now) {
     let mediaOpened = false;
@@ -579,7 +591,8 @@ class QRPClient {
     const midSsrcMap = this.parseLocalOffer(localOffer.sdp);
     // console.log("midSsrcMap", midSsrcMap);
     for (const t of tracks) {
-      // now, mid is decided. mid (in server remote offer) probably changes 
+      // now, mid is decided by calling pc.setLocalDescription. 
+      // mid (in server-responded remote offer) probably changes 
       // after it processes on server side, but because of client mid actually decided
       // by server remote offer, changes causes no problem.
       midPathMap[t.mid] = t.path;
@@ -660,8 +673,23 @@ class QRPClient {
       }
     }
     const answer = await this.pc.createAnswer();
-    answer.sdp = this.#fixupLocalAnswer(answer.sdp, midSsrcMap);
+    // answer.sdp = this.#fixupLocalAnswer(answer.sdp, midSsrcMap);
     // console.log("local answer sdp", answer.sdp);
+    if (this.#handshaked()) {
+      const newMidSsrcMap = this.parseLocalOffer(answer.sdp);
+      console.log("midSsrcMaps", midSsrcMap, newMidSsrcMap);
+      await this.syscall("remote_answer", {
+        midMap: Object.fromEntries(
+          Object.keys(midSsrcMap).map(k => [k, {
+            ssrc_fixups:[[Number(midSsrcMap[k]),Number(newMidSsrcMap[k])]]
+          }])
+        ),
+      });
+      // update ssrc of tracks
+      for (const t of sentTracks) {
+        t.ssrc = newMidSsrcMap[t.mid] || undefined;
+      }
+    }
     await this.pc.setLocalDescription(answer);
     console.log(`apply sdpGen=${sdpGen} is finished`);
     if (this.sdpQueue.length > 1) {
@@ -737,6 +765,7 @@ class QRPClient {
 
       await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
       await syscallReady;
+      this.syscall_ready = true;
       if (this.onopen) {
         this.context = await this.onopen();
       }  

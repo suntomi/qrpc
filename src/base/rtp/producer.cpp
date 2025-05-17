@@ -17,6 +17,9 @@ namespace rtp {
 	ProducerStatus Producer::status() const {
 		return {.paused = IsPaused()};
 	}
+	const Parameters *Producer::params() const {
+		return handler_.listener().media_stream_configs().FindSlot(GetRtpParameters().mid);
+	}
 	bool Producer::consumer_params(
 		const RTC::RtpParameters &consumed_producer_params,
 		const Capability &consumer_capability, Parameters &p) {
@@ -79,7 +82,7 @@ namespace rtp {
 			}
 		} else {
 			for (auto &codec : p.codecs) {
-				for (auto it = codec.rtcpFeedback.rbegin(); it != codec.rtcpFeedback.rend(); --it) {
+				for (auto it = codec.rtcpFeedback.rbegin(); it != codec.rtcpFeedback.rend(); ++it) {
 					if (it->type == "goog-remb" || it->type == "transport-cc") {
 						codec.rtcpFeedback.erase(std::next(it).base());
 					}
@@ -141,6 +144,49 @@ namespace rtp {
 		}
 		return true;
 	}
+	bool Producer::ApplyAnswer(const RemoteAnswer &answer, std::string &error) {
+		ASSERT(!answer.ssrc_fixups.empty());
+		for (const auto &kv : answer.ssrc_fixups) {
+			if (kv.first == kv.second) {
+				continue;
+			}
+			auto &encodings = const_cast<RTC::RtpParameters &>(GetRtpParameters()).encodings;
+			if (!Parameters::ReplaceEncodings(encodings, kv.first, kv.second)) {
+				error = str::Format("old ssrc %u not found (in rtpParameters)", kv.first);
+				QRPC_LOGJ(error, {{"ev","ssrc not found (in rtpParameters)"},{"ssrc",kv.first}});
+				ASSERT(false);
+				return false;
+			}
+			auto &encoding_mapping = rtpMapping.encodings;
+			auto it = std::find_if(encoding_mapping.begin(), encoding_mapping.end(), [&kv](const auto &e) {
+				return e.ssrc == kv.first;
+			});
+			if (it != encoding_mapping.end()) {
+				it->ssrc = kv.second;
+			} else {
+				error = str::Format("old ssrc %u not found (in rtpMapping)", kv.first);
+				QRPC_LOGJ(error, {{"ev","ssrc not found (in rtpMapping)"},{"ssrc",kv.first}});
+				ASSERT(false);
+				return false;
+			}
+			auto *p = const_cast<Parameters *>(params());
+			if (p == nullptr) {
+				error = "params not found for mid:" + GetRtpParameters().mid;
+				QRPC_LOGJ(error, {{"ev","params not found"},{"mid",GetRtpParameters().mid}});
+				ASSERT(false);
+				return false;
+			}
+			if (!p->FixSsrc(kv.first, kv.second)) {
+				error = str::Format("old ssrc %u not found (in params)", kv.first);
+				QRPC_LOGJ(error, {{"ev","ssrc not found (in params)"},{"ssrc",kv.first}});
+				ASSERT(false);
+				return false;
+			}
+			handler_.FixListnerSsrcMap(this, kv.first, kv.second);
+			QRPC_LOGJ(info, {{"ev","ssrc fixup"},{"old_ssrc",kv.first},{"new_ssrc",kv.second}});
+		}
+		return true;
+	}
 
 	std::string ProducerFactory::GenerateId(const std::string &rtp_id, const std::string &path) { 
 		return "/p/" + rtp_id + "/" + path;
@@ -151,13 +197,13 @@ namespace rtp {
     auto m = handler_.FindFrom(p, false);
 		auto id = GenerateId(handler_.rtp_id(), p.media_path);
 		try {
-			Handler::SetProducerFactory([m, &op = p](
+			Handler::SetProducerFactory([m, &h = handler_](
 				RTC::Shared* shared,
 		  	const std::string& id,
 		  	RTC::Producer::Listener *listener,
 		  	const FBS::Transport::ProduceRequest *req
 			) mutable {
-				return new Producer(shared, id, listener, op, req, m);
+				return new Producer(shared, id, listener, h, req, m);
 			});
 			handler_.HandleRequest(
 				fbb, FBS::Request::Method::TRANSPORT_PRODUCE, p.MakeProduceRequest(fbb, id, p.options.pause)
