@@ -311,7 +311,7 @@ namespace webrtc {
       const rtp::Handler::Config &GetRtpConfig() const override { return factory().config().rtp; }
       bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) override;
     protected:
-      qrpc_time_t last_active_;
+      qrpc_time_t last_active_, start_shutdown_;
       ConnectionFactory &factory_;
       std::unique_ptr<IceServer> ice_server_; // ICE
       std::unique_ptr<IceProber> ice_prober_; // ICE(client)
@@ -348,7 +348,7 @@ namespace webrtc {
       rtp::Handler::Config rtp;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
       size_t send_buffer_size, udp_batch_size;
-      qrpc_time_t session_timeout, http_timeout;
+      qrpc_time_t session_timeout, http_timeout, shutdown_timeout;
       qrpc_time_t connection_timeout, consent_check_interval;
       std::string fingerprint_algorithm;
       bool in6{false};
@@ -404,10 +404,17 @@ namespace webrtc {
     void ScheduleClose(Connection &c) {
       if (c.closed_) { return; }
       c.closed_ = true;
+      c.start_shutdown_ = qrpc_time_now();
       c.alarm_id_ = alarm_processor().Set([this, &c]() {
+        // wait for sending all buffered data to peer
+        if (c.sctp_association_->GetSctpBufferedAmount() > 0) {
+          if (c.start_shutdown_ + qrpc_time_msec(config_.shutdown_timeout) > qrpc_time_now()) {
+            return qrpc_time_now();
+          } // if 1 second passed, force close the connection
+        }
         c.alarm_id_ = AlarmProcessor::INVALID_ID; // prevent AlarmProcessor::Cancel to be called
         CloseConnection(c);
-        return 0; // because this return value stops the alarm
+        return 0ULL; // because this return value stops the alarm
       }, qrpc_time_now());
     }
     void ScheduleClose(const IceUFrag &ufrag) {
@@ -451,9 +458,12 @@ namespace webrtc {
     std::map<IceUFrag, std::shared_ptr<Connection>> connections_;
     std::map<std::string, std::shared_ptr<Connection>> cnmap_;
   private:
-    static uint32_t g_ref_count_;
+    static int32_t g_ref_count_;
+    static thread_local int32_t g_thread_ref_count_;
     static std::mutex g_ref_sync_mutex_;
-    static int GlobalInit(AlarmProcessor &a);
+    static int ThreadInit(AlarmProcessor &a);
+    static void ThreadFin(AlarmProcessor &a);
+    static int GlobalInit();
     static void GlobalFin();
   };
   class AdhocConnection : public ConnectionFactory::Connection {

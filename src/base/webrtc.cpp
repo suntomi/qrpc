@@ -44,7 +44,10 @@ int ConnectionFactory::Start() {
 }
 int ConnectionFactory::Init() {
   int r;
-  if ((r = GlobalInit(alarm_processor())) < 0) {
+  if ((r = GlobalInit()) < 0) {
+    return r;
+  }
+  if ((r = ThreadInit(alarm_processor())) < 0) {
     return r;
   }
   if ((r = config_.Derive()) < 0) {
@@ -58,6 +61,7 @@ void ConnectionFactory::Fin() {
     alarm_processor().Cancel(alarm_id_);
     alarm_id_ = AlarmProcessor::INVALID_ID;
   }
+  ThreadFin(alarm_processor());
   GlobalFin();
 }
 void ConnectionFactory::CloseConnection(Connection &c) {
@@ -107,7 +111,7 @@ ConnectionFactory::FindFromStunRequest(const uint8_t *p, size_t sz) {
       {"ev","ignoring received STUN packet with unknown remote ICE usernameFragment"},
       {"ufrag",key}
     });
-    ASSERT(false);
+    //ASSERT(false);
     return nullptr;
     // validate packet is properly authorized    
   } else if (!it->second->ice_server().ValidatePacket(*packet)) {
@@ -169,7 +173,8 @@ ConnectionFactory::FindFromUfrag(const IceUFrag &ufrag) {
     }
     return it->second;
 }
-uint32_t ConnectionFactory::g_ref_count_ = 0;
+int32_t ConnectionFactory::g_ref_count_ = 0;
+thread_local int32_t ConnectionFactory::g_thread_ref_count_ = 0;
 std::mutex ConnectionFactory::g_ref_sync_mutex_;
 static Channel::ChannelSocket g_channel_socket_(INVALID_FD, INVALID_FD);
 static void srtp_logger(srtp_log_level_t level,
@@ -177,27 +182,34 @@ static void srtp_logger(srtp_log_level_t level,
                         void *data) {
   QRPC_LOGJ(info,{{"ev","srtp log"},{"level",level},{"msg",msg}});
 }
-int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
-	try
-	{
+int ConnectionFactory::ThreadInit(AlarmProcessor &a) {
+  if (g_thread_ref_count_ > 0) {
+    return QRPC_OK;
+  }
+  // setup RTC::Timer and UnixStreamSocket, Logger, rtp::Parameters
+  ::TimerHandle::SetTimerProc(
+    [&a](const ::TimerHandle::Handler &h, uint64_t start_at) {
+      return a.Set([hh = h]() {
+        auto intv = hh();
+        if (intv <= 0) {
+          return 0ULL;
+        }
+        return qrpc_time_now() + qrpc_time_msec(intv);
+      }, qrpc_time_now() + qrpc_time_msec(start_at));
+    },
+    [&a](uint64_t id) {
+      return a.Cancel(id);
+    }
+  );
+  SctpSender::ClassInit(a);
+  g_thread_ref_count_++;
+  return QRPC_OK;
+}
+int ConnectionFactory::GlobalInit() {
+	try {
     std::lock_guard<std::mutex> lock(g_ref_sync_mutex_);
     if (g_ref_count_ == 0) {
-      // setup RTC::Timer and UnixStreamSocket, Logger, rtp::Parameters
       rtp::Parameters::SetupHeaderExtensionMap();
-      ::TimerHandle::SetTimerProc(
-        [&a](const ::TimerHandle::Handler &h, uint64_t start_at) {
-          return a.Set([hh = h]() {
-            auto intv = hh();
-            if (intv <= 0) {
-              return 0ULL;
-            }
-            return qrpc_time_now() + qrpc_time_msec(intv);
-          }, qrpc_time_now() + qrpc_time_msec(start_at));
-        },
-        [&a](uint64_t id) {
-          return a.Cancel(id);
-        }
-      );
       UnixStreamSocketHandle::SetWriter(
         [](const uint8_t *p, size_t sz) {
           // p should generated with ::flatbuffers::FinishSizePrefixed
@@ -233,13 +245,13 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
               break;
           }
         }
-      );      
+      );
       std::string llv = "debug";
       rtp::Handler::ConfigureLogging(llv, {"rtp", "rtcp"});
       // Initialize static stuff.
       DepOpenSSL::ClassInit();
       DepLibSRTP::ClassInit();
-      DepUsrSCTP::ClassInit();
+      DepUsrSCTP::ClassInit(SctpSender::onSendStcpData);
       DepLibWebRTC::ClassInit();
       Utils::Crypto::ClassInit();
       RTC::DtlsTransport::ClassInit();
@@ -256,12 +268,23 @@ int ConnectionFactory::GlobalInit(AlarmProcessor &a) {
 		return QRPC_EDEPS;
 	}
 }
+void ConnectionFactory::ThreadFin(AlarmProcessor &a) {
+  g_thread_ref_count_--;
+  if (g_thread_ref_count_ > 0) {
+    return;
+  }
+  SctpSender::ClassDestroy(a);
+  ::TimerHandle::SetTimerProc([](const ::TimerHandle::Handler &, uint64_t) {
+    return AlarmProcessor::INVALID_ID;
+  }, [](uint64_t) {
+    return true;
+  });
+}
 void ConnectionFactory::GlobalFin() {
-	try
-	{
+	try {
     std::lock_guard<std::mutex> lock(g_ref_sync_mutex_);
     g_ref_count_--;
-    if (g_ref_count_ > 1) {
+    if (g_ref_count_ > 0) {
       return;
     }
     // Free static stuff.
