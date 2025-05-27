@@ -286,9 +286,7 @@ namespace base {
             int Flush(); 
             // implements Session
             const char *proto() const { return "UDP"; }
-            int Send(const char *data, size_t sz) override {
-                return Write(data, sz);
-            }
+            // Send is implemented in subclass
         protected:
             bool AllocIovec(size_t sz) {
                 void *b;
@@ -352,6 +350,29 @@ namespace base {
         private:
             std::vector<struct iovec> write_vecs_;
         };
+        class Flusher {
+        public:
+            template <class C>
+            static inline void Try(C &c, AlarmProcessor &ap) {
+                if (c.Flush() > 0) {
+                    Start(c, ap);
+                }
+            }
+            template <class C>
+            static inline void Start(C &c, AlarmProcessor &ap) {
+                if (c.alarm_id_ != AlarmProcessor::INVALID_ID) {
+                    return;
+                }
+                c.alarm_id_ = ap.Set([&c]() {
+                    if (c.Flush() > 0) {
+                        return qrpc_time_now() + qrpc_time_usec(100);
+                    } else {
+                        c.alarm_id_ = AlarmProcessor::INVALID_ID;
+                        return 0ULL;
+                    }
+                }, qrpc_time_now() + qrpc_time_usec(100));
+            }
+        };
     public:
         UdpSessionFactory(Loop &l, FactoryMethod &&m, Config config = Config::Default()) :
             SessionFactory(l, std::move(m), config), batch_size_(config.max_batch_size),
@@ -383,12 +404,23 @@ namespace base {
     public:
         class UdpSession : public UdpSessionFactory::UdpSession, public IoProcessor {
         public:
+            friend class Flusher;
             UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) :
                 UdpSessionFactory::UdpSession(f, fd, addr) {}
             ~UdpSession() override {
                 if (alarm_id_ != AlarmProcessor::INVALID_ID) {
                     udp_session_factory().alarm_processor().Cancel(alarm_id_);
                 }
+            }
+            // implements Session
+            int Send(const char *data, size_t sz) override {
+                int r;
+                if ((r = Write(data, sz)) < 0) {
+                    QRPC_LOGJ(error, {{"ev","UdpSession::Write fails"},{"fd",fd_},{"sz",sz},{"r",r}});
+                    return r;
+                }
+                StartFlushTask();
+                return r;
             }
             // implements IoProcessor
             void OnEvent(Fd fd, const Event &e) override {
@@ -421,26 +453,8 @@ namespace base {
                 }
             }            
         protected:
-            void TryFlush() {
-                if (Flush() > 0) {
-                    StartFlushTask();
-                }
-            }
-            void StartFlushTask() {
-                if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-                    return;
-                }
-                alarm_id_ = udp_session_factory().alarm_processor().Set(
-                    [this]() {
-                        if (this->Flush() > 0) {
-                            return qrpc_time_now() + qrpc_time_usec(100);
-                        } else {
-                            alarm_id_ = AlarmProcessor::INVALID_ID;
-                            return 0ULL;
-                        }
-                    }, qrpc_time_now() + qrpc_time_usec(100)
-                );
-            }
+            inline void TryFlush() { Flusher::Try(*this, udp_session_factory().alarm_processor()); }
+            inline void StartFlushTask() { Flusher::Start(*this, udp_session_factory().alarm_processor()); }
         protected:
             AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
         };
@@ -495,11 +509,28 @@ namespace base {
     };
     class UdpListener : public UdpSessionFactory, IoProcessor {
     public:
+        friend class Flusher;
         struct Config : public UdpSessionFactory::Config {
             Config(Resolver &r, qrpc_time_t st, int mbs, bool sw) : UdpSessionFactory::Config(r, st, mbs, sw, true) {}
             static inline Config Default() { 
                 // default no timeout
                 return Config(NopResolver::Instance(), qrpc_time_sec(0), BATCH_SIZE, false);
+            }
+        };
+    public:
+        class UdpSession : public UdpSessionFactory::UdpSession {
+        public:
+            UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) :
+                UdpSessionFactory::UdpSession(f, fd, addr) {}
+            // implements Session
+            int Send(const char *data, size_t sz) override {
+                int r;
+                if ((r = Write(data, sz)) < 0) {
+                    QRPC_LOGJ(error, {{"ev","UdpSession::Write fails"},{"fd",fd_},{"sz",sz},{"r",r}});
+                    return r;
+                }
+                factory().to<UdpListener>().StartFlushTask();
+                return r;
             }
         };
     public:
@@ -561,26 +592,8 @@ namespace base {
         void ProcessPackets(int count);
         int Flush();
     protected:
-        void TryFlush() {
-            if (Flush() > 0) {
-                StartFlushTask();
-            }
-        }
-        void StartFlushTask() {
-            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-                return;
-            }
-            alarm_id_ = alarm_processor().Set(
-                [this]() {
-                    if (this->Flush() > 0) {
-                        return qrpc_time_now() + qrpc_time_usec(100);
-                    } else {
-                        alarm_id_ = AlarmProcessor::INVALID_ID;
-                        return 0ULL;
-                    }
-                }, qrpc_time_now() + qrpc_time_usec(100)
-            );
-        }
+        inline void TryFlush() { Flusher::Try(*this, alarm_processor()); }
+        inline void StartFlushTask() { Flusher::Start(*this, alarm_processor()); }
     public:
         // implements SessionFactory
         Session *Create(int fd, const Address &a, FactoryMethod &m) override {
@@ -667,7 +680,7 @@ namespace base {
     public:
         UdpListenerOf(Loop &l, FactoryMethod &&m, const Config c = Config::Default()) : UdpListener(l, std::move(m), c) {}
         UdpListenerOf(Loop &l, const Config c = Config::Default()) : UdpListener(l, [this](Fd fd, const Address &a) {
-            static_assert(std::is_base_of<Session, S>(), "S must be a descendant of Session");
+            static_assert(std::is_base_of<UdpSession, S>(), "S must be a descendant of UdpSession");
             return new S(*this, fd, a);
         }, c) {}
         UdpListenerOf(UdpListenerOf &&rhs) : UdpListener(std::move(rhs)) {}

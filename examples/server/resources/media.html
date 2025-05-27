@@ -433,7 +433,10 @@
       const decoder = new TextDecoder('utf-8');
       subscribeChat = (id) => {
         streams.receivers[id] = c.watchStream(`${id}/chat`, {
-          onmessage: (s, event) => addChatMessage(id, decoder.decode(event.data)),
+          onmessage: async (s, event) => {
+            const data = (event.data instanceof Blob) ? (await event.data.arrayBuffer()) : event.data;
+            addChatMessage(id, decoder.decode(data))
+          },
         });
       }
       onPublish = async (event) => {

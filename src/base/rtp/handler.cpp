@@ -202,6 +202,20 @@ namespace rtp {
 				if (!sync) {
 					QRPC_LOGJ(info, {{"ev","ignore media because already prepare"},{"media_path",media_path},{"sync",sync}});
 					continue;
+				} else {
+					auto cid = ConsumerFactory::GenerateId(rtp_id(), media_path);
+					auto cit = consumers().find(cid);
+					if (cit != consumers().end()) {
+						auto parsed = str::Split(cit->second->producerId, "/");
+						if (parsed.size() < 4) {
+							QRPC_LOGJ(error, {{"ev","invalid producer id"},{"id",cit->second->producerId}});
+							ASSERT(false);
+							continue;
+						} else if (parsed[2] == peer.rtp_id()) {
+							QRPC_LOGJ(info, {{"ev","ignore sync media because already active"},{"media_path",media_path}});
+							continue;
+						}
+					}
 				}
 				ccit->Reconnect();
 			} else {

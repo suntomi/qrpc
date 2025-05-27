@@ -159,7 +159,6 @@ ConnectionFactory::FindHandler(const std::string &cname) {
     //   - so maybe this function acts like async function because it needs to query remote controller which knows where `cname` is
     // 2. create handler with that proxy connection
     QRPC_LOGJ(info, {{"ev","peer not found"},{"cname",cname}});
-    ASSERT(false);
     return nullptr;
   }
   return it->second->rtp_handler_;

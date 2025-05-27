@@ -23,8 +23,10 @@ namespace base {
     static constexpr size_t kInitialThreadSize = 8;
     static thread_local moodycamel::ConcurrentQueue<Data> sctp_send_queue_;
     static thread_local AlarmProcessor::Id sctp_send_queue_alarm_id_;
+    static std::mutex sctp_send_queue_mutex_;
     static std::vector<moodycamel::ConcurrentQueue<Data>*> thread_queue_map_;
     static void ClassInit(AlarmProcessor &a) {
+      auto lock = std::lock_guard<std::mutex>(sctp_send_queue_mutex_);
       if (sctp_send_queue_alarm_id_ == AlarmProcessor::INVALID_ID) {
         auto thread_id = 0;
         for (size_t i = 0; i < thread_queue_map_.size(); ++i) {
@@ -42,15 +44,17 @@ namespace base {
         thread_queue_map_[RTC::SctpAssociation::GetSctpThreadId() - 1] = &sctp_send_queue_;
         if ((sctp_send_queue_alarm_id_ = a.Set([]() {
           Poll();
-          return qrpc_time_now();
+          return qrpc_time_now() + qrpc_time_usec(100); // poll every 100us
         }, 0)) == AlarmProcessor::INVALID_ID) {
           logger::die({{"ev","Failed to set SCTP send queue alarm"}});
         }
+        QRPC_LOGJ(debug, {{"ev", "sctp thread initialized"},{"thread_id", RTC::SctpAssociation::GetSctpThreadId()},{"aid",sctp_send_queue_alarm_id_}});
       } else {
-        QRPC_LOGJ(debug, {{"ev", "already initialized"},{"thread_id", RTC::SctpAssociation::GetSctpThreadId()}});
+        QRPC_LOGJ(debug, {{"ev", "already initialized"},{"thread_id", RTC::SctpAssociation::GetSctpThreadId()},{"aid",sctp_send_queue_alarm_id_}});
       }
     }
     static void ClassDestroy(AlarmProcessor &a) {
+      auto lock = std::lock_guard<std::mutex>(sctp_send_queue_mutex_);
       if (sctp_send_queue_alarm_id_ != AlarmProcessor::INVALID_ID) {
         a.Cancel(sctp_send_queue_alarm_id_);
         sctp_send_queue_alarm_id_ = AlarmProcessor::INVALID_ID;
@@ -71,7 +75,10 @@ namespace base {
       while (q.try_dequeue(d)) {
         ASSERT(d.data != nullptr); // Syscall::Memdup() fails
         auto *a = DepUsrSCTP::RetrieveSctpAssociation(reinterpret_cast<uintptr_t>(d.addr));
-        if (a) { a->OnUsrSctpSendSctpData(d.data, d.len); }
+        if (a) {
+          // QRPC_LOGJ(info, {{"ev", "send queue packet"},{"threadId", RTC::SctpAssociation::GetSctpThreadId()},{"dur", dur}});
+          a->OnUsrSctpSendSctpData(d.data, d.len);
+        }
         Syscall::MemFree(d.data);
       }
     }
