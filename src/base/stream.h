@@ -11,6 +11,7 @@ namespace base {
   class Connection;
   class Stream {
   public:
+    static constexpr char *SYSCALL_NAME = "$syscall";
     typedef struct {
       // TODO: use general stream parameter struct, instead of borrow from WebRTC
       RTC::SctpStreamParameters params;
@@ -21,18 +22,21 @@ namespace base {
     typedef uint16_t Id;
     typedef std::function<int (Stream &, const char *, size_t)> Handler;
   public:
-    Stream(Connection &c, const Config &config, bool binary_payload = true) : 
+    Stream(Connection &c, const Config &config, bool binary_payload = true) :
       conn_(c), config_(config), context_(nullptr), close_reason_(nullptr),
-      binary_payload_(binary_payload), reset_(false) {}
+      binary_payload_(binary_payload ? 1 : 0), reset_(0), published_(0) {}
     virtual ~Stream() {}
     const Config &config() const { return config_; }
     bool closed() const { return close_reason_ != nullptr; }
-    bool reset() const { return reset_; }
+    bool reset() const { return reset_ != 0; }
+    bool published() const { return published_ != 0; }
+    bool binary_payload() const { return binary_payload_ != 0; }
     Id id() const { return config_.params.streamId; }
     const std::string &label() const { return config_.label; }
     Connection &connection() { return conn_; }
     template <class T> const T &context() const { return *static_cast<T *>(context_); }
     template <class T> T &context() { return *static_cast<T *>(context_); }
+    static inline bool IsSystem(const std::string &label) { return label[0] == '$'; }
   public:
     virtual int Open();
     virtual void Close(const CloseReason &reason);
@@ -50,13 +54,14 @@ namespace base {
     virtual void OnShutdown() {}
     virtual int OnRead(const char *p, size_t sz) = 0;
     template <class T> void SetContext(T *t) { context_ = t;}
-    void SetReset() { reset_ = true; }
+    void SetReset() { reset_ = 1; }
+    void SetPublished(bool on) { published_ = (on ? 1 : 0); }
   protected:
     Connection &conn_;
     Config config_;
     void *context_;
     std::unique_ptr<CloseReason> close_reason_;
-    bool binary_payload_, reset_;
+    uint8_t binary_payload_, reset_, published_;
   };
   typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, Connection &)> StreamFactory;
   class AdhocStream : public Stream {

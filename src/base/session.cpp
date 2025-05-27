@@ -7,6 +7,27 @@ namespace base {
   typedef SessionFactory::FactoryMethod FactoryMethod;
   typedef SessionFactory::Session::CloseReason CloseReason;
 
+  std::string CertificatePair::TryAutoGen() {
+    if (!need_autogen()) { return ""; }
+    std::pair<std::string, std::string> cp;
+    auto r = cert::gen(cp, hostnames);
+    if (!r.empty()) {
+      return r;
+    }
+    QRPC_LOGJ(info, {{"ev","autogen certpair"},{"cert",cp.first},{"pkey",cp.second}});
+    auto certpath = Syscall::MakeTempFile("/tmp/qrpc_auto_cert");
+    auto privkeypath = Syscall::MakeTempFile("/tmp/qrpc_auto_pkey");
+    if (Syscall::WriteFile(certpath, cp.first.c_str(), cp.first.size()) < 0) {
+      return "Failed to write certificate";
+    }
+    if (Syscall::WriteFile(privkeypath, cp.second.c_str(), cp.second.size()) < 0) {
+      return "Failed to write private key";
+    }
+    cert = certpath;
+    privkey = privkeypath;
+    return "";
+  }
+
   struct DnsQuery : public AsyncResolver::Query {
     int port_;
     static CloseReason CreateAresCloseReason(int status) {
@@ -71,13 +92,73 @@ namespace base {
     resolver_(rhs.resolver_),
     alarm_processor_(rhs.alarm_processor_),
     alarm_id_(AlarmProcessor::INVALID_ID),
-    session_timeout_(rhs.session_timeout_) {
+    certpair_(rhs.certpair_),
+    session_timeout_(rhs.session_timeout_),
+    is_listener_(rhs.is_listener_) {
     if (rhs.alarm_id_ != AlarmProcessor::INVALID_ID) {
       rhs.loop_.alarm_processor().Cancel(rhs.alarm_id_);
       rhs.alarm_id_ = AlarmProcessor::INVALID_ID;
     }
+    if (rhs.tls_ctx_ != nullptr) {
+      tls_ctx_ = rhs.tls_ctx_;
+      rhs.tls_ctx_ = nullptr;
+    }
     Init();
   }
+
+  void SessionFactory::Init() {
+      if (session_timeout() > 0) {
+          alarm_id_ = alarm_processor_.Set(
+              [this]() { return this->CheckTimeout(); }, qrpc_time_now() + session_timeout()
+          );
+      }
+      if (!need_tls()) { return; }
+      auto cp = certpair_.value();
+      auto r = cp.TryAutoGen();
+      if (!r.empty()) {
+        logger::die({{"ev", "Failed to auto generate cert"}, {"err", r}});
+      }
+      char err_buf[256];
+      tls_ctx_ = SSL_CTX_new(TLS_method());
+      if (tls_ctx_ == nullptr) {
+          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+          logger::die({{"ev", "Failed to create SSL context"}, {"err", err_buf}});
+      }
+      // サーバー証明書のロード
+      if (SSL_CTX_use_certificate_file(tls_ctx_, cp.cert.c_str(), SSL_FILETYPE_PEM) <= 0) {
+          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+          logger::die({{"ev", "Failed to load certificate"}, {"err", err_buf}});
+      }
+      // 秘密鍵のロード
+      if (SSL_CTX_use_PrivateKey_file(tls_ctx_, cp.privkey.c_str(), SSL_FILETYPE_PEM) <= 0) {
+          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+          logger::die({{"ev", "Failed to load private key"}, {"err", err_buf}});
+      }
+      // 秘密鍵と証明書の整合性確認
+      if (SSL_CTX_check_private_key(tls_ctx_) != 1) {
+          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+          logger::die({{"ev", "Private key does not match the certificate"}, {"err", err_buf}});
+      }
+      // 適切なTLSバージョンサポートを設定
+      SSL_CTX_set_options(tls_ctx_, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | 
+                          SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+      // 強力な暗号スイートのみを許可
+      const char* const PREFERRED_CIPHERS = "HIGH:!aNULL:!MD5:!RC4:!SSLv2:!SSLv3:!TLSv1:!TLSv1.1";
+      if (SSL_CTX_set_cipher_list(tls_ctx_, PREFERRED_CIPHERS) != 1) {
+          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+          logger::die({{"ev", "Failed to set cipher list"}, {"err", err_buf}});
+      }
+  }
+  void SessionFactory::Fin() {
+      if (alarm_id_ != AlarmProcessor::INVALID_ID) {
+          alarm_processor_.Cancel(alarm_id_);
+          alarm_id_ = AlarmProcessor::INVALID_ID;
+      }
+      if (tls_ctx_ != nullptr) {
+          SSL_CTX_free(tls_ctx_);
+          tls_ctx_ = nullptr;
+      }
+  }  
 
   bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref) {
     auto q = new SessionDnsQuery(*this, m, eh);
@@ -113,7 +194,7 @@ namespace base {
     }
     int r;
     if ((r = Syscall::SendTo(fd_, mmsg, size)) < 0) {
-      if (Syscall::WriteMayBlocked(r, false)) {
+      if (Syscall::IOMayBlocked(r, false)) {
         return count; // nothing should be sent
       }
       ASSERT(false);
@@ -139,7 +220,7 @@ namespace base {
       if (Syscall::SendTo(fd_, &h) < 0) {
         // reset with sent count (idx)
         Reset(idx);
-        if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+        if (Syscall::IOMayBlocked(Syscall::Errno(), false)) {
             return size - idx;
         }
         QRPC_LOGJ(error, {{"ev","SendTo fails"},{"fd",fd_},{"errno",Syscall::Errno()}});
@@ -180,7 +261,7 @@ namespace base {
     }
     int r;
     if ((r = Syscall::SendTo(fd_, mmsg, count)) < 0) {
-      if (Syscall::WriteMayBlocked(r, false)) {
+      if (Syscall::IOMayBlocked(r, false)) {
         return count; // nothing should be sent
       }
       ASSERT(false);
@@ -296,7 +377,7 @@ namespace base {
     int r = Syscall::RecvFrom(fd_, read_packets_.data(), batch_size_);
     if (r < 0) {
       int eno = Syscall::Errno();
-      if (Syscall::WriteMayBlocked(eno, false)) {
+      if (Syscall::IOMayBlocked(eno, false)) {
         return QRPC_EAGAIN;
       }
       logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
@@ -307,7 +388,7 @@ namespace base {
     int r = Syscall::RecvFrom(fd_, &read_packets_.data()->msg_hdr);
     if (r < 0) {
       int eno = Syscall::Errno();
-      if (Syscall::WriteMayBlocked(eno, false)) {
+      if (Syscall::IOMayBlocked(eno, false)) {
         return QRPC_EAGAIN;
       }
       logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});

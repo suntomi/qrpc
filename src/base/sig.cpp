@@ -46,7 +46,7 @@ namespace base {
         // read signalfd
         Signal s;
         if ((r = Syscall::Read(fd_, &s, sizeof(s))) < 0) {
-          if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+          if (Syscall::IOMayBlocked(Syscall::Errno(), false)) {
             break;
           }
           logger::error({{"ev","read signalfd fails"},{"errno",Syscall::Errno()}});

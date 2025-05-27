@@ -12,26 +12,28 @@ namespace base {
 namespace rtp {
   class Handler;
   class Producer;
+  class MediaStreamConfig;
   typedef RTC::Consumer Consumer;
+  struct ConsumerStatus {
+    bool paused{ false };
+    bool producerPaused{ false };
+    json ToJson() const;
+  };
   class ConsumerFactory {
   public:
     ConsumerFactory(Handler &h) : handler_(h) {}
     virtual ~ConsumerFactory() {}
-    inline std::string GenerateMid() {
-      auto mid = mid_seed_++;
-      if (mid_seed_ > 1000000000) { ASSERT(false); mid_seed_ = 0; } 
-      return std::to_string(mid);
-    }
-    static std::string GenerateId(const std::string &id, const std::string &label, Parameters::MediaKind kind);
+    static std::string GenerateId(const std::string &id, const std::string &path);
   public:
     Consumer *Create(
-      const Handler &peer, const std::string &label, Parameters::MediaKind kind,
-      const RTC::RtpParameters &consumer_params, bool paused, bool pipe
+      const Handler &peer, const MediaStreamConfig &config, bool pipe
     );
     flatbuffers::Offset<FBS::Consumer::DumpResponse>
     FillBuffer(Consumer *c, flatbuffers::FlatBufferBuilder& builder);
+    static Handler &HandlerFrom(Consumer *c);
+    static ConsumerStatus StatusFrom(Consumer *c);
+    static void OnProducerManuallyClosed(Consumer *c);
   protected:
-    uint32_t mid_seed_{0};
     Handler &handler_;
   }; 
 }

@@ -7,7 +7,7 @@
 
 namespace base {
 namespace logger {
-  const std::string log_level_[level::max] = {
+  const std::string log_level_descs_[static_cast<size_t>(level::max)] = {
       "T",
       "D",
       "I",
@@ -16,24 +16,32 @@ namespace logger {
       "F",
       "R",
   };
+#if defined(NDEBUG)
+  level log_level_ = level::info;
+#else
+  level log_level_ = level::debug;
+#endif
   static inline void default_writer(const char *buf, size_t len) {
     fwrite(buf, 1, len, stderr);
     fputc('\n', stderr);
   }
   static writer_cb_t writer_ = default_writer;
-  static std::string id_ = "qrpc";
+  static std::string namespace_ = "qrpc";
   static std::mutex mtx_;
   static bool manual_flush_ = false;
-  void configure(writer_cb_t cb, const std::string &id, bool manual_flush) {
+  void configure(writer_cb_t cb, const std::string &ns, bool manual_flush, level llv) {
       if (cb != nullptr) {
       writer_ = cb;
     }
-    if (id.length() > 0) {
-      id_ = id;
+    if (ns.length() > 0) {
+      namespace_ = ns;
+    }
+    if (llv != level::max) {
+      log_level_ = llv;
     }
     manual_flush_ = manual_flush;
   }
-  const std::string &id() { return id_; }
+  const std::string &ns() { return namespace_; }
 
 #if !defined(NO_LOG_WRITE_CALLBACK)
   static moodycamel::ConcurrentQueue<std::string> s_logs;

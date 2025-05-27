@@ -2,77 +2,493 @@
 <html>
   <head>
     <title>WebRTC with QRPC media</title>
+    <style>
+      .media-list-container {
+        display: flex;
+        justify-content: space-between;
+      }
+      .media-container {
+        position: relative;
+        width: 50vw;
+        display: flex; /* fit with child height */        
+      }
+      .overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      .overlay .icon {
+        font-size: 48px;
+        color: white;
+        display: flex;
+      }
+      .overlay .icon img {
+        width: 12.5vw;
+        height: auto;
+      }
+      .audio-switch {
+        width: 5vw;
+        height: 5vw;
+        position: absolute;
+        bottom: 0.5vh;
+        right: 0.5vw;
+        z-index: 1;
+      }
+      .video-switch {
+        width: 5vw;
+        height: 5vw;
+        position: absolute;
+        bottom: 0.5vh;
+        right: 6.0vw;
+        z-index: 1;
+      }
+      .audio-switch img, .video-switch img {
+        width: 100%;
+        height: auto;
+      }
+      .close {
+        width: 3vw;
+        height: 3vw;
+        position: absolute;
+        top: 1vh;
+        right: 1.5vw;
+        z-index: 1;
+      }
+      .close img {
+        width: 100%;
+        height: auto;
+      }
+      .label {
+        color: white; /* text color is white */
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        text-shadow: 1px 1px 1px black; /* black outline for text */
+        padding: 0.2em;
+        box-sizing: border-box;
+      }
+      video {
+        width: 100%;
+        height: auto;
+      }
+      #chat textarea {
+        width: 99%;
+        height: 10vh;
+        margin-right: 1vw;
+      }
+    </style>    
   </head>
   <body>
     <div id="cname"></div>
-    <input type="text" id="idedit" placeholder="input connection id of other peer and press Enter"/>
+    <div>published tracks</div>
+    <div id="pubsList" class="media-list-container"></div>
+    <div>subscribed tracks</div>
+    <div id="subsList" class="media-list-container"></div>
+    <div id="subscribe">
+      <input type="text" id="idedit" placeholder="input connection id of other peer"/>
+      <input type="text" id="lpath_sub" placeholder="input local path" value="webcam"/>
+      <input type="checkbox" id="sub_audio" checked/><label for="sub_audio">audio</label>
+      <input type="checkbox" id="sub_video" checked/><label for="sub_video">video</label>
+      <button id="sub">subscribe</button>
+    </div>
+    <div id="publish">
+      <input type="text" id="lpath_pub" placeholder="input local path" value="webcam2"/>
+      <input type="checkbox" id="pub_audio" checked/><label for="pub_audio">audio</label>
+      <input type="checkbox" id="pub_video" checked/><label for="pub_video">video</label>
+      <button id="pub">publish</button>
+    </div>
+    <div>chat</div>
+    <div id="chat">
+      <textarea id="messages" readonly></textarea><br/>
+      <input type="text" id="editmsg" placeholder="input message"/>
+      <button id="sendmsg">send</button>
+    </div>
+    <button id="reconnect">reconnect</button>
 
-    <script src="http://localhost:8888/client.js"></script>
+    <script src="./client.js"></script>
     <script>
-      showMedia = (t) => {
-        console.log(`play ${t.kind}`, t.label);
-        let mediaElement = document.getElementById(`${t.kind}-${t.id}`);
+      const cname = document.getElementById("cname");      
+      const pubsList = document.getElementById('pubsList');
+      const subsList = document.getElementById('subsList');
+      const pub = document.getElementById('pub');
+      const sub = document.getElementById('sub');
+      const reconnect = document.getElementById('reconnect');
+      const sendmsg = document.getElementById('sendmsg');
+      const messages = document.getElementById('messages');
+      const parsedSearchParams = new URLSearchParams(window.location.search);
+      const urlParameters = {};
+      for (const [key, value] of parsedSearchParams.entries()) {
+        urlParameters[key] = value;
+      }
+      mediaIcon = (track) => {
+        const parsed = track.path.split('/');
+        const kind = parsed[parsed.length - 1];
+        if (!track.paused) {
+          return `./${kind}-on.svg`;
+        } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.local_op)) {
+          return `./${kind}-play.svg`;
+        } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.remote_op)) {
+          return `./${kind}-off.svg`;
+        } else if (track.pausedBy(QRPCTrack.PAUSE_REASON.remote_close)) {
+          return './loading.gif';
+        } else {
+          throw new Error(`unknown pause reasons ${pausedElements[path].join(',')}`);
+        }
+      }
+      createOverlayElement = (track) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'overlay';
+        const icon = document.createElement('div');
+        icon.className = 'icon';
+        const img = document.createElement('img');
+        img.src = mediaIcon(track);
+        img.alt = 'Loading...';
+        icon.appendChild(img);          
+        overlay.appendChild(icon);
+        return overlay;
+      }
+      createAudioSwitchElement = (track) => {
+        const audioSwitch = document.createElement('div');
+        audioSwitch.id = `audio-switch-${track.path.replace(/\//g, '-')}`;
+        audioSwitch.className = 'audio-switch';
+        const mediaControlHandler = createMediaControlHandler(track);
+        const img = document.createElement('img');
+        img.src = mediaIcon(track);
+        img.alt = 'Loading...';
+        audioSwitch.appendChild(img);
+        // audio pause/resume handler
+        audioSwitch.addEventListener('click', async (event) => {
+          console.log("audio switch", track.path, track.pausedReasons);
+          event.stopPropagation(); // if it puts after await, not effective. I guess the callback is regarded as finished once await is happen.
+          await mediaControlHandler(event);
+          audioSwitch.firstChild.src = mediaIcon(track);
+        });
+        return {audioSwitch, img};
+      }
+      createCloseIconElement = (track) => {
+        const closeIcon = document.createElement('div');
+        const img = document.createElement('img');
+        img.src = "./close.svg";
+        img.alt = "Loading...";
+        closeIcon.appendChild(img);
+        closeIcon.className = 'close';
+        closeIcon.addEventListener('click', async (event) => {
+          console.log("close", track.path);
+          event.stopPropagation();
+          try {
+            const receiver = track.isReceiver ? track.cname : cname;
+            await c.closeMedia(track.directory);
+            streams.receivers[receiver]?.close(); // close chat stream too
+          } catch (e) {
+            console.error(e);
+          }
+        });
+        return closeIcon;
+      }
+      createVideoSwitchElement = (track) => {
+        const videoSwitch = document.createElement('div');
+        videoSwitch.id = `video-switch-${track.path.replace(/\//g, '-')}`;
+        videoSwitch.className = 'video-switch';
+        const img = document.createElement('img');
+        img.src = './display.svg';
+        img.alt = 'Loading...';
+        img.className = 'to-display';
+        videoSwitch.appendChild(img);
+        const toggle = async () => {
+          console.log("video switch", track.path, img.className);
+          if (img.className == 'to-display') {
+            const tracks = await c.updateMedia(track.directory, {stream: await navigator.mediaDevices.getDisplayMedia({
+              video: {width: {ideal: 1280}, height: {ideal: 720}}
+            })});
+            tracks[0].raw.onended = async () => {
+              console.log("display sharing ended", track.directory);
+              toggle(img);
+            };
+            img.className = 'to-camera';
+            img.src = './face.svg';
+          } else {
+            await c.updateMedia(track.directory, {stream: await navigator.mediaDevices.getUserMedia({
+              video: {width: {ideal: 1280}, height: {ideal: 720}}
+            })});
+            img.className = 'to-display';
+            img.src = './display.svg';
+          }
+        }
+        // video pause/resume handler
+        videoSwitch.addEventListener('click', async (event) => {
+          event.stopPropagation(); // if it puts after await, not effective. I guess the callback is regarded as finished once await is happen.
+          await toggle();
+        });
+        return videoSwitch;
+      }
+      createMediaContainerElement = (t, dom) => {
+        console.log("createMediaContainerElement", t.path);
+        const container_id = `media-${t.directory.replace(/\//g, '-')}`;
+        let container = document.getElementById(container_id);
+        if (!container) {
+          container = document.createElement('div');
+          container.className = 'media-container';
+          container.id = container_id;
+          // label text element
+          const label = document.createElement('div');
+          label.className = 'label';
+          label.textContent = t.directory;
+          container.appendChild(label);
+          dom.appendChild(container);
+        }
+        let mediaElement = document.getElementById(t.path);
         if (!mediaElement) {
           mediaElement = document.createElement(t.kind);
-          mediaElement.id = `${t.kind}-${t.id}`;
+          mediaElement.id = t.path;
           mediaElement.autoplay = true;
-          document.body.appendChild(mediaElement);
+          mediaElement.srcObject = t.stream;
+          container.appendChild(mediaElement);
+          if (t.kind === 'video') {
+            // attach video ause/resume handler for entire container click event
+            container.mediaControlHandler = createMediaControlHandler(t);
+            container.addEventListener('click', container.mediaControlHandler);
+            if (!t.isReceiver) {
+              container.appendChild(createVideoSwitchElement(t));
+            }
+            // in case of bootstrapping pause, show overlay
+            if (t.paused) { container.appendChild(createOverlayElement(t)); }
+          } else if (t.kind === 'audio') {
+            // attach pause/resume handler for audio switch elemnt click event
+            const {audioSwitch, img} = createAudioSwitchElement(t);
+            container.appendChild(audioSwitch);
+            visualizeAudioVolume(mediaElement, img, t);
+          }
+          container.appendChild(createCloseIconElement(t));
+        } else {
+          mediaElement.srcObject = t.stream;
         }
-        mediaElement.srcObject = t.stream;
+        return container;
+      }      
+      createMediaHandlerWithOptions = (dom, options) => {
+        return {
+          options,
+          onopen: (track)=>{
+            console.log("media open", track.directory, track.id);
+            createMediaContainerElement(track, dom);
+            // track.raw.onmute/onunmute behaviour is unstable among browsers,
+            // use our callback onpause/onresume instead.
+          },
+          onclose: (track)=>{
+            console.log("media close", track.directory, track.kind);
+            document.getElementById(track.path)?.remove();
+            const container_id = `media-${track.directory.replace(/\//g, '-')}`;
+            const container = document.getElementById(container_id);
+            if (track.kind === "audio") {
+              document.getElementById(`audio-switch-${track.path.replace(/\//g, '-')}`)?.remove();
+            } else if (track.kind === "video" && container?.mediaControlHandler) {
+              container.removeEventListener('click', container.mediaControlHandler);
+            }
+            if (!container?.querySelector('video, audio')) {
+              console.log("no media element in container:", container_id, "will be removed");
+              container?.remove();
+            }
+          },
+          // eg. video track replaced
+          onupdate: (track)=>{
+            console.log("media update", track.directory, track.kind);
+            createMediaContainerElement(track, dom);
+          },
+          // there is 3 reason to pause/resume media.
+          // 1. local_op: user click pause button
+          // 2. remote_op: remote user click pause button
+          // 3. remote_close: remote peer seems to be closed or packet severly lost
+          // these events can occur simultaneously. that means, onpause/onresume can be called multiple times consecutively.
+          onpause: (track, reason)=>{
+            console.log("media pause", track.directory, track.kind, reason, track.pausedReasons);
+            const container_id = `media-${track.directory.replace(/\//g, '-')}`;
+            const container = document.getElementById(container_id);
+            if (track.kind === "video") {
+              const overlays = container?.getElementsByClassName('overlay');
+              if (overlays?.length == 0) {
+                document.getElementById(container_id).appendChild(createOverlayElement(track));
+              } else {
+                const videoIcon = overlays[0].querySelector('.icon img');
+                if (videoIcon) {
+                  videoIcon.src = mediaIcon(track);
+                }
+              }
+            } else if (track.kind === "audio") {
+              const audioIcon = container?.querySelector('.audio-switch img');
+              if (audioIcon) {
+                audioIcon.src = mediaIcon(track);
+              }
+            }
+          },
+          onresume: (track, reason)=>{
+            console.log("media resume", track.directory, track.kind, reason, track.pausedReasons);
+            const container_id = `media-${track.directory.replace(/\//g, '-')}`;
+            const container = document.getElementById(container_id);
+            if (track.kind === "video") {
+              const overlays = container?.getElementsByClassName('overlay');
+              if (overlays?.length > 0) {
+                if (track.paused) {
+                  const videoIcon = overlays[0].querySelector('.icon img');
+                  if (videoIcon) {
+                    videoIcon.src = mediaIcon(track);
+                  }
+                } else {
+                  overlays[0].remove();
+                }
+              }
+            } else if (track.kind === "audio") {
+              const audioIcon = container?.querySelector('.audio-switch img');
+              if (audioIcon) {
+                audioIcon.src = mediaIcon(track);
+              } else {
+                throw new Error("audioIcon not found");
+              }
+            }
+            if (reason === QRPCTrack.PAUSE_REASON.remote_close) {
+              console.log("recover chat stream", track.directory, track.cname);
+              subscribeChat(track.cname);
+            }
+          },
+        };
       }
-      onIDEdit = async (event) => {
-        if (event.key === 'Enter') {
-          const id = event.target.value;
-          console.log(`input id = ${id}`);
-          await c.openMedia(`${id}/webcam`, webcamMediaHandler);
+      createMediaControlHandler = (t) => {
+        return async (event) => {
+          const path = t.path;
+          const paused = t.pausedBy("local_op");
+          try {
+            if (paused) {
+              console.log("resume", path);
+              await c.resumeMedia(path);
+            } else {
+              console.log("pause", path);
+              await c.pauseMedia(path);
+            }
+          } catch (e) {
+            console.error(e);
+          }
         }
       }
-      setupUI = (c) => {
-        // このconnectionのidを表示
-        let idElement = document.getElementById("cname");
-        if (idElement) {
-          idElement.innerText = c.cname;
+      visualizeAudioVolume = (audioDom, visualDom, track) => {
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(audioDom.srcObject);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256; // resulution of frequencies
+        source.connect(analyser);
+        analyser.connect(audioContext.destination);
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const visualize = () => {
+          requestAnimationFrame(visualize);
+          if (track.paused) {
+            return; // skip visualization because the audio is paused
+          }
+          analyser.getByteTimeDomainData(dataArray);
+          // calculate average amplitude of audio by calculating difference from 128 (middle value)
+          let sum = 0;
+          dataArray.forEach(value => { sum += Math.abs(value - 128); });
+          const average = sum / dataArray.length;  // average of absolute amplitude
+          // calculate scale factor based on average amplitude and adjust the scale 1.0 to 1.5
+          const scale = 1 + Math.min(0.5, average / 16);
+          visualDom.style.transform = `scale(${scale})`;
         }
-        // 編集ボックスのEnterキーイベントリスナーを追加
-        document.getElementById('idedit').addEventListener('keydown', onIDEdit);         
+        // start visualization when audio is played
+        audioDom.addEventListener('play', () => {
+          if (audioContext.state === 'suspended') {
+            audioContext.resume();
+          }
+          visualize();
+        });
       }
-      cleanupUI = (c) => {
-        document.getElementById('idedit').removeEventListener('keydown', onIDEdit);
-      }
-      //Create whip client
-      const url = "http://localhost:8888/qrpc";
-      const c = new QRPClient(url);
-      const context = {};
-      const MAX_RECONNECT = 1;
-      let closed = 0;
-      const webcamMediaHandler = {
-        onopen: (track)=>{
-          console.log("media open", track.stream.id, track.id);
-          showMedia(track);
-        },
-        onclose: (track)=>{
-          console.log("media close", track.id, track.kind);
-          document.getElementById(`${track.kind}-${track.id}`).remove();
-        },
-      };
-      c.onopen = async () => {
-        console.log("client onopen called");
-        setupUI(c);
-        await c.createMedia("webcam", Object.assign({}, webcamMediaHandler, {
+      openMedia = async (path, handler_and_options) => {
+        await c.openMedia(path, Object.assign({}, handler_and_options, {
           stream: await navigator.mediaDevices.getUserMedia({
             video: {width: {ideal: 1280}, height: {ideal: 720}},
             audio: true
           }), 
           encodings: [
-            // 5Mbps ?
-            {rid: 'h1', maxBitrate: 5000000, active: true, scaleResolutionDownBy: 1.0},
-            // 1Mbps ?
-            {rid: 'm1', maxBitrate: 1000000, active: true, scaleResolutionDownBy: 2.0},
-            // 100kbps ?
-            {rid: 'l1', maxBitrate: 500000, active: true, scaleResolutionDownBy: 4.0}
+            {maxBitrate: 5000000, scaleResolutionDownBy: 1.0}, // 5Mbps
+            {maxBitrate: 1000000, scaleResolutionDownBy: 2.0}, // 1Mbps
+            {maxBitrate: 500000, scaleResolutionDownBy: 4.0},   // 500kbps
           ],
         }));
-        console.log("open media");
+      }
+      createPubSubOptions = (audio_checkbox_id, video_checkbox_id) => {
+        const need_audio = document.getElementById(audio_checkbox_id).checked;
+        const need_video = document.getElementById(video_checkbox_id).checked;
+        return Object.assign({}, need_audio ? {} : {audio:{pause:true}}, need_video ? {} : {video:{pause:true}});
+      }
+      addChatMessage = (id, text) => {
+        const line = `${id}: ${text}`;
+        if (messages.value.length > 0) {
+          messages.value = (messages.value + "\n" + line);
+        } else {
+          messages.value = line;
+        }
+        messages.scrollTop = messages.scrollHeight; // scroll to bottom
+      }
+      const decoder = new TextDecoder('utf-8');
+      subscribeChat = (id) => {
+        streams.receivers[id] = c.watchStream(`${id}/chat`, {
+          onmessage: async (s, event) => {
+            const data = (event.data instanceof Blob) ? (await event.data.arrayBuffer()) : event.data;
+            addChatMessage(id, decoder.decode(data))
+          },
+        });
+      }
+      onPublish = async (event) => {
+        const lpath = document.getElementById('lpath_pub').value;
+        const options = createPubSubOptions('pub_audio', 'pub_video');
+        console.log(`publish: input path = ${lpath}`, options);
+        await openMedia(lpath, createMediaHandlerWithOptions(pubsList, options));
+      }
+      onSubscribe = async (event) => {
+        const id = document.getElementById('idedit').value;
+        const lpath = document.getElementById('lpath_sub').value;
+        const options = createPubSubOptions('sub_audio', 'sub_video');
+        const path = `${id}/${lpath}`;
+        console.log(`subscribe: input path = ${path}`, options);
+        await c.watchMedia(path, createMediaHandlerWithOptions(subsList, options));
+        subscribeChat(id);
+      }
+      onReconnect = (event) => {
+        console.log("shutdown by UI");
+        closed = 0;
+        c.close();
+      }
+      onSendMessage = (event) => {
+        const msg = document.getElementById('editmsg').value;
+        streams.sender.send(msg);
+        addChatMessage(cname.innerText, msg)
+      }
+      setupUI = (c) => {
+        cname.innerText = c.cname;
+        pub.addEventListener('click', onPublish);
+        sub.addEventListener('click', onSubscribe);
+        reconnect.addEventListener('click', onReconnect);
+        sendmsg.addEventListener('click', onSendMessage);
+      }
+      cleanupUI = (c) => {
+        pub.removeEventListener('click', onPublish);
+        sub.removeEventListener('click', onSubscribe);
+        reconnect.removeEventListener('click', onReconnect);
+        sendmsg.removeEventListener('click', onSendMessage);
+      }
+      //Create client
+      const url = `${window.location.protocol}//${window.location.host}/qrpc`;
+      const c = new QRPClient(url, urlParameters["cname"]);
+      const streams = {receivers:{}};
+      const context = {};
+      const MAX_RECONNECT = 1;
+      let closed = 0;
+      c.onopen = async () => {
+        console.log("client onopen called");
+        setupUI(c);
+        await openMedia("webcam", createMediaHandlerWithOptions(pubsList));
+        streams.sender = c.openStream("chat", { onmessage: () => {}, publish: true });
         return context;
       };
       c.onclose = () => {

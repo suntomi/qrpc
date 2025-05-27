@@ -1,277 +1,49 @@
 #pragma once
 
-#include "base/address.h"
-#include "base/alarm.h"
-#include "base/allocator.h"
-#include "base/crypto.h"
-#include "base/loop.h"
-#include "base/io_processor.h"
-#include "base/macros.h"
-#include "base/resolver.h"
-
-#include <functional>
+#include "base/session_base.h"
+#include "base/handshaker.h"
 
 namespace base {
-    class SessionFactory {
+    class TcpSessionFactory : public SessionFactory {
     public:
-        struct Config {
-            Config(Resolver &r, qrpc_time_t st) : resolver(r), session_timeout(st) {}
+        struct Config : public SessionFactory::Config {
+            Config(
+                Resolver &r, qrpc_time_t session_timeout, bool is_listener, const MaybeCertPair &p
+            ) : SessionFactory::Config(r, session_timeout, is_listener, p) {}
             static inline Config Default() { 
                 // default no timeout
-                return Config(NopResolver::Instance(), qrpc_time_sec(0));
+                return Config(NopResolver::Instance(), qrpc_time_sec(0), false, std::nullopt);
             }
-        public:
-            Resolver &resolver;
-            qrpc_time_t session_timeout;
         };
-        class Session {
-        public:
-            class ReconnectionTimeoutCalculator {
-            public:
-                static constexpr int kMaxRetryCount = 63;
-                ReconnectionTimeoutCalculator(qrpc_time_t unit, qrpc_time_t max = qrpc_time_sec(3600)) :
-                    unit_(unit), max_(max) {}
-                void Shutdown() { retry_count_++; }
-                void Connected() { retry_count_ = 0; }
-                qrpc_time_t Timeout() const {
-                    double unit = (double)(unit_);
-                    auto factor = 1ULL << std::min(kMaxRetryCount, retry_count_);
-                    auto base = std::min((double)max_, unit * factor);
-                    // TODO: configurable jitter
-                    return (qrpc_time_t)(base * random::gen(0.8, 1.2));
-                }
-            private:
-                int retry_count_{0};
-                qrpc_time_t unit_, max_;
-            };
-            struct CloseReason {
-                qrpc_close_reason_code_t code;
-                int64_t detail_code;
-                std::string msg;
-                AlarmProcessor::Id alarm_id{AlarmProcessor::INVALID_ID};
-            };
-        public:
-            Session(SessionFactory &f, Fd fd, const Address &addr) : 
-                factory_(f), fd_(fd), addr_(addr), last_active_(qrpc_time_now()), close_reason_() {}
-            virtual ~Session() {
-                if (close_reason_ != nullptr && close_reason_->alarm_id != AlarmProcessor::INVALID_ID) {
-                    factory_.alarm_processor().Cancel(close_reason_->alarm_id);
-                }
-            }
-            DISALLOW_COPY_AND_ASSIGN(Session);
-            inline Fd fd() const { return fd_; }
-            inline SessionFactory &factory() { return factory_; }
-            inline const SessionFactory &factory() const { return factory_; }
-            inline const Address &addr() const { return addr_; }
-            inline bool closed() const { return close_reason_ != nullptr; }
-            inline CloseReason &close_reason() { return *close_reason_; }
-            inline bool timeout(qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check) const {
-                return CheckTimeout(last_active_, qrpc_time_now(), timeout, next_check);
-            }
-            // Close should not be called inside OnXXXX callbacks of session.
-            // Instead, return negative value from them to close, or call Shutdown()
-            inline bool Close(qrpc_close_reason_code_t code,
-                int64_t detail_code = 0, const std::string &msg = "") {
-                return Close({ .code = code, .detail_code = detail_code, .msg = msg });
-            }
-            // this closes session and safely callable from OnRead(), OnConnect()
-            // but recommended to return negative value from them to close. use this only when there is no other way.
-            inline bool ScheduleClose(qrpc_close_reason_code_t code,
-                int64_t detail_code = 0, const std::string &msg = "") {
-                // set close reason first so that cancel the alarm when session is deleted before alarm raised
-                SetCloseReason({ .code = code, .detail_code = detail_code, .msg = msg });
-                this->close_reason_->alarm_id = factory().alarm_processor().Set(
-                    [this]() {
-                        std::unique_ptr<CloseReason> cr = std::move(this->close_reason_);
-                        ASSERT(close_reason_ == nullptr);
-                        if (cr != nullptr) {
-                            this->Close(*cr);
-                        } else {
-                            QRPC_LOGJ(error,{{"ev","alarm fired but close reason is already reset"}});
-                            ASSERT(false);
-                            this->Close(QRPC_CLOSE_REASON_SHUTDOWN, 0, "invalid shutdown: no close reason");
-                        }
-                        return 0; // stop alarm
-                    }, qrpc_time_now()
-                );
-            }
-            inline void Touch(qrpc_time_t at) { last_active_ = at; }
-            // virtual functions to override
-            virtual int Send(const char *data, size_t sz) {
-                return Syscall::Write(fd_, data, sz);
-            }
-            virtual int OnConnect() { return QRPC_OK; }
-            virtual qrpc_time_t OnShutdown() { return 0; } // return 0 to delete the session
-            virtual int OnRead(const char *p, size_t sz) = 0;
-            virtual const char *proto() const = 0;
-        public:
-            static inline bool CheckTimeout(
-                qrpc_time_t last_active, qrpc_time_t now, qrpc_time_t timeout, qrpc_time_t &next_check
-            ) {
-                ASSERT(timeout > 0);
-                auto diff = now - last_active;
-                if (diff > timeout) {
-                    return true;
-                } else {
-                    next_check = now + timeout - diff;
-                    return false;
-                }
-            }
-            inline void SetCloseReason(const CloseReason &reason) {
-                close_reason_.reset(new CloseReason(reason));
-                ASSERT(close_reason_ != nullptr);
-            }
-        protected:
-            bool Close(const CloseReason &reason) {
-                if (!closed()) {
-                    logger::info({
-                        {"ev","close"},{"fd",fd()},{"a",addr().str()},
-                        {"code",reason.code},{"dcode",reason.detail_code},{"rmsg",reason.msg}
-                    });
-                    SetCloseReason(reason);
-                    auto reconnect_timeout = OnShutdown();
-                    factory_.Close(*this);
-                    auto &ap = factory_.alarm_processor();
-                    if (reconnect_timeout > 0 && 
-                        // if session is migrated or shutdown, reconnect setting is ignored
-                        reason.code != QRPC_CLOSE_REASON_MIGRATED &&
-                        reason.code != QRPC_CLOSE_REASON_SHUTDOWN &&
-                        &ap != &NopAlarmProcessor::Instance()) {
-                        this->close_reason_->alarm_id = ap.Set(
-                            [this]() { return this->Reconnect(); }, qrpc_time_now() + reconnect_timeout
-                        );
-                        return false;
-                    } else {
-                        ASSERT(reconnect_timeout == 0 ||
-                            reason.code == QRPC_CLOSE_REASON_MIGRATED ||
-                            reason.code == QRPC_CLOSE_REASON_SHUTDOWN);
-                        ASSERT(this->close_reason_->alarm_id == AlarmProcessor::INVALID_ID);
-                        delete this;
-                        return true;
-                   }
-                }
-                ASSERT(false);
-                return false;
-            }
-            inline qrpc_time_t Reconnect() {
-                factory().Open(addr(), [this](Fd fd, const Address &) {
-                    // reuse this session with new fd
-                    this->close_reason_.reset();
-                    this->fd_ = fd;
-                    return this;
-                });
-                return 0; // stop alarm
-            }
-        protected:
-            SessionFactory &factory_;
-            Fd fd_;
-            Address addr_;
-            qrpc_time_t last_active_;
-            std::unique_ptr<CloseReason> close_reason_;
-        };
-        typedef std::function<Session *(Fd, const Address &)> FactoryMethod;
-        typedef std::function<void (int)> DnsErrorHandler;
-    public:
-        SessionFactory(Loop &l, FactoryMethod &&m) :
-            loop_(l), resolver_(NopResolver::Instance()), alarm_processor_(l.alarm_processor()),
-            factory_method_(m), session_timeout_(0ULL) { Init(); }
-        SessionFactory(Loop &l, FactoryMethod &&m, Config c) :
-            loop_(l), resolver_(c.resolver), alarm_processor_(l.alarm_processor()),
-            factory_method_(m), session_timeout_(c.session_timeout) { Init(); }
-        SessionFactory(SessionFactory &&rhs);
-        virtual ~SessionFactory() { Fin(); }
-        DISALLOW_COPY_AND_ASSIGN(SessionFactory);
-    public:
-        inline Loop &loop() { return loop_; }
-        inline AlarmProcessor &alarm_processor() { return alarm_processor_; }
-        inline qrpc_time_t session_timeout() const { return session_timeout_; }
-        template <class F> F &to() { return static_cast<F&>(*this); }
-        template <class F> const F &to() const { return static_cast<const F&>(*this); }
-        bool Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref = AF_INET);
-        bool Connect(const std::string &host, int port, FactoryMethod m, int family_pref = AF_INET);
-        static inline int AssignedPort(Fd fd) {
-            Address a;
-            int r;
-            if ((r = Syscall::GetSockAddrFromFd(fd, a)) < 0) {
-                logger::error({{"ev", "fail to get sock addr from fd"},{"fd",fd},{"rc",r}});
-                return r;
-            } else {
-                return a.port();
-            }
-        }
-    protected:
-        inline void Init() {
-            if (session_timeout() > 0) {
-                alarm_id_ = alarm_processor_.Set(
-                    [this]() { return this->CheckTimeout(); }, qrpc_time_now() + session_timeout()
-                );
-            }
-        }
-        inline void Fin() {
-            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-                alarm_processor_.Cancel(alarm_id_);
-                alarm_id_ = AlarmProcessor::INVALID_ID;
-            }
-        }
-        template <class SESSIONS>
-        qrpc_time_t CheckSessionTimeout(SESSIONS &sessions) {
-            qrpc_time_t now = qrpc_time_now();
-            qrpc_time_t nearest_check = now + session_timeout();
-            for (auto it = sessions.begin(); it != sessions.end();) {
-                auto cur = it++;
-                qrpc_time_t next_check;
-                if (cur->second->timeout(now, session_timeout(), next_check)) {
-                    // inside Close, the entry will be erased
-                    cur->second->Close(QRPC_CLOSE_REASON_TIMEOUT, 0, "session timeout");
-                } else {
-                    nearest_check = std::min(nearest_check, next_check);
-                }
-            };
-            return nearest_check;
-        }
-        template <class SESSIONS>
-        void FinSessions(SESSIONS &sessions) {
-            for (auto it = sessions.begin(); it != sessions.end();) {
-                auto cur = it++;
-                cur->second->Close(QRPC_CLOSE_REASON_SHUTDOWN, 0, "factory closed");
-            }
-        }
-    public:
-        virtual Session *Open(const Address &a, FactoryMethod m) = 0;
-    protected:
-        virtual Session *Create(int fd, const Address &a, FactoryMethod &m) = 0;
-        virtual void Close(Session &s) = 0;
-        virtual qrpc_time_t CheckTimeout() = 0;
-    protected:
-        FactoryMethod factory_method_;
-        Loop &loop_;
-        Resolver &resolver_;
-        AlarmProcessor &alarm_processor_;
-        AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
-        qrpc_time_t session_timeout_;
-    };
-    class TcpSessionFactory : public SessionFactory {
     public:
         class TcpSession : public Session, public IoProcessor {
         public:
-            TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) : 
-                Session(f, fd, addr) {}
+            TcpSession(TcpSessionFactory &f, Fd fd, const Address &addr) :
+                Session(f, fd, addr), handshaker_(Handshaker::Create(*this)) {}
             DISALLOW_COPY_AND_ASSIGN(TcpSession);
+            inline Handshaker &hs() { return *handshaker_; }
+            inline const Handshaker &hs() const { return *handshaker_; }
+            inline TcpSessionFactory &tcp_session_factory() { return factory().to<TcpSessionFactory>(); }
             inline void MigrateTo(TcpSession *newsession) {
+                ASSERT(this != newsession && newsession != nullptr && newsession->fd() == fd_);
                 factory().loop().ModProcessor(fd_, newsession);
                 fd_ = INVALID_FD; // invalidate fd_ so that SessionFactory::Close will not close fd_
+                hs().MigrateTo(newsession->hs());
+                tcp_session_factory().UpdateSession(*newsession);
             }
-            inline bool migrated() const { return fd_ == INVALID_FD; }
+            inline bool migrated() const { return fd_ == INVALID_FD && hs().migrated(); }
+            inline int Write(const char *p, size_t sz) { return hs().Write(*this, p, sz); }
+            inline int Writev(const char *pp[], size_t *psz, size_t sz) { return hs().Writev(*this, pp, psz, sz); }
+            inline int Read(char *p, size_t sz) { return hs().Read(*this, p, sz); }
             // implements Session
-            const char *proto() const { return "TCP"; }
+            const char *proto() const override { return "TCP"; }
             // implements IoProcessor
             void OnEvent(Fd fd, const Event &e) override {
                 ASSERT(fd == fd_);
-                if (Loop::Writable(e)) {
-                    int r;
-                    if ((r = factory().loop().Mod(fd_, Loop::EV_READ)) < 0) {
-                        Close(QRPC_CLOSE_REASON_SYSCALL, r);
-                        return;
+                int r;
+                if (!hs().finished()) {
+                    if ((r = hs().Handshake(*this, fd, e)) < 0) {
+                        return; // handshake is not finished yet, go on (or closed)
                     }
                     if ((r = OnConnect()) < 0) {
                         Close(QRPC_CLOSE_REASON_LOCAL, r);
@@ -282,13 +54,8 @@ namespace base {
                     while (true) {
                         char buffer[4096];
                         int sz = sizeof(buffer);
-                        if ((sz = Syscall::Read(fd, buffer, sz)) < 0) {
-                            int err = Syscall::Errno();
-                            if (Syscall::WriteMayBlocked(err, false)) {
-                                return;
-                            }
-                            Close(QRPC_CLOSE_REASON_SYSCALL, err, Syscall::StrError(err));
-                            break;
+                        if ((sz = Read(buffer, sz)) < 0) {
+                            break; // close may called in each handshaker
                         }
                         if (sz == 0 || (sz = OnRead(buffer, sz)) < 0) {
                             Close((migrated() ? QRPC_CLOSE_REASON_MIGRATED :
@@ -298,12 +65,17 @@ namespace base {
                     }
                 }
             }
+        protected:
+            Handshaker *handshaker_;
         };
     public:
         TcpSessionFactory(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
             SessionFactory(l, std::move(m), c), sessions_() {}
         TcpSessionFactory(TcpSessionFactory &&rhs) :
-            SessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {}
+            SessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {
+            tls_ctx_ = rhs.tls_ctx_;
+            rhs.tls_ctx_ = nullptr;
+        }
         ~TcpSessionFactory() override { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(TcpSessionFactory);
         void Fin() { FinSessions(sessions_); }
@@ -313,9 +85,9 @@ namespace base {
             if (fd == INVALID_FD) {
                 return nullptr;
             }
-            auto s = Create(fd, a, m);
+            auto s = dynamic_cast<TcpSession *>(Create(fd, a, m));
             int r; // EV_WRITE only for waiting for establishing connection
-            if ((r = loop_.Add(s->fd(), dynamic_cast<TcpSession *>(s), Loop::EV_WRITE)) < 0) {
+            if ((r = loop_.Add(s->fd(), s, Loop::EV_WRITE)) < 0) {
                 s->Close(QRPC_CLOSE_REASON_SYSCALL, r);
                 return nullptr;
             }
@@ -336,6 +108,9 @@ namespace base {
             sessions_[fd] = s;
             return s;
         }
+        void UpdateSession(Session &s) {
+            sessions_[s.fd()] = &s;
+        }
         qrpc_time_t CheckTimeout() override { return CheckSessionTimeout(sessions_); }
     protected:
         // deletion timing of Session* is severe, so we want to have full control of it.
@@ -343,15 +118,31 @@ namespace base {
     };
     class TcpClient : public TcpSessionFactory {
     public:
-        TcpClient(Loop &l, Resolver &r, qrpc_time_t timeout = qrpc_time_sec(120)) : 
-            TcpSessionFactory(l, [this](Fd fd, const Address &a) -> Session* {
-                DIE("client should not call this, provide factory via SessionFactory::Connect");
-                return (Session *)nullptr;
-            }, Config(r, timeout)) {}
+        struct Config : public TcpSessionFactory::Config {
+            Config(Resolver &r, qrpc_time_t st, const MaybeCertPair p) :
+                TcpSessionFactory::Config(r, st, false, p) {}
+        };
+    public:
+        TcpClient(
+            Loop &l, Resolver &r, qrpc_time_t timeout = qrpc_time_sec(120),
+            const MaybeCertPair &p = std::nullopt
+        ) : TcpSessionFactory(l, [this](Fd fd, const Address &a) -> Session* {
+            DIE("client should not call this, provide factory via SessionFactory::Connect");
+            return (Session *)nullptr;
+        }, Config(r, timeout, p)) {}
         TcpClient(TcpClient &&rhs) : TcpSessionFactory(std::move(rhs)) {}
         DISALLOW_COPY_AND_ASSIGN(TcpClient);
     };
     class TcpListener : public TcpSessionFactory, public IoProcessor {
+    public:
+        struct Config : public TcpSessionFactory::Config {
+            Config(Resolver &r, qrpc_time_t st, const MaybeCertPair &p = std::nullopt) :
+                TcpSessionFactory::Config(r, st, true, p) {}
+            static inline Config Default() { 
+                // default no timeout
+                return Config(NopResolver::Instance(), qrpc_time_sec(0));
+            }
+        };
     public:
         TcpListener(Loop &l, FactoryMethod &&m, Config c = Config::Default()) : 
             TcpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0) {}
@@ -362,7 +153,6 @@ namespace base {
         Fd fd() const { return fd_; }
         int port() const { return port_; }
         void Fin() {
-            TcpSessionFactory::Fin();
             if (fd_ != INVALID_FD) {
                 loop_.Del(fd_);
                 Syscall::Close(fd_);
@@ -401,21 +191,22 @@ namespace base {
         }
     protected:
         void Accept() {
+            ASSERT(is_listener());
             while (true) {
                 struct sockaddr_storage sa;
                 socklen_t salen = sizeof(sa);
                 Fd afd = Syscall::Accept(fd_, sa, salen);
                 if (afd < 0) {
-                    if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+                    if (Syscall::IOMayBlocked(Syscall::Errno(), false)) {
                         break;
                     }
                     return;
                 }
                 auto a = Address(sa, salen);
                 logger::info({{"ev","accept"},{"proto","tcp"},{"lfd",fd_},{"fd",afd},{"a",a.str()}});
-                auto s = Create(afd, a, factory_method_);                
+                auto s = dynamic_cast<TcpSession *>(Create(afd, a, factory_method_));
                 int r;
-                if ((r = loop_.Add(s->fd(), dynamic_cast<TcpSession *>(s), Loop::EV_READ)) < 0) {
+                if ((r = loop_.Add(s->fd(), s, Loop::EV_READ)) < 0) {
                     s->Close(QRPC_CLOSE_REASON_SYSCALL, r);
                     continue;
                 }
@@ -449,19 +240,18 @@ namespace base {
         #else
             static constexpr int BATCH_SIZE = 1;
         #endif
-            Config(Resolver &r, qrpc_time_t st, int mbs, bool sw) :
-                SessionFactory::Config(r, st), max_batch_size(
+            Config(Resolver &r, qrpc_time_t st, int mbs, bool sw, bool is_listener) :
+                SessionFactory::Config(r, st, is_listener), max_batch_size(
                 #if defined(__QRPC_USE_RECVMMSG__)
                     mbs
                 #else
                     1
                 #endif
                 ), stream_write(sw) {}
-            Config(int mbs, bool sw) :
-                SessionFactory::Config(SessionFactory::Config::Default()),
-                max_batch_size(mbs), stream_write(sw) {}
+            Config(int mbs, bool sw, bool is_listener) :
+                Config(NopResolver::Instance(), qrpc_time_sec(0), mbs, sw, is_listener) {}
             static inline Config Default() {
-                return Config(BATCH_SIZE, false);
+                return Config(BATCH_SIZE, false, false);
             }
         public:
             int max_batch_size;
@@ -496,9 +286,7 @@ namespace base {
             int Flush(); 
             // implements Session
             const char *proto() const { return "UDP"; }
-            int Send(const char *data, size_t sz) override {
-                return Write(data, sz);
-            }
+            // Send is implemented in subclass
         protected:
             bool AllocIovec(size_t sz) {
                 void *b;
@@ -562,6 +350,29 @@ namespace base {
         private:
             std::vector<struct iovec> write_vecs_;
         };
+        class Flusher {
+        public:
+            template <class C>
+            static inline void Try(C &c, AlarmProcessor &ap) {
+                if (c.Flush() > 0) {
+                    Start(c, ap);
+                }
+            }
+            template <class C>
+            static inline void Start(C &c, AlarmProcessor &ap) {
+                if (c.alarm_id_ != AlarmProcessor::INVALID_ID) {
+                    return;
+                }
+                c.alarm_id_ = ap.Set([&c]() {
+                    if (c.Flush() > 0) {
+                        return qrpc_time_now() + qrpc_time_usec(100);
+                    } else {
+                        c.alarm_id_ = AlarmProcessor::INVALID_ID;
+                        return 0ULL;
+                    }
+                }, qrpc_time_now() + qrpc_time_usec(100));
+            }
+        };
     public:
         UdpSessionFactory(Loop &l, FactoryMethod &&m, Config config = Config::Default()) :
             SessionFactory(l, std::move(m), config), batch_size_(config.max_batch_size),
@@ -569,6 +380,7 @@ namespace base {
         UdpSessionFactory(UdpSessionFactory &&rhs) : SessionFactory(std::move(rhs)),
             batch_size_(rhs.batch_size_), stream_write_(rhs.stream_write_),
             write_buffers_(std::move(rhs.write_buffers_)) {}
+        ~UdpSessionFactory() override {}
         DISALLOW_COPY_AND_ASSIGN(UdpSessionFactory);
     public:
         Fd CreateSocket(int port, bool *overflow_supported) {
@@ -592,6 +404,7 @@ namespace base {
     public:
         class UdpSession : public UdpSessionFactory::UdpSession, public IoProcessor {
         public:
+            friend class Flusher;
             UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) :
                 UdpSessionFactory::UdpSession(f, fd, addr) {}
             ~UdpSession() override {
@@ -599,12 +412,22 @@ namespace base {
                     udp_session_factory().alarm_processor().Cancel(alarm_id_);
                 }
             }
+            // implements Session
+            int Send(const char *data, size_t sz) override {
+                int r;
+                if ((r = Write(data, sz)) < 0) {
+                    QRPC_LOGJ(error, {{"ev","UdpSession::Write fails"},{"fd",fd_},{"sz",sz},{"r",r}});
+                    return r;
+                }
+                StartFlushTask();
+                return r;
+            }
             // implements IoProcessor
             void OnEvent(Fd fd, const Event &e) override {
                 ASSERT(fd == fd_);
                 if (Loop::Writable(e)) {
                     int r;
-                    if ((r = factory().loop().Mod(fd_, Loop::EV_READ)) < 0) {
+                    if ((r = factory().loop().Mod(fd, Loop::EV_READ)) < 0) {
                         Close(QRPC_CLOSE_REASON_SYSCALL, r);
                         return;
                     }
@@ -618,11 +441,6 @@ namespace base {
                         char buffer[4096];
                         int sz = sizeof(buffer);
                         if ((sz = Syscall::Read(fd, buffer, sz)) < 0) {
-                            int err = Syscall::Errno();
-                            if (Syscall::WriteMayBlocked(err, false)) {
-                                return;
-                            }
-                            Close(QRPC_CLOSE_REASON_SYSCALL, err, Syscall::StrError(err));
                             break;
                         }
                         if (sz == 0 || (sz = OnRead(buffer, sz)) < 0) {
@@ -635,26 +453,8 @@ namespace base {
                 }
             }            
         protected:
-            void TryFlush() {
-                if (Flush() > 0) {
-                    StartFlushTask();
-                }
-            }
-            void StartFlushTask() {
-                if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-                    return;
-                }
-                alarm_id_ = udp_session_factory().alarm_processor().Set(
-                    [this]() {
-                        if (this->Flush() > 0) {
-                            return qrpc_time_now() + qrpc_time_usec(100);
-                        } else {
-                            alarm_id_ = AlarmProcessor::INVALID_ID;
-                            return 0ULL;
-                        }
-                    }, qrpc_time_now() + qrpc_time_usec(100)
-                );
-            }
+            inline void TryFlush() { Flusher::Try(*this, udp_session_factory().alarm_processor()); }
+            inline void StartFlushTask() { Flusher::Start(*this, udp_session_factory().alarm_processor()); }
         protected:
             AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
         };
@@ -665,7 +465,7 @@ namespace base {
         ) : UdpSessionFactory(l, [this](Fd fd, const Address &ap) {
             DIE("client should not call this, provide factory with SessionFactory::Connect");
             return (Session *)nullptr;
-        }, Config(r, session_timeout, batch_size, stream_write)) {}
+        }, Config(r, session_timeout, batch_size, stream_write, false)) {}
         UdpClient(UdpClient &&rhs) : UdpSessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {}
         ~UdpClient() override { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(UdpClient);
@@ -709,10 +509,35 @@ namespace base {
     };
     class UdpListener : public UdpSessionFactory, IoProcessor {
     public:
+        friend class Flusher;
+        struct Config : public UdpSessionFactory::Config {
+            Config(Resolver &r, qrpc_time_t st, int mbs, bool sw) : UdpSessionFactory::Config(r, st, mbs, sw, true) {}
+            static inline Config Default() { 
+                // default no timeout
+                return Config(NopResolver::Instance(), qrpc_time_sec(0), BATCH_SIZE, false);
+            }
+        };
+    public:
+        class UdpSession : public UdpSessionFactory::UdpSession {
+        public:
+            UdpSession(UdpSessionFactory &f, Fd fd, const Address &addr) :
+                UdpSessionFactory::UdpSession(f, fd, addr) {}
+            // implements Session
+            int Send(const char *data, size_t sz) override {
+                int r;
+                if ((r = Write(data, sz)) < 0) {
+                    QRPC_LOGJ(error, {{"ev","UdpSession::Write fails"},{"fd",fd_},{"sz",sz},{"r",r}});
+                    return r;
+                }
+                factory().to<UdpListener>().StartFlushTask();
+                return r;
+            }
+        };
+    public:
         UdpListener(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
             UdpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0),
             overflow_supported_(false), sessions_(),
-            read_packets_(batch_size_), read_buffers_(batch_size_) { SetupPacket(); }
+            read_packets_(batch_size_), read_buffers_(batch_size_) { Init(); }
         UdpListener(UdpListener &&rhs);
         ~UdpListener() override { Fin(); }
         DISALLOW_COPY_AND_ASSIGN(UdpListener);
@@ -720,6 +545,7 @@ namespace base {
         Fd fd() const { return fd_; }
         int port() const { return port_; }
     public:
+        void Init() { SetupPacket(); }
         void Fin() {
             FinSessions(sessions_);
             if (fd_ != INVALID_FD) {
@@ -766,26 +592,8 @@ namespace base {
         void ProcessPackets(int count);
         int Flush();
     protected:
-        void TryFlush() {
-            if (Flush() > 0) {
-                StartFlushTask();
-            }
-        }
-        void StartFlushTask() {
-            if (alarm_id_ != AlarmProcessor::INVALID_ID) {
-                return;
-            }
-            alarm_id_ = alarm_processor().Set(
-                [this]() {
-                    if (this->Flush() > 0) {
-                        return qrpc_time_now() + qrpc_time_usec(100);
-                    } else {
-                        alarm_id_ = AlarmProcessor::INVALID_ID;
-                        return 0ULL;
-                    }
-                }, qrpc_time_now() + qrpc_time_usec(100)
-            );
-        }
+        inline void TryFlush() { Flusher::Try(*this, alarm_processor()); }
+        inline void StartFlushTask() { Flusher::Start(*this, alarm_processor()); }
     public:
         // implements SessionFactory
         Session *Create(int fd, const Address &a, FactoryMethod &m) override {
@@ -872,7 +680,7 @@ namespace base {
     public:
         UdpListenerOf(Loop &l, FactoryMethod &&m, const Config c = Config::Default()) : UdpListener(l, std::move(m), c) {}
         UdpListenerOf(Loop &l, const Config c = Config::Default()) : UdpListener(l, [this](Fd fd, const Address &a) {
-            static_assert(std::is_base_of<Session, S>(), "S must be a descendant of Session");
+            static_assert(std::is_base_of<UdpSession, S>(), "S must be a descendant of UdpSession");
             return new S(*this, fd, a);
         }, c) {}
         UdpListenerOf(UdpListenerOf &&rhs) : UdpListener(std::move(rhs)) {}

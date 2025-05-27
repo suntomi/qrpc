@@ -25,7 +25,11 @@ namespace qrpc {
   // RPCStream
   void RPCStream::EntryRequest(qrpc_msgid_t msgid, qrpc_on_rpc_reply_t cb, qrpc_time_t timeout_duration_ts) {
     auto limit_ts = timeout_duration_ts + qrpc_time_now();
-    req_map_.emplace(msgid, *this, msgid, cb, limit_ts);
+    auto pair = req_map_.emplace(msgid, *this, msgid, cb, limit_ts);
+    if (!pair.second) {
+      logger::die({{"ev","rpc msgid collision"},{"msgid",msgid}});
+      return;
+    }
     if (alarm_id_ != AlarmProcessor::INVALID_ID) {
       ap_.Set([this]() { return this->CheckTimeout(); }, limit_ts);
     }

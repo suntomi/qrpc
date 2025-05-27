@@ -17,6 +17,8 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 
+#include <filesystem>
+
 #include "base/address.h"
 #include "base/defs.h"
 #include "base/endian.h"
@@ -77,7 +79,7 @@ public:
   that is, you actually need to see the new errno on write error caused by link change, 
   to add it to this list.
   */
-  static inline bool WriteMayBlocked(int eno, bool reachability_tracked) {
+  static inline bool IOMayBlocked(int eno, bool reachability_tracked) {
     if (eno == EAGAIN || eno == EWOULDBLOCK) {
       return true;
     } else if (reachability_tracked && (eno == EADDRNOTAVAIL || eno == ENETUNREACH)) {
@@ -356,18 +358,6 @@ public:
     return Connect(a.sa(), a.salen(), in6, send_buffer_size, recv_buffer_size);
   }
 
-  static Fd UdpConnect(
-    const sockaddr *sa, socklen_t salen, bool in6 = false,
-    int send_buffer_size = kDefaultSocketSendBuffer,
-    int recv_buffer_size = kDefaultSocketReceiveBuffer
-  ) {
-    bool overflow_supported = false;
-    Fd fd = CreateUDPSocket(in6 ? AF_INET6 : AF_INET, &overflow_supported, send_buffer_size, recv_buffer_size);
-    if (fd == INVALID_FD) {
-      return fd;
-    }
-  }
-
   static Fd Listen(
     int port, bool in6 = false,
     int send_buffer_size = kDefaultSocketSendBuffer,
@@ -576,6 +566,34 @@ public:
       }
     }
     return addrs;
+  }
+  static std::string MakeTempFile(const std::string &pattern = "") {
+    char buf[256];
+    if (pattern.empty()) {
+      strcpy(buf, "/tmp/tmp.XXXXXX");
+    } else {
+      snprintf(buf, sizeof(buf), "%s.XXXXXX", pattern.c_str());
+    }
+    if (mkstemp(buf) == -1) {
+      logger::error({{"ev","mkstemp() fails"},{"errno",Errno()}});
+      return "";
+    }
+    return std::string(buf);
+  }
+  static bool FileExists(const std::string &path) {
+    return std::filesystem::exists(path);
+  }
+  static bool IsDirectory(const std::string &path) {
+    return std::filesystem::is_directory(path);
+  }
+  static bool MakeDirectory(const std::string &path) {
+    return std::filesystem::create_directory(path);
+  }
+  static bool RemoveDirectory(const std::string &path) {
+    return std::filesystem::remove(path);
+  }
+  static bool RemoveFile(const std::string &path) {
+    return std::filesystem::remove(path);
   }
 };
 }

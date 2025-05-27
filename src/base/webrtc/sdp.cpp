@@ -182,14 +182,32 @@ a=max-message-size:%u)cands",
     return false;
   }
 
-  std::string SDP::GenerateSectionAnswer(
-    ConnectionFactory::Connection &c, const std::string &proto, const AnswerParams &ap
+  bool SDP::GenerateSectionAnswer(
+    ConnectionFactory::Connection &c, const std::string &proto,
+    const rtp::MediaStreamConfig &p, std::string &answer
   ) {
-    auto &p = *ap.params;
-    return str::Format(16 * 1024, R"sdp_section(m=%s %llu %s%s
+    std::string cname;
+    if (p.sender()) {
+      if (!p.GenerateCN(cname)) {
+        // if returns false, cname contains error message
+        answer = cname;
+        ASSERT(false);
+        return false;
+      }
+    }
+    auto msid = p.media_stream_id();
+    if (msid.empty()) {
+      answer = "invalid media_path:" + p.media_path;
+      ASSERT(false);
+      return false;
+    }
+    // a=msid line is mandatory to avoid safari's error
+    // "Media section has more than one track specified with a=ssrc lines which is not supported with Unified Plan"
+    answer = str::Format(16 * 1024, R"sdp_section(m=%s %llu %s%s
 c=IN IP4 0.0.0.0
 a=mid:%s
-a=sendrecv
+a=msid:%s %s
+a=%s
 a=ice-ufrag:%s
 a=ice-pwd:%s
 a=ice-options:%s
@@ -199,29 +217,36 @@ a=setup:active
 )sdp_section",
       p.MediaKindName().c_str(), p.network.port, p.RtpProtocol().c_str(), p.Payloads().c_str(),
       p.mid.c_str(),
+      msid.c_str(), p.media_stream_track_id().c_str(),
+      p.closed() && p.receiver() ? "inactive" : "sendrecv", // set inactive actually stops browser to send payload
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
-      ap.cname.empty() ? "trickle" : "renomination",
+      p.receiver() ? "trickle" : "renomination",
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      p.Answer(ap.cname).c_str(),
+      p.Answer(cname).c_str(),
       CandidatesSDP(proto, c).c_str()
     );
+    return true;
   }
 
-  std::string SDP::GenerateAnswer(
+  bool SDP::GenerateAnswer(
     ConnectionFactory::Connection &c, const std::string &proto,
-    const std::map<Media::Mid, AnswerParams> anwser_params
+    const rtp::MediaStreamConfigs &configs, std::string &answer
   ) {
     auto now = qrpc_time_now();
     auto bundle = std::string("a=group:BUNDLE");
-    std::string media_sections;
-    for (auto &kv : anwser_params) {
-      bundle += (" " + kv.first);
-      media_sections += GenerateSectionAnswer(c, proto, kv.second);
+    std::string media_sections, body;
+    for (auto &config : configs) {
+      bundle += (" " + config.mid);
+      if (!GenerateSectionAnswer(c, proto, config, body)) {
+        ASSERT(false);
+        return false;
+      }
+      media_sections += body;
     }
     // string value to the str::Format should be converted to c string like str.c_str()
     // a=ice-lite attribute is important for indicating to peer that we are ice-lite mode
-    return str::Format(16 * 1024, R"sdp(v=0
+    answer = str::Format(16 * 1024, R"sdp(v=0
 o=- %llu %llu IN IP4 0.0.0.0
 s=-
 t=0 0
@@ -232,67 +257,86 @@ a=msid-semantic: WMS
       now, now,
       bundle.c_str(),
       media_sections.c_str()
-    );    
+    ); 
+    return true;   
   }  
 
-  rtp::Parameters *SDP::AnswerMediaSection(
+  bool SDP::AnswerMediaSection(
     const json &section, const std::string &proto,
+    const std::map<std::string, std::string> mid_path_map,
+    const std::map<std::string, std::string> rid_scalability_mode_map,
     ConnectionFactory::Connection &c,
-    std::map<std::string, rtp::Parameters> &section_answer_map,
+    rtp::MediaStreamConfig &params,
     std::string &errmsg
   ) const {
     auto tit = section.find("type");
     if (tit == section.end()) {
       errmsg = "section: no value for key 'type'";
       ASSERT(false);
-      return nullptr;
+      return false;
     }
     auto media_type = tit->get<std::string>();
-    rtp::Parameters params;
     std::string sdplines;
     if (media_type == "application") {
       auto midit = section.find("mid");
       if (midit == section.end()) {
         errmsg = "section: no value for key 'mid'";
         ASSERT(false);
-        return nullptr;
+        return false;
       }
       auto portit = section.find("port");
       if (portit == section.end()) {
         errmsg = "rtpmap: no value for key 'port'";
         ASSERT(false);
-        return nullptr;
+        return false;
       }
       auto protoit = section.find("protocol");
       if (protoit == section.end()) {
         errmsg = "section: no value for key 'protocol'";
         ASSERT(false);
-        return nullptr;
+        return false;
       }
-      params.mid = midit->get<std::string>();
       params.kind = rtp::Parameters::MediaKind::APP;
       // network.port is mandatory
       params.network.port = portit->get<uint16_t>();
       params.rtp_proto = protoit->get<std::string>();
+      params.media_path = c.cname() + "/qrpc/app";
+      params.mid = c.GenerateMid();
     } else {
+      rtp::Capability cap;
       c.InitRTP();
-      if (!params.Parse(c.rtp_handler(), section, errmsg)) {
-        return nullptr;
+      auto mid = params.mid; // mid here, is empty (newly created) or actual mid (reused)
+      if (!params.Parse(section, cap, errmsg, rid_scalability_mode_map)) { // mid is overwritten by value from peer
+        return false;
       }
+      auto pit = mid_path_map.find(params.mid); // mid_path_map is also from peer, so can find element by peer mid
+      if (pit == mid_path_map.end()) {
+        errmsg = "find label from mid = " + params.mid;
+        ASSERT(false);
+        return false;
+      }
+      params.media_path = pit->second;
+      if (mid.empty()) { // for newly created params, assign new mid
+        params.mid = c.rtp_handler().GenerateMid();
+      } else {
+        params.mid = mid; // for reused params, use existing mid (preserved at above)
+      }
+      c.rtp_handler().UpdateMidMediaPathMap(params);
     }
-    auto kv = section_answer_map.emplace(params.mid, params);
-    // if (media_type == "video") {
-    //   auto probatorParam = params.ToProbator();
-    //   section_answer_map.emplace(probatorParam.mid, probatorParam);
-    // }
-    return &(kv.first->second);
+    params.direction = rtp::MediaStreamConfig::Direction::RECV;
+    return true;
   }
 
-  bool SDP::Answer(ConnectionFactory::Connection &c, std::string &answer) const {
+  bool SDP::Answer(
+    const std::map<std::string, std::string> mid_path_map,
+    ConnectionFactory::Connection &c, std::string &answer,
+    MediaContext *context
+  ) const {
     json dsec, asec, vsec;
-    std::map<std::string, rtp::Parameters> section_answer_map;
+    auto &section_params = c.media_stream_configs();
     std::string media_sections, proto;
-    rtp::Parameters *params;
+    std::vector<std::string> mids;
+    rtp::Producer *p;
     if (FindMediaSection("application", dsec)) {
       // find protocol from SCTP backed transport
       auto protoit = dsec.find("protocol");
@@ -319,40 +363,56 @@ a=msid-semantic: WMS
         return false;
       }
       c.dtls_transport().SetRemoteFingerprint(fp);
-      if ((params = AnswerMediaSection(dsec, proto, c, section_answer_map, answer)) == nullptr) {
-        QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
-        ASSERT(false);
-        return false;
-      }
-    }
-    // TODO: should support multiple audio/video streams from same webrtc connection?
-    if (FindMediaSection("audio", asec)) {
-      if ((params = AnswerMediaSection(asec, proto, c, section_answer_map, answer)) != nullptr) {
-        if (c.rtp_handler().Produce(c.rtp_id(), *params) != QRPC_OK) {
-          answer = "fail to create audio producer";
+      if (context == nullptr) {
+        auto &params = section_params.emplace_back();
+        if (!AnswerMediaSection(dsec, proto, mid_path_map, {}, c, params, answer)) {
+          QRPC_LOGJ(warn, {{"ev","invalid data channel section"},{"section",dsec}});
+          ASSERT(false);
           return false;
         }
-      } else {
-        QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
-        ASSERT(false);
-        return false;
       }
     }
-    if (FindMediaSection("video", vsec)) {
-      if ((params = AnswerMediaSection(vsec, proto, c, section_answer_map, answer)) != nullptr) {
-        if (c.rtp_handler().Produce(c.rtp_id(), *params) != QRPC_OK) {
-          answer = "fail to create video producer";
+    if (context != nullptr) {
+      if (FindMediaSection("audio", asec)) {
+        auto &params = section_params.NewSlot(rtp::Parameters::MediaKind::AUDIO);
+        if (AnswerMediaSection(asec, proto, mid_path_map, context->rid_scalability_mode_map, c, params, answer)) {
+          auto it = context->options_map.find(rtp::Parameters::MediaKind::AUDIO);
+          if (it != context->options_map.end()) {
+            params.options = it->second;
+          }
+          if ((p = c.rtp_handler().Produce(params)) == nullptr) {
+            answer = "fail to create audio producer";
+            return false;
+          }
+          context->created_producers[params.media_path] = p;
+        } else {
+          QRPC_LOGJ(warn, {{"ev","invalid audio section"},{"section",asec},{"reason",answer}});
+          ASSERT(false);
           return false;
         }
-      } else {
-        QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
-        ASSERT(false);
-        return false;
+      }
+      if (FindMediaSection("video", vsec)) {
+        auto &params = section_params.NewSlot(rtp::Parameters::MediaKind::VIDEO);
+        if (AnswerMediaSection(vsec, proto, mid_path_map, context->rid_scalability_mode_map, c, params, answer)) {
+          auto it = context->options_map.find(rtp::Parameters::MediaKind::VIDEO);
+          if (it != context->options_map.end()) {
+            params.options = it->second;
+          }
+          if ((p = c.rtp_handler().Produce(params)) == nullptr) {
+            answer = "fail to create video producer";
+            return false;
+          }
+          context->created_producers[params.media_path] = p;
+        } else {
+          QRPC_LOGJ(warn, {{"ev","invalid video section"},{"section",vsec},{"answer",answer}});
+          ASSERT(false);
+          return false;
+        }
       }
     }
-    // false for geneating answer for prodducer
-    answer = GenerateAnswer(c, proto, section_answer_map);
-    return true;
+    // geneating answer for prodducer
+    ASSERT(!proto.empty());
+    return GenerateAnswer(c, proto, section_params, answer);
   }
 } // namespace webrtc
 } // namespace base

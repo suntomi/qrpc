@@ -21,6 +21,16 @@ namespace str {
     snprintf(buff, sizeof(buff), "%p", p);
     return buff;
   }
+  static std::string Join(const std::vector<std::string>& elements, const std::string& delimiter) {
+    std::ostringstream os;
+    for (auto it = elements.begin(); it != elements.end(); ++it) {
+        if (it != elements.begin()) {
+            os << delimiter;
+        }
+        os << *it;
+    }
+    return os.str();
+  }
   static std::vector<std::string> Split(const std::string &s, const std::string &delim) {
     std::vector<std::string> v;
     size_t start = 0;

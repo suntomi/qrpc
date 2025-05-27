@@ -97,7 +97,7 @@ cc_import(
     "src/ext/mediasoup/worker/deps/libwebrtc",
     "src/ext/mediasoup/worker/deps/libwebrtc/libwebrtc",
     "src/ext/mediasoup/worker/include",
-    "src/ext/mediasoup/worker/subprojects/abseil-cpp-20230802.1",
+    "src/ext/mediasoup/worker/subprojects/abseil-cpp-20240722.0",
     "src/ext/mediasoup/worker/subprojects/flatbuffers-24.3.6/include",
     "src/ext/mediasoup/worker/subprojects/libuv-v1.48.0/include",
     "src/ext/mediasoup/worker/subprojects/libsrtp-3.0-alpha/include",

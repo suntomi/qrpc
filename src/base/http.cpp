@@ -205,12 +205,18 @@ namespace base {
                 // server or client websocket handshake
                 else if (hdrstr("Sec-WebSocket-Key", tok, sizeof(tok)) ||
                          hdrstr("Sec-WebSocket-Accept", tok, sizeof(tok))) {
+                    recvctx().bd = nullptr;
+                    recvctx().bl = 0;
                     return state_websocket_establish;
                 }
                 else if (rc() == HRC_OK){
                     return state_error;
                 }
-                else { return state_recv_finish; }
+                else {
+                    recvctx().bd = nullptr;
+                    recvctx().bl = 0;
+                    return state_recv_finish;
+                }
             }
             /* lf found. */
             else if (recvctx().n_hd < MAX_HEADER) {
@@ -547,8 +553,8 @@ namespace base {
         char out[base64::buffsize(sizeof(m_key_ptr))], origin[256];
         base64::encode(m_key_ptr, sizeof(m_key_ptr), out, sizeof(out));
         str::Vprintf(origin, sizeof(origin), "http://%s", host);
-        auto r = WebSocketListener::send_handshake_request(fd(), host, out, origin, NULL);
-        if (r < 0) { return Syscall::WriteMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
+        auto r = WebSocketListener::send_handshake_request(*this, host, out, origin, NULL);
+        if (r < 0) { return Syscall::IOMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
         return r;
     }
     int WebSocketSession::send_handshake_response() {
@@ -556,8 +562,8 @@ namespace base {
         if (!(p = init_accept_key_from_header(buffer, sizeof(buffer)))) {
             return QRPC_EINVAL;
         }
-        auto r = WebSocketListener::send_handshake_response(fd(), buffer);
-        if (r < 0) { return Syscall::WriteMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
+        auto r = WebSocketListener::send_handshake_response(*this, buffer);
+        if (r < 0) { return Syscall::IOMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
         return r;
     }
 }

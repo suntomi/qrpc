@@ -597,9 +597,15 @@ QAPI_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n) {
 //
 // --------------------------
 QAPI_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf) {
-  base::logger::configure(conf->callback, conf->id, conf->manual_flush);
+  if (conf == nullptr) {
+    // TODO: provide default log config
+    base::logger::die({{"ev", "no log config"}});
+  } else if (conf->level >= static_cast<int>(base::logger::level::max) || conf->level < 0) {
+    base::logger::die({{"ev", "invalid log level"}, {"level", conf->level}});
+  }
+  base::logger::configure(conf->callback, conf->id, conf->manual_flush, static_cast<base::logger::level>(conf->level));
 }
-QAPI_THREADSAFE void nq_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params) {
+QAPI_THREADSAFE void qrpc_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params) {
   json j = {
     {"ev", msg}
   };
@@ -620,7 +626,7 @@ QAPI_THREADSAFE void nq_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *p
       break;
     }
   }
-  base::logger::log((base::logger::level::def)(int)lv, j);
+  base::logger::log((base::logger::level)(int)lv, j);
 }
 QAPI_THREADSAFE void qrpc_log_flush() {
   base::logger::flush();

@@ -108,7 +108,7 @@ namespace base {
         uint64_t expires;
       #if defined(__ENABLE_EPOLL__)
         if (Syscall::Read(fd_, &expires, sizeof(expires)) < 0) {
-          if (Syscall::WriteMayBlocked(Syscall::Errno(), false)) {
+          if (Syscall::IOMayBlocked(Syscall::Errno(), false)) {
             break;
           }
           logger::error({{"ev","read timerfd fails"},{"errno",Syscall::Errno()}});
@@ -151,11 +151,12 @@ namespace base {
       auto e = std::move(ent.second);
       it = handlers_.erase(it);
       qrpc_time_t next = e.handler();
-      if (next < now) {
+      if (next == 0) {
         // logger::debug({{"ev","timer: stopped by rv"},{"tid",e.id},{"next",next}});
         schedule_times_.erase(e.id);
         continue;
       }
+      ASSERT(next >= now);
       ASSERT(schedule_times_.find(e.id) != schedule_times_.end());
       handlers_.insert(std::make_pair(next, e));
       schedule_times_[e.id] = next;

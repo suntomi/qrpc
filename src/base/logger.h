@@ -9,60 +9,61 @@ namespace base {
 using json = nlohmann::json;
 namespace logger {
   using record = nlohmann::json;
-  class level {
-   public:
-    enum def {
-      trace,
-      debug,
-      info,
-      warn,
-      error,
-      fatal,            
-      report,
-      max,
-    };
+  enum class level {
+    trace,
+    debug,
+    info,
+    warn,
+    error,
+    fatal,            
+    report,
+    max,
   };
 
   //non inline methods
-  extern const std::string log_level_[level::max];
+  extern const std::string log_level_descs_[static_cast<size_t>(level::max)];
+  extern level log_level_;
   typedef void (*writer_cb_t)(const char *, size_t);
-  void configure(writer_cb_t cb, const std::string &id, bool manual_flush);
-  const std::string &id();
+  void configure(writer_cb_t cb, const std::string &ns, bool manual_flush, level llv);
+  const std::string &ns();
   void write(const json &j);
   void flush();
   const char *hexdump(const void *p, size_t len);
+  inline bool is_enabled(level lv) { return lv >= log_level_; }
 
   // common log properties
-  inline void fill_props(level::def lv, json &j) {
+  inline void fill_props(level lv, json &j) {
     //fill default properties
     long sec, nsec;
     clock::now(sec, nsec);
     char tsbuff[32];
     snprintf(tsbuff, sizeof(tsbuff), "%ld.%09ld", sec, nsec);
-    j["ts"] = tsbuff; //((double)sec) + (((double)nsec) / (1000 * 1000 * 1000));
-    j["id"] = id();
-    j["lv"] = log_level_[lv];
+    j["__ts"] = tsbuff; //((double)sec) + (((double)nsec) / (1000 * 1000 * 1000));
+    j["__lv"] = log_level_descs_[static_cast<size_t>(lv)];
+    j["__ns"] = ns();
   }
 
   inline void fill_props(
-    level::def lv,
+    level lv,
     const std::string &file, int line, const std::string &func,
     uint64_t trace_id,
     json &j
   ) {
     //fill default properties
     fill_props(lv, j);
-    j["file"] = file;
-    j["line"] = line;
-    j["func"] = func;
+    j["_at"] = file + ":" + std::to_string(line);
+    j["_fn"] = func;
     if (trace_id != 0) {
-      j["tid"] = hexdump(reinterpret_cast<char *>(&trace_id), sizeof(trace_id));
+      j["_tid"] = hexdump(reinterpret_cast<char *>(&trace_id), sizeof(trace_id));
     }
   }
 
   //log variadic funcs
-  inline void log(level::def lv, const json &j) {
+  inline void log(level lv, const json &j) {
     ASSERT(j.is_object() || j.is_string());
+    if (!is_enabled(lv)) {
+      return;
+    }
     if (lv >= level::debug) {
       json &mj = const_cast<json &>(j);
       if (j.is_string()) {
@@ -79,10 +80,13 @@ namespace logger {
   }
 
   inline void log(
-    level::def lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
+    level lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
     const json &j
   ) {
     ASSERT(j.is_object() || j.is_string());
+    if (!is_enabled(lv)) {
+      return;
+    }
     if (lv >= level::debug) {
       json &mj = const_cast<json &>(j);
       if (j.is_string()) {
@@ -100,7 +104,7 @@ namespace logger {
 
   template<class... Args>
   inline void tracef(
-    level::def lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
+    level lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
     const std::string &fmt, const Args... args
   ) {
       char buffer[4096];
@@ -109,7 +113,7 @@ namespace logger {
   }
 
   inline void trace(
-    level::def lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
+    level lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
     const json &j
   ) {
       log(lv, file, line, func, trace_id, j);
@@ -117,7 +121,7 @@ namespace logger {
 
   template<class... Args>
   inline void logf(
-    level::def lv, const std::string &fmt, const Args... args
+    level lv, const std::string &fmt, const Args... args
   ) {
       char buffer[4096];
       snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
@@ -131,30 +135,23 @@ namespace logger {
   inline void error(const json &j) { log(level::error, j); }
   inline void fatal(const json &j) { log(level::fatal, j); }
   inline void report(const json &j) { log(level::report, j); }
-  inline void die(const json &j, int exit_code = 1) {
+  [[noreturn]] inline void die(const json &j, int exit_code = 1) {
     fatal(j);
+    ASSERT(false);
     exit(exit_code);
   }
 }
 }
 
-#if !defined(NDEBUG)
-  #define QRPC_LOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
-  #define QRPC_LOGJ(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
-#else
-  #define QRPC_LOG(level__, ...) { ::base::logger::logf(::base::logger::level::level__, __VA_ARGS__); }
-  #define QRPC_LOGJ(level__, ...) { ::base::logger::log(::base::logger::level::level__, __VA_ARGS__); }
-#endif
+#define QRPC_LOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+#define QRPC_LOGJ(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
+#define QRPC_LOGVJ(level_value__, ...) { ::base::logger::trace(level_value__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); }
 #if defined(VERBOSE)
-  #if !defined(NDEBUG)
-    #define QRPC_VLOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
-    #define QRPC_VLOGJ(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
-  #else
-    #define QRPC_VLOG(level__, ...) { ::base::logger::logf(::base::logger::level::level__, __VA_ARGS__); } 
-    #define QRPC_VLOGJ(level__, ...) { ::base::logger::log(::base::logger::level::level__, __VA_ARGS__); } 
-  #endif
+  #define QRPC_VLOG(level__, ...) { ::base::logger::tracef(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
+  #define QRPC_VLOGJ(level__, ...) { ::base::logger::trace(::base::logger::level::level__, __FILE__, __LINE__, __func__, 0, __VA_ARGS__); } 
 #else
   #define QRPC_VLOG(level__, ...)
+  #define QRPC_VLOGJ(level__, ...)  
 #endif
 
 #if !defined(TRACE)

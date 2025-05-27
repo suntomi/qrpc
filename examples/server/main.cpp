@@ -68,6 +68,7 @@ public:
 };
 
 int main(int argc, char *argv[]) {
+    bool secure = (argc > 1) && !std::string(argv[1]).empty();
     bool alive = true;
     Loop l; {
     if (l.Open(1024) < 0) {
@@ -102,46 +103,55 @@ int main(int argc, char *argv[]) {
         .rtp = {
             .initial_outgoing_bitrate = 10000000,
             .max_incoming_bitrate = 10000000,
-            .max_outgoing_bitrate = 10000000,
+            .max_outgoing_bitrate = 100000000,
             .min_outgoing_bitrate = 0,
         },
         .send_buffer_size = 256 * 1024,
         .http_timeout = qrpc_time_sec(5),
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
         .connection_timeout = qrpc_time_sec(60),
+        .shutdown_timeout = qrpc_time_sec(3),
         .consent_check_interval = qrpc_time_sec(10),
         .fingerprint_algorithm = "sha-256",
+        .certpair = secure ? std::optional(CertificatePair::Default()) : std::nullopt,
     }, [](Stream &s, const char *p, size_t sz) {
         auto pl = std::string(p, sz);
         logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
-        auto req = json::parse(pl);
-        if (s.label() == "test") {
-            // echo + label name
-            return s.Send({
-                {"hello", s.label() + ":" + req["hello"].get<std::string>()},
-                {"ts", req["ts"].get<uint64_t>()},
-                {"count", req["count"].get<uint64_t>()}
-            }); // echo
-        } else if (s.label() == "test2") {
-            auto stream_name = req["streamName"].get<std::string>();
-            auto ns = s.connection().OpenStream({
-                .label = stream_name
-            });
-            ASSERT(ns != nullptr);
-        } else if (s.label() == "test3") {
-            auto count = req["count"].get<uint64_t>();
-            if (count >= 2) {
-                s.Close(QRPC_CLOSE_REASON_LOCAL, 0, "byebye");
-            } else {
-                return s.Send({{"count", count}});
+        try {
+            auto req = json::parse(pl);
+            if (s.label() == "test") {
+                // echo + label name
+                return s.Send({
+                    {"hello", s.label() + ":" + req["hello"].get<std::string>()},
+                    {"ts", req["ts"].get<uint64_t>()},
+                    {"count", req["count"].get<uint64_t>()}
+                }); // echo
+            } else if (s.label() == "test2") {
+                auto stream_name = req["streamName"].get<std::string>();
+                auto ns = s.connection().OpenStream({
+                    .label = stream_name
+                });
+                ASSERT(ns != nullptr);
+            } else if (s.label() == "test3") {
+                auto count = req["count"].get<uint64_t>();
+                if (count >= 2) {
+                    s.Close(QRPC_CLOSE_REASON_LOCAL, 0, "byebye");
+                } else {
+                    return s.Send({{"count", count}});
+                }
+            } else if (s.label() == "recv") {
+                auto die = req["die"].get<bool>();
+                if (die) {
+                    logger::info({{"ev","recv die"}});
+                    s.connection().Close();
+                } else {
+                    return s.Send({{"msg", "byebye"}});
+                }
             }
-        } else if (s.label() == "recv") {
-            auto die = req["die"].get<bool>();
-            if (die) {
-                logger::info({{"ev","recv die"}});
-                s.connection().Close();
-            } else {
-                return s.Send({{"msg", "byebye"}});
+        } catch (std::exception &ec_group_str) {
+            if (s.label() != "chat") {
+                logger::error({{"ev","fail to parse json"},{"l",s.label()},{"sid",s.id()}});
+                ASSERT(false);
             }
         }
         return 0;
@@ -170,7 +180,7 @@ int main(int argc, char *argv[]) {
         s.Respond(HRC_OK, h, 2, html.get(), htmlsz);
         return nullptr;
     }).
-    Route(std::regex("/([^/]*)\\.([^/]*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
+    Route(std::regex("/([^/]*)\\.([^/\?]*)?(.*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
         size_t filesz;
         auto path = rootpath + "/resources/" + m[1].str() + "." + m[2].str();
         auto file = Syscall::ReadFile(path, &filesz);
@@ -188,7 +198,8 @@ int main(int argc, char *argv[]) {
             {"jpeg", "image/jpeg"},
             {"gif", "image/gif"},
             {"ico", "image/x-icon"},
-            {"html", "text/html"}
+            {"html", "text/html"},
+            {"svg", "image/svg+xml"}
         };
         HttpHeader h[] = {
             {.key = "Content-Type", .val = ctypes[m[2].str()].c_str()},
