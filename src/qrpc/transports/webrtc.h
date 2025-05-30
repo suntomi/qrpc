@@ -14,8 +14,16 @@ using BaseListener = Listener;
 using BaseClient = Client;
 namespace webrtc {
   using ConnectionFactory = base::webrtc::ConnectionFactory;
-  using Connection = base::webrtc::Connection;
   using DtlsTransport = RTC::DtlsTransport;
+
+  class Connection : public base::webrtc::Connection {
+  public:
+    Connection(ConnectionFactory &cf, DtlsTransport::Role dtls_role) :
+      base::webrtc::Connection(cf, dtls_role) {}
+    qrpc_conn_t ToHandle() { return { .p = this, .s = 0 }; }
+    int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
+    qrpc_time_t OnShutdown() override { return qrpc_closure_call(on_close_, ToHandle(), ctx_); }
+  }
 
   // NewStream
   static inline Stream *NewStream(
@@ -24,8 +32,8 @@ namespace webrtc {
     Stream *s;
     Connection &wc = dynamic_cast<Connection &>(conn);
     switch (he.type) {
-    case HandlerMap::FACTORY: {
-      return (Stream *)qrpc_closure_call(he.factory, wc.ToHandle());
+    case HandlerMap::DIRECTOR: {
+      return (Stream *)qrpc_closure_call(he.director, nullptr, c.label.c_str(), wc.ToHandle());
     } break;
     case HandlerMap::STREAM: {
       if (qrpc_closure_is_empty(he.stream.stream_reader)) {
@@ -35,7 +43,7 @@ namespace webrtc {
       }
     } break;
     case HandlerMap::RPC: {
-      return new RPCStream(wc, c, he.rpc, w.timer());
+      return new RPCStream(wc, c, he.rpc, w.loop().alarm_processor());
     } break;
     default:
       ASSERT(false);
@@ -58,7 +66,7 @@ namespace webrtc {
       base::webrtc::Connection(cf, dtls_role) {}
     qrpc_conn_t ToHandle() { return { .p = this, .s = 0 }; }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
-    void OnShutdown() override { qrpc_closure_call(on_close_, ToHandle(), ) }
+    qrpc_time_t OnShutdown() override { return qrpc_closure_call(on_close_, ToHandle(), ) }
   protected:
     void *ctx_;
     qrpc_on_server_conn_open_t on_open_;
