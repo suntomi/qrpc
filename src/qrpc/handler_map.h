@@ -11,12 +11,12 @@ class HandlerMap {
     INVALID = 0,
   	STREAM = 1,
   	RPC = 2,
-  	FACTORY = 3,
+  	DIRECTOR = 3,
   } HandlerFactoryType;
   typedef struct {
   	HandlerFactoryType type;
   	union {
-  	  qrpc_stream_factory_t factory;
+  	  qrpc_stream_director_t director;
       qrpc_stream_handler_t stream;
       qrpc_rpc_handler_t rpc;
   	};
@@ -26,10 +26,10 @@ class HandlerMap {
   HandlerEntry raw_;
  public:
   HandlerMap() : map_() { raw_.type = INVALID; }
-  inline bool AddEntry(const std::string &name, qrpc_stream_factory_t factory) {
+  inline bool AddEntry(const std::string &name, qrpc_stream_director_t director) {
   	HandlerEntry he;
-    he.type = FACTORY;
-    he.factory = factory;
+    he.type = DIRECTOR;
+    he.director = director;
   	map_[name] = he;
     return true;
   }

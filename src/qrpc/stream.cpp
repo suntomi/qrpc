@@ -137,7 +137,7 @@ namespace qrpc {
       auto req = cur->second;
       req.GoAway();
     }
-    AbstractStream::Close(r);
+    Stream::Close(r);
   }
   void RPCStream::Notify(uint16_t type, const void *p, qrpc_size_t len) {
     ASSERT(type > 0);

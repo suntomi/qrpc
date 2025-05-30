@@ -4,23 +4,17 @@
 
 namespace qrpc {
 void Worker::Run(TaskQueue &q) {
-  int r;
-  if ((r = timer_.Init(loop_)) < 0) {
-    QRPC_LOGJ(fatal, {{"ev","Timer::Init() failed"},{"err", r}});
-    return;
-  }
   auto ls = Listen();
   if (ls.size() == 0) {
     QRPC_LOGJ(fatal, {{"ev" "no listener"}});
     return;
   }
-  qrpc_time_t next_try_accept = 0;
   while (server_.alive()) {
     // consume queue. TODO: option to not use task queue
     Task t;
     while (q.try_dequeue(t)) { t(); }
     // TODO: option to use Poll()
-    loop_.PollAres();
+    loop_.Poll();
   }
 }
 std::vector<std::unique_ptr<Listener>> Worker::Listen() {
@@ -38,4 +32,14 @@ std::vector<std::unique_ptr<Listener>> Worker::Listen() {
   }
   return ls;
 }
+
+int Worker::GlobalPortIndex(int port_index) const { 
+  return (server().process_index() * server().n_worker() * server().port_configs().size()) + 
+    (index() * server().port_configs().size()) +
+    port_index; 
+}
+HandlerMap &Worker::HandlerMapFor(int port_index) {
+  return server().port_configs().at(port_index).handler_map;
+}
+
 } //namespace qrpc

@@ -6,9 +6,13 @@
 #include "qrpc/handler_map.h"
 
 #include "base/alarm.h"
-#include "base/conn.h"
+#include "base/stream.h"
 #include "base/header_codec.h"
 #include "base/stream.h"
+
+namespace base {
+  class Connection;
+}
 
 namespace qrpc {
   class Stream : public base::Stream {
