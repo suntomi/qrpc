@@ -30,7 +30,7 @@ namespace rtp {
   };
   // earlier entry is high priority. TODO: decide best order
   static std::vector<std::string> supported_codecs = {
-    "AV1", "VP8", "VP9", "H264", "opus",
+    "VP8", "VP9", "H264", "AV1", "opus",
   };
   static const std::string RED_PAYLOAD_PARAM = "red_payload_params";
 

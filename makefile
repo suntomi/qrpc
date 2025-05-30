@@ -18,10 +18,10 @@ all:
 	bazel build :server :client $(BUILD_OPT) --cpu=darwin_arm64 --features=oso_prefix_is_pwd
 
 setup:
-	make -C $(CURDIR)/src/ext setup MODE=$(MODE) SAN=$(SAN)
+	make -C $(CURDIR)/sys/server/ext setup MODE=$(MODE) SAN=$(SAN)
 
 build: setup all
 
 clean:
-	make -C $(CURDIR)/src/ext clean
+	make -C $(CURDIR)/sys/server/ext clean
 	bazel clean --expunge
