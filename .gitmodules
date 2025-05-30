@@ -1,12 +1,12 @@
 [submodule "src/ext/mediasoup"]
-	path = src/ext/mediasoup
+	path = sys/server/ext/mediasoup
 	url = https://github.com/suntomi/mediasoup
 [submodule "src/ext/cares/cares"]
-	path = src/ext/cares/cares
+	path = sys/server/ext/cares/cares
 	url = https://github.com/c-ares/c-ares.git
 [submodule "src/ext/moodycamel"]
-	path = src/ext/moodycamel
+	path = sys/server/ext/moodycamel
 	url = https://github.com/cameron314/concurrentqueue.git
 [submodule "src/ext/libsdptransform"]
-	path = src/ext/libsdptransform
+	path = sys/server/ext/libsdptransform
 	url = https://github.com/ibc/libsdptransform.git
