@@ -217,7 +217,6 @@ class QRPClient {
   constructor(url, cname) {
     this.url = url;
     this.cert = null;
-    const bytes = new Uint8Array(8);
     this.cname = cname || this.#genCN();
     console.log("QRPClient", this.cname, url);
     this.reconnect = 0;
@@ -283,9 +282,6 @@ class QRPClient {
               t.pause(r, true);
             }
           } else {
-            for (const kk in this.tracks) {
-              console.log(`compare [${k}] and [${kk}] [${k == kk}]`);
-            }
             console.log(`no such track for [${k}]`, this.tracks, this.tracks[k]);
           }
         }

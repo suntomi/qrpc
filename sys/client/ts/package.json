@@ -1,0 +1,46 @@
+{
+  "name": "@qrpc/client",
+  "version": "1.0.0",
+  "description": "QRPC TypeScript client library",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js", 
+  "types": "dist/index.d.ts",
+  "browser": "dist/qrpc.bundle.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "browser": "./dist/qrpc.bundle.js"
+    }
+  },
+  "scripts": {
+    "build:types": "tsc --emitDeclarationOnly --declaration --declarationMap",
+    "build:modules": "tsc --declaration false --declarationMap false",
+    "build:bundle": "node esbuild.config.js",
+    "build": "npm run build:modules && npm run build:types && npm run build:bundle",
+    "watch": "tsc --watch",
+    "watch:bundle": "node esbuild.config.js --watch",
+    "watch:dev": "npm run watch:bundle",
+    "dev": "npm run watch:dev",
+    "prepublishOnly": "npm run build",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "qrpc",
+    "webrtc",
+    "typescript",
+    "client"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ]
+}
