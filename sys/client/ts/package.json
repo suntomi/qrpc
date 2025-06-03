@@ -7,8 +7,10 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "build:bundle": "node esbuild.config.js",
+    "build:all": "npm run build && npm run build:bundle",
     "watch": "tsc --watch",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run build:all",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -21,10 +23,12 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^18.0.0",
+    "esbuild": "^0.25.5",
     "typescript": "^5.0.0"
   },
   "files": [
     "dist/**/*",
     "README.md"
-  ]
+  ],
+  "browser": "dist/qrpc.bundle.js"
 }

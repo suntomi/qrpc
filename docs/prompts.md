@@ -10,3 +10,11 @@ build system works as expect but have some compile error. I think error happens 
 
 results -> c2d066e6dda4f231b29815fc2b1f9560eec86b7f
 
+
+at 8352639891758ab5dd9d294847ebc8da220822d2
+sys/client/ts/client.jsをtsに変換したいです。npmパッケージとしてビルド、パブリッシュできるように環境整備も行なってください。
+
+results -> bf182ac335f7f420370c552e24a9443e1c710cce
+
+at bf182ac335f7f420370c552e24a9443e1c710cce
+current sys/client/ts genrates multiple js files as compile result. but I want to generate concatenate version of these files because generated js file will be downloaded from browser. concatenate & minify files improve startup time of pages that just use sys/client/ts as javascript library.
