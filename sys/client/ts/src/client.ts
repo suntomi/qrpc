@@ -1,229 +1,53 @@
-class QRPCTrack {
-  static DAFAULT_TRACK_RECONNECTION_WAIT_MS = 5000;
-  static PAUSE_REASON = {
-    remote_close: "remote_close",
-    local_op: "local_op",
-    remote_op: "remote_op",
-  };
-  static path(canonical_path, kind) { return canonical_path + kind; }
-  constructor(path, media, stream, track, encodings, {onopen, onclose, onupdate, onpause, onresume}) {
-    this.path = path;
-    this.media = media;
-    this.media.addTrack(this);
-    this.stream = stream;
-    this.encodings = encodings;
-    this.onopen = onopen;
-    this.onclose = onclose;
-    this.onpause = onpause || ((reason) => {});
-    this.onresume = onresume || (() => {});
-    this.onupdate = onupdate || (() => {});
-    this.track = track
-    this.opened = false;
-    this.pausedReasons = [];
-  }
-  get id() { return this.track.id; }
-  get kind() { 
-    const parsed = this.path.split("/");
-    return parsed[parsed.length - 1];
-  }
-  get raw() { return this.track; }
-  get cname() {
-    const parsed = this.path.split("/");
-    if (!this.isReceiver) { throw new Error("cname is only for receiver track"); }
-    return parsed[0];
-  }
-  get directory() { return this.path.split("/").slice(0, -1).join("/"); }
-  get mid() { return this.transceiver.mid; }
-  get active() { return this.track != null; }
-  get paused() { return this.pausedReasons.length > 0; }
-  get direction() { return this.media.direction; }
-  get isReceiver() { return this.media.isReceiver; }
-  pausedBy(reason) {
-    return this.pausedReasons.indexOf(reason) >= 0;
-  }
-  pause(reason, noCallback) {
-    const i = this.pausedReasons.indexOf(reason);
-    if (i < 0) {
-      this.pausedReasons.push(reason);
-    }
-    return !noCallback && this.onpause && this.onpause(this, reason);
-  }
-  resume(reason, noCallback) {
-    const i = this.pausedReasons.indexOf(reason);
-    if (i >= 0) {
-      this.pausedReasons.splice(i, 1);
-      !noCallback && this.onresume && this.onresume(this, reason);
-    }
-  }
-  update({stream, track}) {
-    if (!this.transceiver) {
-      throw new Error("track is not started");
-    }
-    this.stream = stream;
-    this.transceiver.sender.replaceTrack(track);
-    this.track?.stop();
-    this.track = track;
-    this.onupdate(this);
-  }
-  async open(pc, midMediaPathMap) {
-    if (this.direction !== "send" || this.track == null) {
-      throw new Error("open is only needed for send tracks");
-    }
-    if (midMediaPathMap) { // want to put tracks to actual peer connection (not for generating localOffer for producing)
-      let transceiver; // find transceiver for this track by comparing logical path of the track and path decided by server mid
-      for (const t of pc.getTransceivers()) {
-        if (t.sender == null) {
-          console.log("ignore receiver transceiver", t.sender.track);
-          continue;
-        }
-        // in here, pc.setRemoteDescription is already called, so mid is decided by server remote offer
-        // also midMediaPathMap is updated by syscall ("produce") or whip API call (in QRPClient.#handshake)
-        const path = midMediaPathMap[t.mid];
-        if (!path) {
-          console.log("no path for mid:", t.mid, midMediaPathMap);
-          continue;
-        }
-        if (path == this.path) {
-          transceiver = t;
-          break;
-        }
-      }
-      if (!transceiver) {
-        throw new Error("no correspond transceiver:" + this.path);
-      }
-      console.log("found transceiver for", this.path, transceiver);
-      transceiver.direction = "sendonly";
-      if (this.kind === "video") {
-        const params = transceiver.sender.getParameters();
-        await transceiver.sender.setParameters(Object.assign(params,{encodings:this.encodings}));
-      }
-      await transceiver.sender.replaceTrack(this.track);
-      this.transceiver = transceiver;
-    } else {
-      if (this.track.kind === "video") {
-        this.transceiver = pc.addTransceiver(
-          this.track,
-          {direction: 'sendonly', sendEncodings: this.encodings, streams: [this.stream]}
-        );
-      } else if (this.track.kind === "audio") {
-        this.transceiver = pc.addTransceiver(
-          this.track,
-          {direction: 'sendonly', streams: [this.stream]}
-        );
-      } else {
-        throw new Error(`invalid track kind ${this.track.kind}`);
-      }
-    }
-  }
-  async close(pc, force) {
-    if (this.track) {
-      this.onclose(this);
-      // once track is stopped, it cannot be reused for receiver at least in chrome browser.
-      // for unknown reason (might be bug), 
-      // if track is stopped, ontrack event of corresponding SDP media section always contains old 'readyState=ended' track.
-      // even if chrome statistics shows that track is active again (even with different ssrc)
-      // the reason I think this might be bug, 
-      // is that track id does not change regardless SDP sends different msid for corresponding media section.
-      // for workaround, we do not stop track for receiver.
-      // QRPClient.close call the function with force = true, so that we can stop track for receiver for cleanup case.
-      if (force || !this.isReceiver) {
-        if (this.transceiver?.mid) {
-          pc.removeTrack(this.transceiver.sender);
-        }
-        this.track.stop();
-      }
-      this.track = null;
-      this.transceiver = null;
-      this.stream = null;
-      this.opened = false;
-      this.pausedReasons = [];
-    }
-    this.media.removeTrack(this);
-  }
-}
-class QRPCMedia {
-  constructor(path, direction, options) {
-    this.path = path;
-    this.direction = direction;
-    this.options = options;
-    this.tracks = {};
-    this.nextReconnect = 0;
-    this.lastPing = null;
-    this.reconnectInvtervalMS = null;
-    this.opened = true;
-    this.keepAlive();
-  }
-  get isReceiver() { return this.direction === "recv"; }
-  keepAlive() {
-    this.lastPing = (new Date()).getTime();
-  }
-  addTrack(t) {
-    this.tracks[t.path] = t;
-  }
-  removeTrack(t) {
-    delete this.tracks[t.path];
-  }
-  pause(reason) {
-    const ret = [];
-    for (const k in this.tracks) {
-      let reconnectionWaitMS = this.tracks[k].pause(reason);
-      if (reason === QRPCTrack.PAUSE_REASON.remote_close) {
-        if (!reconnectionWaitMS && reconnectionWaitMS !== false && reconnectionWaitMS !== null) {
-          reconnectionWaitMS = QRPCTrack.DAFAULT_TRACK_RECONNECTION_WAIT_MS;
-        } else if (typeof reconnectionWaitMS !== "number") {
-          reconnectionWaitMS = null;
-        }
-        if (reconnectionWaitMS) {
-          ret.push(reconnectionWaitMS);
-        }
-      }
-    }
-    if (ret.length > 0) {
-      // sort by ascending order and return first element (that is, minimum element)
-      return ret.sort()[0];
-    }
-  }
-  resume(reason) {
-    for (const k in this.tracks) {
-      this.tracks[k].resume(reason);
-    }
-  }
-  startReconnect(c, backoffMS) {
-    this.reconnectInvtervalMS = backoffMS
-    this.nextReconnect = (new Date()).getTime() + this.reconnectInvtervalMS;
-    this.reconnect(c);
-  }
-  stopReconnect() {
-    this.reconnectInvtervalMS = null;
-    this.nextReconnect = null;
-  }
-  async reconnect(c) {
-    try {
-      console.log(`try reconnect for ${this.path}`);
-      await c.watchMedia(this.path, {
-        options: Object.assign(this.options, { sync: true })
-      }, true);
-    } catch (e) {
-      console.log(`reconnect failed for ${this.path}: ${e.message}`);
-    }
-  }
-}
-class QRPClient {
-  static SYSCALL_STREAM = "$syscall";
-  static DEFAULT_SCALABILITY_MODE = "L1T3";
-  static NO_INPUT_THRESHOLD = 3;
-  static VERBOSE_SYSCALL = ["ping", "ping_ack"];
-  static MAX_MSGID = Number.MAX_SAFE_INTEGER;
-  constructor(url, cname) {
+import type {
+  QRPCMediaSenderParams, QRPCMediaReceiverParams, QRPCMediaInitOptions,
+  QRPCStreamParams, QRPCStreamHandler, 
+  QRPCMidMediaPathMap, QRPCSyscallArgs, QRPCPromiseCallbacks,
+} from './types.js';
+import { QRPCTrack } from './track.js';
+import { QRPCMedia } from './media.js';
+
+export class QRPClient {
+  static readonly SYSCALL_STREAM = "$syscall";
+  static readonly DEFAULT_SCALABILITY_MODE = "L1T3";
+  static readonly NO_INPUT_THRESHOLD = 3;
+  static readonly VERBOSE_SYSCALL = ["ping", "ping_ack"];
+  static readonly MAX_MSGID = Number.MAX_SAFE_INTEGER;
+
+  public readonly url: string;
+  public readonly cname: string;
+  public cert: RTCCertificate | null = null;
+  public reconnect: number = 0;
+  public id: string | null = null;
+  public context: any = null;
+  public pc: RTCPeerConnection | null = null;
+  public syscall_ready: boolean = false;
+  public sentTracks: QRPCTrack[] = [];
+  public midMediaPathMap: QRPCMidMediaPathMap = {};
+  public rpcPromises: { [msgid: number]: QRPCPromiseCallbacks } = {};
+  public sdpGen: number = 0;
+  public msgidSeed: number = 1;
+  public syscallStream: RTCDataChannel | null = null;
+  public timer: ReturnType<typeof setInterval> | null = null;
+  public sdpQueue: any[] = [];
+  public streams: { [path: string]: RTCDataChannel } = {};
+  public medias: { [path: string]: QRPCMedia } = {};
+  public tracks: { [path: string]: QRPCTrack } = {};
+  public iceUsername: string | null = null;
+  public icePassword: string | null = null;
+  public candidates: RTCIceCandidate[] = [];
+  public endOfcandidates: boolean = false;
+  public onopen?: () => any;
+  public onclose?: () => number;
+  public onstream?: (c: RTCDataChannel) => QRPCStreamHandler;
+
+  constructor(url: string, cname?: string) {
     this.url = url;
-    this.cert = null;
-    const bytes = new Uint8Array(8);
     this.cname = cname || this.#genCN();
     console.log("QRPClient", this.cname, url);
-    this.reconnect = 0;
     this.#clear();
   }
-  async #syscallMessageHandler(s, event) {
+
+  async #syscallMessageHandler(s: RTCDataChannel, event: MessageEvent): Promise<void> {
     const data = JSON.parse(event.data);
     if (QRPClient.VERBOSE_SYSCALL.indexOf(data.fn) < 0) {
       console.log("syscall", data);
@@ -249,90 +73,86 @@ class QRPClient {
       } else if (data.fn == "ping") {
         if (data.args.path) {
           const t = this.tracks[data.args.path];
-          if (t) {
+          if (t && t.media) {
             t.media.keepAlive();
-          } else {
-            console.log(`no such track for ping: ${data.args.path}`);
           }
         }
       } else {
-        throw new Error("unknown syscall: " + JSON.stringify(data));
+        console.log("unhandled server syscall", data);
       }
+      return;
+    }
+
+    const promise = this.#fetchPromise(data.msgid);
+    if (!promise) {
+      console.log("no promise for msgid", data.msgid);
+      return;
+    }
+    if (data.args && data.args.error) {
+      promise.reject(new Error(data.args.error));
+      return;
+    }
+    if (data.fn == "consume") {
+      throw new Error("currently, publish to other peer is not suported");
+    } else if (data.fn == "consume_ack") {
+      if (!data.args.sdp) {
+        promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
+        return;
+      }
+      for (const k in data.args.status_map || {}) {
+        const st = data.args.status_map[k];
+        const t = this.tracks[k];
+        if (t) {
+          for (const r of st.pausedReasons || []) {
+            t.pause(r, true);
+          }
+        } else {
+          console.log(`no such track for [${k}]`, this.tracks, this.tracks[k]);
+        }
+      }
+      Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
+      console.log("midMediaPathMap => ", this.midMediaPathMap);
+      promise.resolve(data.args.sdp);
+    } else if (data.fn == "produce") {
+      throw new Error("currently, publish to other peer is not suported");
+    } else if (data.fn == "produce_ack") {
+      if (!data.args.sdp) {
+        promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
+        return;
+      }
+      Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
+      console.log("midMediaPathMap => ", this.midMediaPathMap);
+      for (const k in data.args.status_map || {}) {
+        const st = data.args.status_map[k];
+        const t = this.tracks[k];
+        if (t) {
+          for (const r of st.pausedReasons || []) {
+            t.pause(r, true);
+          }
+        }
+      }
+      promise.resolve(data.args.sdp);
+    } else if (data.fn == "close_media_ack") {
+      await this.#closeTracks(data.args.paths);
+      promise.resolve(data.args.sdp);
+    } else if (
+      data.fn == "resume_ack" || data.fn == "pause_ack" || data.fn == "close_ack" ||
+      data.fn == "sync_ack" || data.fn == "ping_ack" || data.fn == "publish_stream_ack" ||
+      data.fn == "remote_answer_ack"
+    ) {
+      promise.resolve();
     } else {
-      const promise = this.#fetchPromise(data.msgid);
-      if (!promise) {
-        console.log(`promises for msgid:${data.msgid} does not exist`);
-        return;
-      }
-      if (data.args && data.args.error) {
-        promise.reject(new Error(data.args.error));
-        return;
-      }
-      if (data.fn == "consume") {
-        throw new Error("currently, publish to other peer is not suported");
-      } else if (data.fn == "consume_ack") {
-        if (!data.args.sdp) {
-          promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
-          return;
-        }
-        for (const k in data.args.status_map || {}) {
-          const st = data.args.status_map[k];
-          const t = this.tracks[k];
-          if (t) {
-            for (const r of st.pausedReasons || []) {
-              t.pause(r, true);
-            }
-          } else {
-            for (const kk in this.tracks) {
-              console.log(`compare [${k}] and [${kk}] [${k == kk}]`);
-            }
-            console.log(`no such track for [${k}]`, this.tracks, this.tracks[k]);
-          }
-        }
-        Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
-        console.log("midMediaPathMap => ", this.midMediaPathMap);
-        promise.resolve(data.args.sdp);
-      } else if (data.fn == "produce") {
-        throw new Error("currently, publish to other peer is not suported");
-      } else if (data.fn == "produce_ack") {
-        if (!data.args.sdp) {
-          promise.reject(new Error(`invalid response: no sdp: ${JSON.stringify(data.args)}`));
-          return;
-        }
-        Object.assign(this.midMediaPathMap, data.args.mid_media_path_map || {});
-        console.log("midMediaPathMap => ", this.midMediaPathMap);
-        for (const k in data.args.status_map || {}) {
-          const st = data.args.status_map[k];
-          const t = this.tracks[k];
-          if (t) {
-            for (const r of st.pausedReasons || []) {
-              t.pause(r, true);
-            }
-          }
-        }
-        promise.resolve(data.args.sdp);
-      } else if (data.fn == "close_media_ack") {
-        await this.#closeTracks(data.args.paths);
-        promise.resolve(data.args.sdp);
-      } else if (
-        data.fn == "resume_ack" || data.fn == "pause_ack" || data.fn == "close_ack" ||
-        data.fn == "sync_ack" || data.fn == "ping_ack" || data.fn == "publish_stream_ack" ||
-        data.fn == "remote_answer_ack"
-      ) {
-        promise.resolve();
-      } else {
-        console.log("unknown syscall", data);
-      }
+      console.log("unknown syscall", data);
     }
   }
-  #genCN() {
+  #genCN(): string {
     const bytes = new Uint8Array(8);
     crypto.getRandomValues(bytes);
     return btoa(String.fromCharCode(...bytes))
       // make result url safe
       .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
-  #clear() {
+  #clear(): void {
     this.streams = {};
     this.medias = {};
     this.tracks = {};
@@ -349,7 +169,8 @@ class QRPClient {
     this.timer = null;
     this.sdpQueue = [];
   }
-  initIce() {
+
+  initIce(): void {
     //Ice properties
     this.iceUsername = null;
     this.icePassword = null;
@@ -357,30 +178,35 @@ class QRPClient {
     this.candidates = [];
     this.endOfcandidates = false;
   }
-  #newMsgId() {
-    const msgid = this.msgidSeed++;
-    if (this.msgidSeed > QRPClient.MAX_MSGID) {
+
+  #newMsgId(): number {
+    if (this.msgidSeed >= QRPClient.MAX_MSGID) {
       this.msgidSeed = 1;
     }
-    return msgid;
+    return this.msgidSeed++;
   }
-  #fetchPromise(msgid) {
-    const promise = this.rpcPromises[msgid];
-    delete this.rpcPromises[msgid];
-    return promise;
+
+  #fetchPromise(msgid: number): QRPCPromiseCallbacks | null {
+    const p = this.rpcPromises[msgid];
+    if (p) {
+      delete this.rpcPromises[msgid];
+    }
+    return p;
   }
-  #handshaked() {
-    return this.syscall_ready;
+
+  #handshaked(): boolean {
+    return this.syscall_ready && this.pc !== null && this.pc.connectionState !== "failed";
   }
-  #incSdpGen() {
-    this.sdpGen++;
-    console.log(`current sdpGen:${this.sdpGen}`, this.#handshaked());
-    return this.sdpGen;
+
+  #incSdpGen(): number {
+    return ++this.sdpGen;
   }
+
   get connected() {
     return this.pc?.connectionState === "connected";
   }
-  async connect() {
+
+  async connect(): Promise<void> {
     //If already publishing
     if (this.pc) {
       console.log("Already connected");
@@ -391,17 +217,16 @@ class QRPClient {
     // Store pc object and token
     this.pc = pc;
     this.initIce();
-    const waiter = new Promise((resolve) => {
-      this.#setupCallbacks(pc, resolve);
-    });
-    await this.#handshake(waiter);
+    this.#setupCallbacks(pc);
+    await this.#handshake();
   }
-  async #createPeerConnection() {
+
+  async #createPeerConnection(): Promise<RTCPeerConnection> {
     if (!this.cert) {
       this.cert = await RTCPeerConnection.generateCertificate({
         name: 'ECDSA',
         namedCurve: 'P-256'
-      });
+      } as EcKeyGenParams);
     }
     // always uses same cert for peer connection
     return new RTCPeerConnection({
@@ -409,7 +234,8 @@ class QRPClient {
       certificates: [this.cert]
     });
   }
-  #setupCallbacks(pc, resolve) {
+
+  #setupCallbacks(pc: RTCPeerConnection): void {
     // Listen for data channels
     pc.ondatachannel = (event) => {       
       const s = event.channel;
@@ -437,6 +263,9 @@ class QRPClient {
       let path = undefined;
       if (event.transceiver) {
         if (event.transceiver.mid === "probator") { return; }
+        if (!event.transceiver.mid) {
+          throw new Error(`transceiver has no mid: ${event.transceiver}`);
+        }
         path = this.midMediaPathMap[event.transceiver.mid];
         if (!path) {
           throw new Error(`No path is defined for mid = ${event.transceiver.mid}`);
@@ -456,11 +285,13 @@ class QRPClient {
         t.stream = event.streams[0];
       }
       if (!t.opened) {
-        const r = t.onopen(t);
-        if (r === false || r === null) {
-          console.log(`close media by application ${path}`);
-          this.closeMedia(path);
-          return;
+        if (t.onopen) {
+          const r = await Promise.resolve(t.onopen(t));
+          if (r === false || r === null) {
+            console.log(`close media by application ${path}`);
+            this.closeMedia(path);
+            return;
+          }
         }
         t.opened = true;
       }
@@ -475,7 +306,6 @@ class QRPClient {
       switch(pc.connectionState) {
         case "connected":
           // The connection has become fully connected
-          resolve();
           break;
         case "disconnected":
         case "failed":
@@ -492,7 +322,7 @@ class QRPClient {
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         // Ignore candidates not from the first m line
-        if (event.candidate.sdpMLineIndex>0) {
+        if ((event.candidate.sdpMLineIndex || 0) >0) {
           return;
         }
         this.candidates.push(event.candidate);                                         
@@ -505,10 +335,12 @@ class QRPClient {
       const now = (new Date()).getTime();
       this.#checkMedias(now);
     }, 1000); // 1秒ごとにチェック
-  }
-  parseLocalOffer(localOffer) {
-    const result = {}
-    let currentMid, currentSsrcs;
+  }  
+
+  parseLocalOffer(localOffer: string) {
+    const result: { [mid: string]: { [ssrc: string]: string[] } } = {};
+    let currentMid: string | undefined = undefined;
+    let currentSsrcs : { [ssrc: string]: string[] } = {};
     const lines = localOffer.split(/\r?\n/);
     lines.push("m=dummy"); // ensure last section processed
     for (const l of lines) {
@@ -544,7 +376,8 @@ class QRPClient {
       Object.entries(result).filter(v => Object.keys(v[1]).length == 1).map(v => [v[0], Object.keys(v[1])[0]])
     );
   }
-  #checkMedias(now) {
+
+  #checkMedias(now: number): void {
     let mediaOpened = false;
     for (const k in this.medias) {
       const m = this.medias[k];
@@ -559,9 +392,9 @@ class QRPClient {
               m.startReconnect(this, reconnectionWaitMS);
               console.log(`track ${m.path} will try reconnect every ${reconnectionWaitMS} ms`);
             }
-          } else if (m.reconnectInvtervalMS && now > m.nextReconnect) {
+          } else if (m.reconnectIntervalMS && now > m.nextReconnect) {
             m.reconnect(this);
-            m.nextReconnect = now + m.reconnectInvtervalMS;
+            m.nextReconnect = now + m.reconnectIntervalMS;
           }
         } else if (!m.opened) {
           console.log(`input again for ${m.path}`);
@@ -577,8 +410,11 @@ class QRPClient {
       this.syscall("ping", {});
     }
   }
-  async #createOffer(tracks) {
-    const midPathMap = {};
+
+  async #createOffer(tracks: QRPCTrack[]): Promise<{
+    localOffer: RTCSessionDescriptionInit, midPathMap: { [mid: string]: string }
+  }> {
+    const midPathMap: { [mid: string]: string } = {};
     // create dummy peer connection to generate sdp
     const pc = await this.#createPeerConnection();
     // emurate creating stream to generate correct sdp
@@ -588,24 +424,25 @@ class QRPClient {
     }
     const localOffer = await pc.createOffer();
     await pc.setLocalDescription(localOffer);
-    const midSsrcMap = this.parseLocalOffer(localOffer.sdp);
+    const midSsrcMap = this.parseLocalOffer(localOffer.sdp!);
     // console.log("midSsrcMap", midSsrcMap);
     for (const t of tracks) {
       // now, mid is decided by calling pc.setLocalDescription. 
       // mid (in server-responded remote offer) probably changes 
       // after it processes on server side, but because of client mid actually decided
       // by server remote offer, changes causes no problem.
-      midPathMap[t.mid] = t.path;
-      t.ssrc = midSsrcMap[t.mid] || undefined;
+      midPathMap[t.mid!] = t.path;
+      t.ssrc = midSsrcMap[t.mid!] || undefined;
       // console.log(`${t.path},mid=${t.mid} ssrc = ${t.ssrc}`);
     }
     pc.close();
     return {localOffer, midPathMap};
   }
-  #fixupLocalAnswer(localAnswer, midSsrcMap) {
+
+  #fixupLocalAnswer(localAnswer: string, midSsrcMap: { [mid: string]: string }): string {
     // console.log("#fixupLocalAnswer", midSsrcMap);
     const chunks = [];
-    let chunk = [];
+    let chunk: string[] = [];
     const lines = localAnswer.split(/\r?\n/);
     lines.push("m=dummy"); // ensure last section processed
     let currentMid;
@@ -648,8 +485,12 @@ class QRPClient {
     }
     return sdp.join("\n");
   }
-  async #setRemoteOffer(remoteOffer, sdpGen, sentTracks) {
+
+  async #setRemoteOffer(remoteOffer: string, sdpGen: number, sentTracks: QRPCTrack[]): Promise<void> {
     console.log("remote offer sdp", remoteOffer, sdpGen);
+    if (this.pc == null) {
+      throw new Error("peer connection is not initialized");
+    }
     // if there is sdp which generation is later than current sdpGen, the generation is skipped
     for (const e of this.sdpQueue) {  
       if (e.sdpGen > sdpGen) {
@@ -665,18 +506,18 @@ class QRPClient {
     // set remote description
     await this.pc.setRemoteDescription({type:"offer",sdp:remoteOffer});
     // set tracks to actual peer connection
-    const midSsrcMap = {};
+    const midSsrcMap: { [mid: string]: string } = {};
     for (const t of sentTracks) {
       await t.open(this.pc, this.midMediaPathMap);
       if (t.ssrc) {
-        midSsrcMap[t.mid] = t.ssrc;
+        midSsrcMap[t.mid!] = t.ssrc;
       }
     }
     const answer = await this.pc.createAnswer();
     // answer.sdp = this.#fixupLocalAnswer(answer.sdp, midSsrcMap);
     // console.log("local answer sdp", answer.sdp);
     if (this.#handshaked()) {
-      const newMidSsrcMap = this.parseLocalOffer(answer.sdp);
+      const newMidSsrcMap = this.parseLocalOffer(answer.sdp!);
       console.log("midSsrcMaps", midSsrcMap, newMidSsrcMap);
       await this.syscall("remote_answer", {
         midMap: Object.fromEntries(
@@ -687,7 +528,7 @@ class QRPClient {
       });
       // update ssrc of tracks
       for (const t of sentTracks) {
-        t.ssrc = newMidSsrcMap[t.mid] || undefined;
+        t.ssrc = newMidSsrcMap[t.mid!] || undefined;
       }
     }
     await this.pc.setLocalDescription(answer);
@@ -705,6 +546,7 @@ class QRPClient {
       this.sdpQueue = [];
     }
   }
+
   async #capability() {
     const pc = new RTCPeerConnection();
     pc.addTransceiver("audio");
@@ -731,8 +573,8 @@ class QRPClient {
     console.log("local offer sdp", localOffer.sdp);
 
     //store local ice ufrag/pwd
-    this.iceUsername = localOffer.sdp.match(/a=ice-ufrag:(.*)[\r\n]+/)[1];
-    this.icePassword = localOffer.sdp.match(/a=ice-pwd:(.*)[\r\n]+/)[1];
+    this.iceUsername = localOffer.sdp!.match(/a=ice-ufrag:(.*)[\r\n]+/)![1];
+    this.icePassword = localOffer.sdp!.match(/a=ice-pwd:(.*)[\r\n]+/)![1];
 
     //Do the post request to the WHIP endpoint with the SDP offer
     const fetched = await fetch(this.url, {
@@ -770,14 +612,15 @@ class QRPClient {
         this.context = await this.onopen();
       }  
     } catch (e) {
-      console.log("error in handling whip response:" + e.message + "|" + (text || "no response"));
+      console.log(`error in handling whip response: ${e}|${text || "no response"}`);
       throw e;
     }
   }
-  async close() {
+  async close(): Promise<void> {
     await this.#close(true);
   }
-  async #close(fromLocal) {
+
+  async #close(fromLocal?: boolean): Promise<void> {
     if (!this.pc) {
       // Already stopped
       return
@@ -825,7 +668,8 @@ class QRPClient {
       console.log("no reconnect. bye!");
     }
   }
-  #canonicalOpenPath(path) {
+
+  #canonicalOpenPath(path: string): string {
     const parsed = path.split('/');
     if (parsed.length == 1) {
       return path + "/";
@@ -836,12 +680,14 @@ class QRPClient {
       return path;
     }
   }
-  async openMedia(path, {stream, encodings, options, onopen, onclose, onupdate, onpause, onresume}) {
+
+  async openMedia(path: string, params: QRPCMediaSenderParams): Promise<QRPCTrack[]> {
+    const {stream, encodings, onopen, onclose, onupdate, onpause, onresume, initOptions} = params;
     const cpath = this.#canonicalOpenPath(path);
     console.log("openMedia", cpath, stream, encodings);
     if (!encodings) { throw new Error("encodings is mandatory"); }
     if (encodings.length > 3) { throw new Error("encodings more than 3 may not be treated correctly"); }
-    const ridScalabilityModeMap = {};
+    const ridScalabilityModeMap: {[rid: string]: string} = {};
     let index = 0;
     encodings.forEach(e => {
       if (!e.maxBitrate) { throw new Error("for each encodings, maxBitrate is mandatory"); }
@@ -852,11 +698,11 @@ class QRPClient {
     });
     // sort by maxBitrate asc, because server regards earlier encoding as lower quality,
     // regardless its actual bitrate
-    encodings.sort((a, b) => a.maxBitrate - b.maxBitrate);
-    const tracks = [];
+    encodings.sort((a, b) => a.maxBitrate! - b.maxBitrate!);
+    const tracks: QRPCTrack[] = [];
     stream.getTracks().forEach(t => {
       const path = QRPCTrack.path(cpath, t.kind);
-      const media = this.#addMedia(cpath, "send", options);
+      const media = this.#addMedia(cpath, "send", initOptions);
       const track = new QRPCTrack(path, media, stream, t, encodings, {
         onopen, onclose, onupdate, onpause, onresume
       });
@@ -873,22 +719,23 @@ class QRPClient {
       const sentTracks = [...this.sentTracks];
       try {
         const remoteOffer = await this.syscall("produce", {
-          sdp: localOffer.sdp, options, midPathMap, rtp: {ridScalabilityModeMap}
+          sdp: localOffer.sdp, initOptions, midPathMap, rtp: {ridScalabilityModeMap}
         });
         await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
       } catch (e) {
-        console.log("openMedia: remote negotiation failed", e.message);
+        console.log(`openMedia: remote negotiation failed: ${e}`);
         for (const t of tracks) {
           delete this.medias[t.media.path];
           delete this.tracks[t.path];
-          await t.close(this.pc);
+          await t.close(this.pc!);
         }
         throw e;
       }
     }
     return tracks;
   }
-  #addMedia(path, direction, options) {
+
+  #addMedia(path: string, direction: string, initOptions?: QRPCMediaInitOptions): QRPCMedia {
     // 1. path/(video|audio) => path/
     // 2. path/ => path/
     const parsed = path.split("/");
@@ -899,17 +746,18 @@ class QRPClient {
     if (this.medias[path]) {
       media = this.medias[path];
     } else {
-      media = new QRPCMedia(path, direction, options);
+      media = new QRPCMedia(path, direction, initOptions);
       this.medias[path] = media;
     }
     return media;
   }
+
   // media_path is one of the following:
   // 1. ${cname}/${local_path}/ => all media kind under local_path consumed
   // 2. ${cname}/${local_path}/${media_kind} => only media_kind under local_path consumed
   // for 1. last / is mandatory to indicate that it is a directory.
   // but / can be omitted if last component of local_path does not ssem to be a media kind (not audio/video)
-  #canonicalViewPath(path) {
+  #canonicalViewPath(path: string): {cpath: string, kind: string | undefined} {
     const parsed = path.split('/');
     if (parsed.length < 2) {
       throw new Error(`invalid path: ${path}: at least \${cname}/\${single_component_local_path} required`);
@@ -930,7 +778,9 @@ class QRPClient {
       return { cpath: path, kind: undefined };
     }
   }
-  async watchMedia(path, {onopen, onclose, onpause, onresume, options}) {
+
+  async watchMedia(path: string, params: QRPCMediaReceiverParams): Promise<QRPCTrack[]> {
+    const {onopen, onclose, onpause, onresume, initOptions} = params;
     if (!this.#handshaked()) {
       throw new Error("watchMedia can only be called after handshake");
     }
@@ -938,11 +788,11 @@ class QRPClient {
     const tracks = [];
     for (const k of (kind ? [kind] : ["video", "audio"])) {
       const path = kind ? cpath : QRPCTrack.path(cpath, k);
-      const media = this.#addMedia(cpath, "recv", options);
+      const media = this.#addMedia(cpath, "recv", initOptions);
       let track = this.tracks[path];
       if (!track) {
-        if (options?.sync) { throw new Error(`no track for ${path} yet but sync option is set`); }
-        track = new QRPCTrack(path, media, null, null, undefined, {
+        if (initOptions?.sync) { throw new Error(`no track for ${path} yet but sync option is set`); }
+        track = new QRPCTrack(path, media, null, null, [], {
           onopen, onclose, onpause, onresume
         });
         // console.log("watchMedia: add track for", path);
@@ -956,44 +806,47 @@ class QRPClient {
     const sdpGen = this.#incSdpGen();
     const sentTracks = [...this.sentTracks];
     try {
-      const remoteOffer = await this.syscall("consume", {path: cpath, options});
+      const remoteOffer = await this.syscall("consume", {path: cpath, initOptions});
       await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
     } catch (e) {
-      console.log("watchMedia: remote negotiation failed", e.message);
+      console.log("watchMedia: remote negotiation failed", e);
       for (const t of tracks) {
         delete this.medias[t.media.path];
         delete this.tracks[t.path];
-        await t.close(this.pc);
+        await t.close(this.pc!);
       }
       throw e;
     }
     return tracks;
   }
-  async pauseMedia(path) {
+
+  async pauseMedia(path: string): Promise<void> {
     const t = this.tracks[path];
     if (t) {
       await this.syscall("pause", { path });
-      t.pause(QRPCTrack.PAUSE_REASON.local_op);
     } else {
       throw new Error("pauseMedia: no media for " + path);
     }
   }
-  async resumeMedia(path) {
+
+  async resumeMedia(path: string): Promise<void> {
     const t = this.tracks[path];
     if (t) {
       await this.syscall("resume", { path });
-      t.resume(QRPCTrack.PAUSE_REASON.local_op);
     } else {
       throw new Error("resumeMedia: no media for " + path);
     }
   }
-  async updateMedia(path, {stream}) {
+
+  async updateMedia(path: string, options: {stream: MediaStream}): Promise<QRPCTrack[]> {
+    const {stream} = options;
     const cpath = this.#canonicalOpenPath(path);
     const m = this.medias[cpath];
     if (!m) {
-      throw new Error(`no media for ${cpath}`);
+      throw new Error("updateMedia: no media for " + cpath);
     }
-    const tracks = [];
+    
+    const tracks: QRPCTrack[] = [];
     stream.getTracks().forEach(t => {
       const track_path = QRPCTrack.path(cpath, t.kind);
       const track = this.tracks[track_path];
@@ -1004,15 +857,18 @@ class QRPClient {
         console.log(`no track for ${path}`);
       }
     });
+    
     return tracks;
   }
-  async #closeTracks(paths) {
-    const medias = [];
+
+  async #closeTracks(paths: string[]): Promise<void> {
+    const medias: {[path: string]: QRPCMedia} = {};
+    
     for (const path of paths) {
       const t = this.tracks[path];
       if (t) {
         medias[t.media.path] = t.media;
-        await t.close(this.pc); // this removes the track from media.tracks
+        await t.close(this.pc!); // this removes the track from media.tracks
         delete this.tracks[path];
       }
       const index = this.sentTracks.indexOf(t);
@@ -1029,22 +885,24 @@ class QRPClient {
       }
     }
   }
-  async closeMedia(path) {
+
+  async closeMedia(path: string): Promise<void> {
     const remoteOffer = await this.syscall("close_media", { path });
     const sdpGen = this.#incSdpGen();
     const sentTracks = [...this.sentTracks];
     await this.#setRemoteOffer(remoteOffer, sdpGen, sentTracks);
   }
-  // options combines createDataChannel's option and RTCDataChannel event handler (onopen, onclose, onmessage)
-  openStream(path, options) {
+
+  openStream(path: string, params: QRPCStreamParams): RTCDataChannel {
     if (this.streams[path]) {
-      return this.streams[path];
+      throw new Error("stream already exists for path: " + path);
     }
-    const s = this.pc.createDataChannel(path, options);
-    this.#setupStream(s, options);
+    const s = this.pc!.createDataChannel(path, params as RTCDataChannelInit);
+    this.#setupStream(s, params);
     return s;
   }
-  closeStream(path) {
+
+  closeStream(path: string): void {
     const s = this.streams[path];
     if (!s) {
       console.log(`No stream for path ${path}`);
@@ -1053,44 +911,51 @@ class QRPClient {
     s.close();
     delete this.streams[path];
   }
-  watchStream(path, options) {
-    return this.openStream(`$watch/${path}`, options);
+
+  watchStream(path: string, options: QRPCStreamHandler): RTCDataChannel {
+    throw new Error("watchStream not implemented yet");
   }
-  async syscall(fn, args) {
+
+  async syscall(fn: string, args?: QRPCSyscallArgs): Promise<any> {
     return new Promise((resolve, reject) => {
       const msgid = this.#newMsgId();
-      this.syscallStream.send(JSON.stringify({fn, args, msgid}));
+      this.syscallStream!.send(JSON.stringify({fn, args, msgid}));
       this.rpcPromises[msgid] = { resolve, reject };
     });
   }
-  #setupStream(s, h) {
+
+  #setupStream(s: RTCDataChannel, h: QRPCStreamParams): void {
     const path = s.label;
+    
     s.onopen = (h.onopen && (async (event) => {
       if (h.publish) { await this.syscall("publish_stream",{path}); }
-      const ctx = h.onopen(s, event);
-      if (ctx === false || ctx === null) {
+      const ctx = h.onopen!(s, event);
+      if (ctx && typeof ctx === "object" && "close" in ctx) {
         console.log(`close stream by application path=${path}`);
         this.closeStream(path);
-        return;
       } else {
-        s.context = ctx;
+        (s as any).context = ctx;
       }
     })) || (async (event) => {
       if (h.publish) { await this.syscall("publish_stream",{path}); }
     });
+    
     s.onclose = (h.onclose && ((event) => {
-      h.onclose(s, event);
+      h.onclose!(s, event);
       delete this.streams[path];
     })) || ((event) => {
       delete this.streams[path];
     });
+    
     s.onerror = (h.onerror && ((event) => {
-      h.onerror(s, event);
+      h.onerror!(s, event);
       delete this.streams[path];
     })) || ((event) => {
       delete this.streams[path];
     });
+    
     s.onmessage = (event) => h.onmessage(s, event);
+    
     this.streams[path] = s;
   }
-};
+}
