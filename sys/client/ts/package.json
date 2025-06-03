@@ -20,6 +20,9 @@
     "build:bundle": "node esbuild.config.js",
     "build": "npm run build:modules && npm run build:types && npm run build:bundle",
     "watch": "tsc --watch",
+    "watch:bundle": "node esbuild.config.js --watch",
+    "watch:dev": "npm run watch:bundle",
+    "dev": "npm run watch:dev",
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist"
   },
