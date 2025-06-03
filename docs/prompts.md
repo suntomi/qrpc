@@ -18,3 +18,8 @@ results -> bf182ac335f7f420370c552e24a9443e1c710cce
 
 at bf182ac335f7f420370c552e24a9443e1c710cce
 current sys/client/ts genrates multiple js files as compile result. but I want to generate concatenate version of these files because generated js file will be downloaded from browser. concatenate & minify files improve startup time of pages that just use sys/client/ts as javascript library.
+
+at 7646e72e09775644e33b14d639262e4a40f330e0
+I made some fix and now it works. then I have question.
+esbuild itself does not generate .d.ts? if so, should I change configuration to generate .d.ts file?
+
