@@ -101,7 +101,7 @@ export class QRPCTrack {
     return this.pausedReasons.indexOf(reason) >= 0;
   }
 
-  pause(reason: string, noCallback?: boolean): Promise<number> {
+  pause(reason: string, noCallback?: boolean): Promise<number|undefined> {
     const i = this.pausedReasons.indexOf(reason);
     if (i < 0) {
       this.pausedReasons.push(reason);

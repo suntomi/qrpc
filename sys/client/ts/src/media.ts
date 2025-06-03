@@ -36,13 +36,13 @@ export class QRPCMedia {
     delete this.tracks[t.path];
   }
 
-  pause(reason: string): number | undefined {
+  async pause(reason: string): Promise<number | undefined> {
     const ret: number[] = [];
     for (const k in this.tracks) {
-      const reconnectionWaitMS = this.tracks[k].pause(reason);
+      const reconnectionWaitMS = await this.tracks[k].pause(reason);
       if (reason === QRPCTrack.PAUSE_REASON.remote_close) {
         let waitMS: number | null = null;
-        if (!reconnectionWaitMS && reconnectionWaitMS !== false && reconnectionWaitMS !== null) {
+        if (!reconnectionWaitMS) {
           waitMS = QRPCTrack.DEFAULT_TRACK_RECONNECTION_WAIT_MS;
         } else if (typeof reconnectionWaitMS === "number") {
           waitMS = reconnectionWaitMS;

@@ -4,12 +4,13 @@ import { QRPCTrack } from './track.js';
 export type Exclude<T,U> = T extends U ? never : T;
 export type MayAwaitable<T> = Exclude<any, Promise<any>> | Promise<T>;
 
-export function promisify<T>(a: MayAwaitable<T>): Promise<T> {
+export function promisify<T>(a: MayAwaitable<T>): Promise<T|undefined> {
   if (a instanceof Promise) {
     return a as Promise<T>;
-  } else {
-    return Promise.resolve(a);
+  } else if (!a) {
+    return Promise.resolve(undefined);
   }
+  return Promise.resolve(a);
 }
 
 export interface QRPCBaseMediaHandler {

@@ -1,8 +1,9 @@
 import type {
   QRPCMediaSenderParams, QRPCMediaReceiverParams, QRPCMediaInitOptions,
   QRPCStreamParams, QRPCStreamHandler, 
-  QRPCMidMediaPathMap, QRPCSyscallArgs, QRPCPromiseCallbacks,
+  QRPCMidMediaPathMap, QRPCSyscallArgs, QRPCPromiseCallbacks
 } from './types.js';
+import { promisify } from './types.js';
 import { QRPCTrack } from './track.js';
 import { QRPCMedia } from './media.js';
 
@@ -78,11 +79,10 @@ export class QRPClient {
           }
         }
       } else {
-        console.log("unhandled server syscall", data);
+        throw new Error("unknown syscall: " + JSON.stringify(data));
       }
       return;
     }
-
     const promise = this.#fetchPromise(data.msgid);
     if (!promise) {
       console.log("no promise for msgid", data.msgid);
@@ -331,11 +331,11 @@ export class QRPClient {
         this.endOfcandidates = true;
       }
     }
-    this.timer = setInterval(() => {
+    this.timer = setInterval(async () => {
       const now = (new Date()).getTime();
-      this.#checkMedias(now);
+      await this.#checkMedias(now);
     }, 1000); // 1秒ごとにチェック
-  }  
+  }
 
   parseLocalOffer(localOffer: string) {
     const result: { [mid: string]: { [ssrc: string]: string[] } } = {};
@@ -360,7 +360,6 @@ export class QRPClient {
         const parsed = l.slice(7).split(/\s/,2);
         const ssrc = parsed[0].trim();
         const attrName = parsed[1].split(/:/, 1)[0].trim();
-        console.log("ssrc/attrName", ssrc, attrName);
         if (!currentSsrcs[ssrc]) {
           currentSsrcs[ssrc] = [];
         }
@@ -377,7 +376,7 @@ export class QRPClient {
     );
   }
 
-  #checkMedias(now: number): void {
+  async #checkMedias(now: number): Promise<void> {
     let mediaOpened = false;
     for (const k in this.medias) {
       const m = this.medias[k];
@@ -386,7 +385,7 @@ export class QRPClient {
         if (now - m.lastPing > (QRPClient.NO_INPUT_THRESHOLD * 1000)) {
           if (m.opened) {
             m.opened = false;
-            const reconnectionWaitMS = m.pause(QRPCTrack.PAUSE_REASON.remote_close);
+            const reconnectionWaitMS = await m.pause(QRPCTrack.PAUSE_REASON.remote_close);
             console.log(`no ping for ${m.path} for ${QRPClient.NO_INPUT_THRESHOLD * 1000} ms`, reconnectionWaitMS);
             if (reconnectionWaitMS) {
               m.startReconnect(this, reconnectionWaitMS);
@@ -824,6 +823,7 @@ export class QRPClient {
     const t = this.tracks[path];
     if (t) {
       await this.syscall("pause", { path });
+      t.pause(QRPCTrack.PAUSE_REASON.local_op);
     } else {
       throw new Error("pauseMedia: no media for " + path);
     }
@@ -833,6 +833,7 @@ export class QRPClient {
     const t = this.tracks[path];
     if (t) {
       await this.syscall("resume", { path });
+      t.resume(QRPCTrack.PAUSE_REASON.local_op);
     } else {
       throw new Error("resumeMedia: no media for " + path);
     }
@@ -895,7 +896,7 @@ export class QRPClient {
 
   openStream(path: string, params: QRPCStreamParams): RTCDataChannel {
     if (this.streams[path]) {
-      throw new Error("stream already exists for path: " + path);
+      return this.streams[path];
     }
     const s = this.pc!.createDataChannel(path, params as RTCDataChannelInit);
     this.#setupStream(s, params);
@@ -912,8 +913,8 @@ export class QRPClient {
     delete this.streams[path];
   }
 
-  watchStream(path: string, options: QRPCStreamHandler): RTCDataChannel {
-    throw new Error("watchStream not implemented yet");
+  watchStream(path: string, params: QRPCStreamParams): RTCDataChannel {
+    return this.openStream(`$watch/${path}`, params);
   }
 
   async syscall(fn: string, args?: QRPCSyscallArgs): Promise<any> {
@@ -926,36 +927,33 @@ export class QRPClient {
 
   #setupStream(s: RTCDataChannel, h: QRPCStreamParams): void {
     const path = s.label;
-    
-    s.onopen = (h.onopen && (async (event) => {
+    const { onopen, onclose, onmessage, onerror } = h;
+    s.onopen = (onopen && (async (event) => {
       if (h.publish) { await this.syscall("publish_stream",{path}); }
-      const ctx = h.onopen!(s, event);
-      if (ctx && typeof ctx === "object" && "close" in ctx) {
+      const ctx = await promisify(onopen(s, event));
+      if (ctx === false || ctx === null) {
         console.log(`close stream by application path=${path}`);
         this.closeStream(path);
+        return;
       } else {
         (s as any).context = ctx;
       }
     })) || (async (event) => {
       if (h.publish) { await this.syscall("publish_stream",{path}); }
     });
-    
-    s.onclose = (h.onclose && ((event) => {
-      h.onclose!(s, event);
+    s.onclose = (onclose && ((event) => {
+      onclose(s, event);
       delete this.streams[path];
     })) || ((event) => {
       delete this.streams[path];
     });
-    
-    s.onerror = (h.onerror && ((event) => {
-      h.onerror!(s, event);
+    s.onerror = (onerror && ((event) => {
+      onerror(s, event);
       delete this.streams[path];
     })) || ((event) => {
       delete this.streams[path];
     });
-    
-    s.onmessage = (event) => h.onmessage(s, event);
-    
+    s.onmessage = (event) => onmessage(s, event);
     this.streams[path] = s;
   }
 }
