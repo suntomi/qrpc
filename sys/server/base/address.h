@@ -21,6 +21,10 @@ namespace base {
     Address(const std::string &host, uint16_t port) : std::string() { Set(host, port); }
     Address(const Address &a) : std::string(a) {}
     Address() : std::string() {}
+    const Address &operator=(const Address &a) {
+      std::string::assign(a);
+      return *this;
+    }
     const sockaddr *sa() const { return reinterpret_cast<const sockaddr *>(c_str()); }
     socklen_t salen() const { return size(); }
     int family() const { return sa()->sa_family; }

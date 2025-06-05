@@ -28,7 +28,7 @@ namespace base {
     static void ClassInit(AlarmProcessor &a) {
       auto lock = std::lock_guard<std::mutex>(sctp_send_queue_mutex_);
       if (sctp_send_queue_alarm_id_ == AlarmProcessor::INVALID_ID) {
-        auto thread_id = 0;
+        size_t thread_id = 0;
         for (size_t i = 0; i < thread_queue_map_.size(); ++i) {
           if (thread_queue_map_[i] == nullptr) {
             thread_id = i + 1;

@@ -126,7 +126,7 @@ namespace base {
         TcpClient(
             Loop &l, Resolver &r, qrpc_time_t timeout = qrpc_time_sec(120),
             const MaybeCertPair &p = std::nullopt
-        ) : TcpSessionFactory(l, [this](Fd fd, const Address &a) -> Session* {
+        ) : TcpSessionFactory(l, [](Fd fd, const Address &a) -> Session* {
             DIE("client should not call this, provide factory via SessionFactory::Connect");
             return (Session *)nullptr;
         }, Config(r, timeout, p)) {}
@@ -285,7 +285,7 @@ namespace base {
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
             int Flush(); 
             // implements Session
-            const char *proto() const { return "UDP"; }
+            const char *proto() const override { return "UDP"; }
             // Send is implemented in subclass
         protected:
             bool AllocIovec(size_t sz) {
@@ -312,7 +312,7 @@ namespace base {
                 }
             }
             void FreeIovecs() {
-                for (int i = 0; i < write_vecs_.size(); i++) {
+                for (size_t i = 0; i < write_vecs_.size(); i++) {
                     struct iovec &iov = write_vecs_[i];
                     FreeIovec(iov);
                 }
@@ -320,7 +320,7 @@ namespace base {
             }
             void Reset(size_t size) {
                 if (size >= write_vecs_.size()) {
-                    for (int i = 0; i < size - 1; i++) {
+                    for (int i = 0; i < ((int)size) - 1; i++) {
                         struct iovec &iov = write_vecs_.back();
                         FreeIovec(iov);
                         write_vecs_.pop_back();
@@ -329,7 +329,7 @@ namespace base {
                     auto &iov = write_vecs_[0];
                     iov.iov_len = 0;
                 } else if (size > 0) {
-                    for (int i = 0; i < size; i++) {
+                    for (size_t i = 0; i < size; i++) {
                         struct iovec &iov = write_vecs_[i];
                         FreeIovec(iov);
                     }
@@ -462,7 +462,7 @@ namespace base {
         UdpClient(
             Loop &l, Resolver &r, qrpc_time_t session_timeout = qrpc_time_sec(120),
             int batch_size = Config::BATCH_SIZE, bool stream_write = false
-        ) : UdpSessionFactory(l, [this](Fd fd, const Address &ap) {
+        ) : UdpSessionFactory(l, [](Fd fd, const Address &ap) {
             DIE("client should not call this, provide factory with SessionFactory::Connect");
             return (Session *)nullptr;
         }, Config(r, session_timeout, batch_size, stream_write, false)) {}
@@ -668,7 +668,7 @@ namespace base {
             UdpListener(l, [this](Fd fd, const Address &a) {
                 return new AdhocUdpSession(*this, fd, a);
             }, config), handler_(h) {}
-        AdhocUdpListener(AdhocUdpListener &&rhs) : UdpListener(std::move(rhs)), handler_(std::move(handler_)) {}
+        AdhocUdpListener(AdhocUdpListener &&rhs) : UdpListener(std::move(rhs)), handler_(std::move(rhs.handler_)) {}
         DISALLOW_COPY_AND_ASSIGN(AdhocUdpListener);
         inline Handler &handler() { return handler_; }
     private:

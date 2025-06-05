@@ -28,6 +28,7 @@ using json = nlohmann::json;
 namespace base {
 namespace rtp {
   struct MediaStreamConfig : public Parameters {
+  public:
     struct ControlOptions {
       ControlOptions(const json &j);
       ControlOptions() : pause(false) {}
@@ -203,7 +204,6 @@ namespace rtp {
     static const FBS::Transport::Options* TransportOptions(const Config &c);
     static const std::vector<Parameters::MediaKind> &SupportedMediaKind();
     inline std::string GenerateMid() { return listener_.GenerateMid(); }
-    qrpc_time_t OnTimer(qrpc_time_t now);
     template <typename Body>
     static Channel::ChannelRequest CreateRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs = 0) {
       auto btit = payload_map_.find(m);

@@ -99,7 +99,7 @@ namespace base {
                 int64_t detail_code = 0, const std::string &msg = "") {
                 // set close reason first so that cancel the alarm when session is deleted before alarm raised
                 SetCloseReason({ .code = code, .detail_code = detail_code, .msg = msg });
-                this->close_reason_->alarm_id = factory().alarm_processor().Set(
+                return (this->close_reason_->alarm_id = factory().alarm_processor().Set(
                     [this]() {
                         std::unique_ptr<CloseReason> cr = std::move(this->close_reason_);
                         ASSERT(close_reason_ == nullptr);
@@ -112,7 +112,7 @@ namespace base {
                         }
                         return 0; // stop alarm
                     }, qrpc_time_now()
-                );
+                )) != AlarmProcessor::INVALID_ID;
             }
             inline void Touch(qrpc_time_t at) { last_active_ = at; }
             // virtual functions to override

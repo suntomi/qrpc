@@ -63,9 +63,9 @@ namespace webrtc {
     class SyscallStream : public AdhocStream {
     public:
       SyscallStream(BaseConnection &c, const Config &config, ConnectHandler &&h) :
-        AdhocStream(c, config, std::move(Handler(Nop())), std::move(h), std::move(ShutdownHandler(Nop()))) {}
+        AdhocStream(c, config, Handler(Nop()), std::move(h), std::move(ShutdownHandler(Nop()))) {}
       SyscallStream(BaseConnection &c, const Config &config) :
-        AdhocStream(c, config, std::move(Handler(Nop())), std::move(ConnectHandler(Nop())), std::move(ShutdownHandler(Nop()))) {}
+        AdhocStream(c, config, Handler(Nop()), ConnectHandler(Nop()), ShutdownHandler(Nop())) {}
       ~SyscallStream() {}
       int OnRead(const char *p, size_t sz) override;
       int Call(const char *fn, uint32_t msgid, const json &j, logger::level llv = logger::level::info);

@@ -76,7 +76,7 @@ public:
   inline int ForceDelWithCheck(Fd fd, IoProcessor *proc) {
     if (processors_[fd] == proc) {
       if (Del(fd) < 0) {
-        auto h = processors_[fd];
+        // auto h = processors_[fd];
         processors_[fd] = nullptr;
       }
       return QRPC_OK;					

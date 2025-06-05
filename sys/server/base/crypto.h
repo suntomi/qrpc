@@ -82,12 +82,12 @@ namespace base {
   namespace base64 {
     static const char kBase64Chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-    inline int buffsize(int len) {
+    inline size_t buffsize(size_t len) {
       return (len + 2) / 3 * 4 + 1;
     }
 
-    inline int encode(const uint8_t* src, int len, char* dst, int dstlen) {
-      int i;
+    inline size_t encode(const uint8_t* src, size_t len, char* dst, size_t dstlen) {
+      size_t i;
       uint8_t a, b, c;
       char* p = dst;
 
@@ -107,8 +107,8 @@ namespace base {
       return p - dst;
     }
 
-    inline int decode(const char* src, int len, uint8_t* dst, int dstlen) {
-      int i;
+    inline size_t decode(const char* src, size_t len, uint8_t* dst, size_t dstlen) {
+      size_t i;
       uint8_t a, b, c, d;
       uint8_t* p = dst;
 

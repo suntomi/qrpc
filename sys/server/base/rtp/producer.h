@@ -13,8 +13,8 @@ namespace base {
 namespace rtp {
   class Handler;
   class Parameters;
-  class MediaStreamConfig;
-  class RemoteAnswer;
+  struct MediaStreamConfig;
+  struct RemoteAnswer;
   struct ProducerStatus {
     bool paused{ false };
     json ToJson() const;
@@ -28,7 +28,7 @@ namespace rtp {
     ) : RTC::Producer(s, id, l, p), handler_(handler), media_(m) {}
     ~Producer() override {}
     const Parameters *params() const;
-    inline const std::string &media_path() const { return media_->label() + "/" + Parameters::FromMediaKind(GetKind()); }
+    inline const std::string media_path() const { return media_->label() + "/" + Parameters::FromMediaKind(GetKind()); }
     ProducerStatus status() const;
   public:
     static bool consumer_params(
