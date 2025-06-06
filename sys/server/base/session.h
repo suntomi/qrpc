@@ -70,7 +70,7 @@ namespace base {
         };
     public:
         TcpSessionFactory(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
-            SessionFactory(l, std::move(m), c), sessions_() {}
+            SessionFactory(l, std::move(m), c) {}
         TcpSessionFactory(TcpSessionFactory &&rhs) :
             SessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {
             tls_ctx_ = rhs.tls_ctx_;
@@ -145,7 +145,7 @@ namespace base {
         };
     public:
         TcpListener(Loop &l, FactoryMethod &&m, Config c = Config::Default()) : 
-            TcpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0) {}
+            TcpSessionFactory(l, std::move(m), c) {}
         TcpListener(TcpListener &&rhs) : TcpSessionFactory(std::move(rhs)), 
             fd_(rhs.fd_), port_(rhs.port_) { rhs.fd_ = INVALID_FD; }
         ~TcpListener() override { Fin(); }
@@ -217,8 +217,8 @@ namespace base {
             }
         }
     protected:
-        Fd fd_;
-        int port_;
+        Fd fd_{INVALID_FD};
+        int port_{0};
     };
     template <class S>
     class TcpListenerOf : public TcpListener {
@@ -254,7 +254,7 @@ namespace base {
                 return Config(BATCH_SIZE, false, false);
             }
         public:
-            int max_batch_size;
+            int max_batch_size{BATCH_SIZE};
             bool stream_write{false};
         };
         #if !defined(__QRPC_USE_RECVMMSG__)
@@ -535,8 +535,7 @@ namespace base {
         };
     public:
         UdpListener(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
-            UdpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0),
-            overflow_supported_(false), sessions_(),
+            UdpSessionFactory(l, std::move(m), c),
             read_packets_(batch_size_), read_buffers_(batch_size_) { Init(); }
         UdpListener(UdpListener &&rhs);
         ~UdpListener() override { Fin(); }
@@ -643,9 +642,9 @@ namespace base {
             }
         }
     protected:
-        Fd fd_;
-        int port_;
-        bool overflow_supported_;
+        Fd fd_{INVALID_FD};
+        int port_{0};
+        bool overflow_supported_{false};
         AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
         std::map<Address, Session*> sessions_;
         std::vector<mmsghdr> read_packets_;

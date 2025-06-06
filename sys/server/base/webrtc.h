@@ -63,7 +63,7 @@ namespace webrtc {
     class SyscallStream : public AdhocStream {
     public:
       SyscallStream(BaseConnection &c, const Config &config, ConnectHandler &&h) :
-        AdhocStream(c, config, Handler(Nop()), std::move(h), std::move(ShutdownHandler(Nop()))) {}
+        AdhocStream(c, config, Handler(Nop()), std::move(h), ShutdownHandler(Nop())) {}
       SyscallStream(BaseConnection &c, const Config &config) :
         AdhocStream(c, config, Handler(Nop()), ConnectHandler(Nop()), ShutdownHandler(Nop())) {}
       ~SyscallStream() {}
@@ -120,10 +120,7 @@ namespace webrtc {
       friend class ConnectionFactory;
     public:
       Connection(ConnectionFactory &sv, RTC::DtlsTransport::Role dtls_role) :
-        factory_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
-        dtls_transport_(nullptr), sctp_association_(nullptr), srtp_send_(nullptr), srtp_recv_(nullptr),
-        rtp_handler_(nullptr), streams_(), syscall_(), stream_id_factory_(),
-        alarm_id_(AlarmProcessor::INVALID_ID), mid_seed_(0), sctp_connected_(false), closed_(false) {
+        factory_(sv), last_active_(qrpc_time_now()), dtls_role_(dtls_role) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case RTC::DtlsTransport::Role::CLIENT:
@@ -311,8 +308,8 @@ namespace webrtc {
       const rtp::Handler::Config &GetRtpConfig() const override { return factory().config().rtp; }
       bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) override;
     protected:
-      qrpc_time_t last_active_, start_shutdown_;
       ConnectionFactory &factory_;
+      qrpc_time_t last_active_, start_shutdown_{0};
       std::unique_ptr<IceServer> ice_server_; // ICE
       std::unique_ptr<IceProber> ice_prober_; // ICE(client)
       RTC::DtlsTransport::Role dtls_role_;
@@ -325,12 +322,12 @@ namespace webrtc {
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       std::shared_ptr<SyscallStream> syscall_;
       IdFactory<Stream::Id> stream_id_factory_;
-      AlarmProcessor::Id alarm_id_;
+      AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
       std::string cname_;
       std::map<rtp::Parameters::MediaKind, rtp::Capability> capabilities_;
       rtp::MediaStreamConfigs media_stream_configs_; // stream configs with keeping creation order
-      uint32_t mid_seed_;
-      bool sctp_connected_, closed_;
+      uint32_t mid_seed_{0};
+      bool sctp_connected_{false}, closed_{false};
     };
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
     struct Port {
@@ -518,11 +515,10 @@ namespace webrtc {
     };
   public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.resolver, config.certpair),
-      tcp_clients_(), udp_clients_() {}
+      ConnectionFactory(l, std::move(config), std::move(sf)),http_client_(l, config.resolver, config.certpair) {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.resolver, config.certpair),
-      tcp_clients_(), udp_clients_() {}
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)),
+      http_client_(l, config.resolver, config.certpair) {}
     ~Client() override { Fin(); }
   public:
     std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
@@ -616,10 +612,10 @@ namespace webrtc {
   public:
     Listener(Loop &l, Config &&config, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(sf)),
-      http_listener_(l, http_listener_config()), router_(), tcp_ports_(), udp_ports_() {}
+      http_listener_(l, http_listener_config()) {}
     Listener(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)),
-      http_listener_(l, http_listener_config()), router_(), tcp_ports_(), udp_ports_() {}
+      http_listener_(l, http_listener_config()) {}
     ~Listener() override { Fin(); }
   public:
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }

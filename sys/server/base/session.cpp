@@ -87,10 +87,10 @@ namespace base {
   };
 
   SessionFactory::SessionFactory(SessionFactory &&rhs) :
-    factory_method_(std::move(rhs.factory_method_)),
     loop_(rhs.loop_),
     resolver_(rhs.resolver_),
     alarm_processor_(rhs.alarm_processor_),
+    factory_method_(std::move(rhs.factory_method_)),
     alarm_id_(AlarmProcessor::INVALID_ID),
     certpair_(rhs.certpair_),
     session_timeout_(rhs.session_timeout_),

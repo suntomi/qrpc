@@ -98,6 +98,6 @@ namespace base {
     }
     bool migrated() const override { return ssl_ == nullptr; }
   protected:
-    SSL *ssl_;
+    SSL *ssl_{nullptr};
   };
 }

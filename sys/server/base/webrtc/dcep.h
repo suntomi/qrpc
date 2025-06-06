@@ -56,8 +56,8 @@ namespace webrtc {
   public:
     DcepRequest(
       const Stream::Config &c, uint16_t prio = 256
-    ) : Stream::Config(c), msg_type(DATA_CHANNEL_OPEN), channel_type(ToChannelType(c)), priority(prio) {}
-    DcepRequest() : Stream::Config(), msg_type(DATA_CHANNEL_OPEN), channel_type(DATA_CHANNEL_RELIABLE), priority(256) {}
+    ) : Stream::Config(c), channel_type(ToChannelType(c)), priority(prio) {}
+    DcepRequest() : Stream::Config() {}
     inline const Stream::Config &ToMediaStreamConfig() const { return *this; }
   public:
     static DcepChannelType ToChannelType(const Stream::Config &c) {
@@ -159,9 +159,9 @@ namespace webrtc {
       return sizeof(Header) + label.length() + protocol.length();
     }
   private:
-    DcepMessageType msg_type;
-    DcepChannelType channel_type;
-    uint16_t priority;
+    DcepMessageType msg_type{DATA_CHANNEL_OPEN};
+    DcepChannelType channel_type{DATA_CHANNEL_RELIABLE};
+    uint16_t priority{256};
   };
   class DcepResponse {
   public:

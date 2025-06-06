@@ -32,14 +32,14 @@ namespace base {
     public:
         struct Config {
             Config(Resolver &r, qrpc_time_t st, bool is_listener, const MaybeCertPair p = std::nullopt) :
-              resolver(r), session_timeout(st), is_listener(is_listener), certpair(p) {}
+              resolver(r), certpair(p), session_timeout(st), is_listener(is_listener) {}
             static inline Config Default() { 
                 // default no timeout
                 return Config(NopResolver::Instance(), qrpc_time_sec(0), false);
             }
         public:
             Resolver &resolver;
-						MaybeCertPair certpair;
+			MaybeCertPair certpair;
             qrpc_time_t session_timeout;
             bool is_listener;
         };
@@ -193,7 +193,7 @@ namespace base {
     public:
         SessionFactory(Loop &l, FactoryMethod &&m) :
             loop_(l), resolver_(NopResolver::Instance()), alarm_processor_(l.alarm_processor()),
-            factory_method_(m), certpair_(std::nullopt), session_timeout_(0ULL), is_listener_(false) { Init(); }
+            factory_method_(m), certpair_(std::nullopt) { Init(); }
         SessionFactory(Loop &l, FactoryMethod &&m, Config c) :
             loop_(l), resolver_(c.resolver), alarm_processor_(l.alarm_processor()),
             factory_method_(m), certpair_(c.certpair), session_timeout_(c.session_timeout), 
@@ -255,14 +255,14 @@ namespace base {
         virtual void Close(Session &s) = 0;
         virtual qrpc_time_t CheckTimeout() = 0;
     protected:
-        FactoryMethod factory_method_;
         Loop &loop_;
         Resolver &resolver_;
         AlarmProcessor &alarm_processor_;
+        FactoryMethod factory_method_;
         AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
-				MaybeCertPair certpair_;
-				SSL_CTX *tls_ctx_{nullptr};
-        qrpc_time_t session_timeout_;
-        bool is_listener_;
+        MaybeCertPair certpair_;
+        SSL_CTX *tls_ctx_{nullptr};
+        qrpc_time_t session_timeout_{0ULL};
+        bool is_listener_{false};
     };
   } // namespace base

@@ -105,10 +105,13 @@ namespace logger {
   template<class... Args>
   inline void tracef(
     level lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
-    const std::string &fmt, const Args... args
+    const char *fmt, const Args... args
   ) {
       char buffer[4096];
-      snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-security"      
+      snprintf(buffer, sizeof(buffer), fmt, args...);
+#pragma clang diagnostic pop
       log(lv, file, line, func, trace_id, buffer);
   }
 
@@ -121,10 +124,13 @@ namespace logger {
 
   template<class... Args>
   inline void logf(
-    level lv, const std::string &fmt, const Args... args
+    level lv, const char *fmt, const Args... args
   ) {
       char buffer[4096];
-      snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-security"      
+      snprintf(buffer, sizeof(buffer), fmt, args...);
+#pragma clang diagnostic pop
       log(lv, buffer);
   }
 

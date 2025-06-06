@@ -80,9 +80,9 @@ public:
 class AsyncResolver : public Resolver {
  public:
   struct Config : ares_options {
-    int optmask;
-    qrpc_time_t granularity;
-    ares_addr_port_node *server_list;
+    int optmask{0};
+    qrpc_time_t granularity{qrpc_time_msec(10)};
+    ares_addr_port_node *server_list{nullptr};
     Config();
     ~Config();
     const ares_options *options() const { 
@@ -105,12 +105,12 @@ class AsyncResolver : public Resolver {
   class IoRequest : public IoProcessor {
    private:
     uint32_t current_flags_;
-    bool alive_;
+    bool alive_{true};
     Channel channel_;
-    Fd fd_;
+    Fd fd_{INVALID_FD};
    public:
     IoRequest(Channel channel, Fd fd, uint32_t flags) : 
-      current_flags_(flags), alive_(true), channel_(channel), fd_(fd) {}
+      current_flags_(flags), channel_(channel), fd_(fd) {}
     virtual ~IoRequest() {}
     // implements IoProcessor
     void OnEvent(Fd fd, const Event &e) override;

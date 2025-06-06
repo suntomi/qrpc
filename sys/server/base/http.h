@@ -102,9 +102,9 @@ namespace base {
         }   m_ctx;
         uint32_t m_max, m_len;
         const char *m_buf;
-        char *m_p;
+        char *m_p{nullptr};
     public:
-        HttpFSM() : m_p(nullptr) {}
+        HttpFSM() {}
         ~HttpFSM() { if (m_p != nullptr) { std::free(m_p); } }
         void    move_from(HttpFSM &fsm) {
             m_ctx = fsm.m_ctx;
@@ -233,9 +233,12 @@ namespace base {
     public: 
         // utilities
         template<class... Args>
-        int Error(http_result_code_t rc, const std::string &fmt, const Args... args) {
+        int Error(http_result_code_t rc, const char *fmt, const Args... args) {
             char buffer[1024];
-            size_t len = snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-security"      
+            size_t len = snprintf(buffer, sizeof(buffer), fmt, args...);
+#pragma clang diagnostic pop
             std::string lenstr = std::to_string(len);
             Header h[] = {
                 {.key = "Content-Type", .val = "text/plain"},
@@ -244,19 +247,19 @@ namespace base {
             return Respond(rc, h, 2, buffer, len);
         }
         template<class... Args>
-        int NotFound(const std::string &fmt, const Args... args) {
+        int NotFound(const char *fmt, const Args... args) {
             return Error(HRC_NOT_FOUND, fmt, args...);
         }
         template<class... Args>
-        int BadRequest(const std::string &fmt, const Args... args) {
+        int BadRequest(const char *fmt, const Args... args) {
             return Error(HRC_BAD_REQUEST, fmt, args...);
         }
         template<class... Args>
-        int Unavailable(const std::string &fmt, const Args... args) {
+        int Unavailable(const char *fmt, const Args... args) {
             return Error(HRC_SERVICE_UNAVAILABLE, fmt, args...);
         }
         template<class... Args>
-        int ServerError(const std::string &fmt, const Args... args) {
+        int ServerError(const char *fmt, const Args... args) {
             return Error(HRC_SERVER_ERROR, fmt, args...);
         }
     private:
@@ -502,8 +505,8 @@ namespace base {
             reserved_control_frame4,
         };
     public:
-        uint8_t m_state, m_flen, m_mask_idx, padd;
-        size_t m_sm_body_read;
+        uint8_t m_state{state_init}, m_flen, m_mask_idx, padd;
+        size_t m_sm_body_read{0};
         std::string m_hostname;
         union {
             uint32_t m_key[4];
@@ -519,16 +522,12 @@ namespace base {
     public:
         // create client/server session from begining
         WebSocketSession(TcpSessionFactory &f, Fd fd, const Address &addr, const std::string &hostname) : 
-            TcpSession(f, fd, addr),
-            m_state(state_client_handshake),
-            m_sm_body_read(0), m_hostname(hostname), m_ctrl_frame(), m_sm() {}
+            TcpSession(f, fd, addr), m_state(state_client_handshake), m_hostname(hostname) {}
         WebSocketSession(TcpSessionFactory &f, Fd fd, const Address &addr) : TcpSession(f, fd, addr),
-            m_state(state_server_handshake),
-            m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {}
+            m_state(state_server_handshake) {}
         // for upgrading from http session (as server session)
         WebSocketSession(TcpSessionFactory &f, Fd fd, const Address &addr, HttpFSM &fsm) : TcpSession(f, fd, addr),
-            m_state(state_established),
-            m_sm_body_read(0), m_hostname(""), m_ctrl_frame(), m_sm() {
+            m_state(state_established) {
             m_sm.move_from(fsm);
         }
         ~WebSocketSession() override {}
@@ -1166,7 +1165,7 @@ namespace base {
     public:
         typedef std::function<TcpSession *(HttpSession&, std::cmatch&)> Handler;
         typedef HttpFSM Request;
-        HttpRouter() : route_() {}
+        HttpRouter() {}
         HttpRouter &Route(const std::regex &pattern, const Handler &h) {
             route_.push_back(std::make_pair(pattern, h));
             return *this;

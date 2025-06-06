@@ -29,7 +29,7 @@ namespace base {
     typedef std::function<void (int, const Signal &)> Receiver;
     // TODO: make it singleton
     // fd_ should be -1 so that signalfd(fd, ...) will create fd for first call of Register()
-    SignalHandler() : fd_(-1), receivers_() {
+    SignalHandler() {
       for (int i = 0; i < SIGRTMAX; i++) { receivers_[i] = Nop(); }
       sigemptyset(&mask_);
     }
@@ -67,7 +67,7 @@ namespace base {
       void operator() (int, const Signal &) {} 
     };
   protected:
-    Fd fd_;
+    Fd fd_{-1};
     Receiver receivers_[SIGRTMAX];
     sigset_t mask_; 
   };

@@ -180,7 +180,7 @@ namespace rtp {
     typedef Listener::onSendCallback onSendCallback;
   public:
     Handler(Listener &l) : RTC::Transport(&shared(), l.rtp_id(), &router(), TransportOptions(l.GetRtpConfig())),
-      listener_(l), producer_factory_(*this), consumer_factory_(*this), medias_(), mid_media_path_map_() {}
+      listener_(l), producer_factory_(*this), consumer_factory_(*this) {}
     ~Handler() override { RTC::Transport::CloseProducersAndConsumers(); }
     inline Listener &listener() { return listener_; }
     inline const std::string &rtp_id() const { return listener_.rtp_id(); }
