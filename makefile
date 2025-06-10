@@ -19,5 +19,7 @@ setup:
 build: setup all
 
 clean:
-	make -C $(CURDIR)/sys/server/ext clean
 	bazel clean --expunge
+
+cleanup: clean
+	make -C $(CURDIR)/sys/server/ext clean

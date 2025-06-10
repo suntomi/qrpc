@@ -3,6 +3,7 @@
 #include "base/assert.h"
 #include <nlohmann/json.hpp>
 #include "base/timespec.h"
+#include "base/diagnostic_macros.h"
 #include <stdlib.h>
 
 namespace base {
@@ -108,10 +109,9 @@ namespace logger {
     const char *fmt, const Args... args
   ) {
       char buffer[4096];
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat-security"      
+      DISABLE_FORMAT_SECURITY_WARNING_PUSH
       snprintf(buffer, sizeof(buffer), fmt, args...);
-#pragma clang diagnostic pop
+      DISABLE_FORMAT_SECURITY_WARNING_POP
       log(lv, file, line, func, trace_id, buffer);
   }
 
@@ -127,10 +127,9 @@ namespace logger {
     level lv, const char *fmt, const Args... args
   ) {
       char buffer[4096];
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat-security"      
+      DISABLE_FORMAT_SECURITY_WARNING_PUSH
       snprintf(buffer, sizeof(buffer), fmt, args...);
-#pragma clang diagnostic pop
+      DISABLE_FORMAT_SECURITY_WARNING_POP
       log(lv, buffer);
   }
 

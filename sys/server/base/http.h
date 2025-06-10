@@ -9,6 +9,7 @@
 #include "base/session.h"
 #include "base/string.h"
 #include "base/crypto.h"
+#include "base/diagnostic_macros.h"
 
 namespace base {
     /****** HTTP status codes *******/
@@ -235,10 +236,9 @@ namespace base {
         template<class... Args>
         int Error(http_result_code_t rc, const char *fmt, const Args... args) {
             char buffer[1024];
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat-security"      
+            DISABLE_FORMAT_SECURITY_WARNING_PUSH
             size_t len = snprintf(buffer, sizeof(buffer), fmt, args...);
-#pragma clang diagnostic pop
+            DISABLE_FORMAT_SECURITY_WARNING_POP
             std::string lenstr = std::to_string(len);
             Header h[] = {
                 {.key = "Content-Type", .val = "text/plain"},
