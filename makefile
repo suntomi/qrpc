@@ -15,7 +15,7 @@ else
 endif
 
 all:
-	bazel build :server :client $(BUILD_OPT) --cpu=darwin_arm64 --features=oso_prefix_is_pwd
+	bazel build :server :client $(BUILD_OPT) --cpu=darwin_arm64 --features=oso_prefix_is_pwd --symlink_prefix=.build/bazel-
 
 setup:
 	make -C $(CURDIR)/sys/server/ext setup MODE=$(MODE) SAN=$(SAN)
