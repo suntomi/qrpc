@@ -13,13 +13,13 @@ endif
 all:
 	bazel build :server :client $(CONFIG)
 
-setup:
+ext:
 	make -C $(CURDIR)/sys/server/ext setup MODE=$(MODE) SAN=$(SAN)
 
-build: setup all
+all: ext core
 
 clean:
 	bazel clean --expunge
 
-cleanup: clean
+erase: clean
 	make -C $(CURDIR)/sys/server/ext clean
