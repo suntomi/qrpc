@@ -3,7 +3,7 @@
 #include "base/assert.h"
 #include <nlohmann/json.hpp>
 #include "base/timespec.h"
-#include "base/diagnostic_macros.h"
+#include "base/macros.h"
 #include <stdlib.h>
 
 namespace base {

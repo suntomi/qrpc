@@ -9,7 +9,6 @@
 #include "base/session.h"
 #include "base/string.h"
 #include "base/crypto.h"
-#include "base/diagnostic_macros.h"
 
 namespace base {
     /****** HTTP status codes *******/
