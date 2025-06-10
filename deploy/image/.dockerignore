@@ -1,0 +1,38 @@
+# Docker除外設定
+.git
+.gitignore
+.gitmodules
+docs/
+*.md
+.build/
+
+# Bazel関連
+bazel-*
+.bazel
+
+# VS Code設定
+.vscode/
+
+# macOS関連
+.DS_Store
+**/.DS_Store
+
+# 開発用ファイル
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+
+# Node.js関連（TypeScriptクライアント用）
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# C++関連
+*.o
+*.so
+*.a
+*.dylib
+*.dSYM/
