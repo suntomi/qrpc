@@ -16,7 +16,7 @@ all:
 ext:
 	make -C $(CURDIR)/sys/server/ext setup MODE=$(MODE) SAN=$(SAN)
 
-all: ext core
+all: ext sys
 
 clean:
 	bazel clean --expunge

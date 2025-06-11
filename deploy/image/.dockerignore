@@ -5,6 +5,8 @@
 docs/
 *.md
 .build/
+**/pip_invoke
+**/pip_meson_ninja
 
 # Bazel関連
 bazel-*

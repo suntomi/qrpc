@@ -3,6 +3,7 @@
 ## general instruction
 - use qrpc for project name, do not follow folder name.
 - use english for writing comment on source code, even if instruction is provided by japanese. but chat language should match with instruction one
+- do not try to invoke another command if long running command still does not finish. 
 
 ## File Structure
 - `sys/server/qrpc.h` - definition of C interface

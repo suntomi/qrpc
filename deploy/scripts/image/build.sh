@@ -11,12 +11,12 @@ fi
 
 # スクリプトのディレクトリを取得
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 # 設定
 IMAGE_NAME="qrpc/${svc}-server"
-IMAGE_TAG="${1:-latest}"
-DOCKER_FILE="${PROJECT_ROOT}/deploy/${svc}/Dockerfile"
+IMAGE_TAG="${2:-latest}"
+DOCKER_FILE="${PROJECT_ROOT}/deploy/image/${svc}/Dockerfile"
 
 echo "🔨 Building QRPC3 E2E Server Docker image..."
 echo "  Project root: ${PROJECT_ROOT}"
@@ -26,8 +26,10 @@ echo "  Dockerfile: ${DOCKER_FILE}"
 cd "${PROJECT_ROOT}"
 
 # マルチステージビルドの実行
-echo "📦 Building with multi-stage Docker build..."
+echo "📦 Building with multi-stage Docker build... $(docker context show)"
 docker build \
+  --platform linux/amd64 \
+  --progress plain \
   -f "${DOCKER_FILE}" \
   -t "${IMAGE_NAME}:${IMAGE_TAG}" \
   --target runtime \
@@ -36,6 +38,7 @@ docker build \
 # 開発用にビルダーイメージも保存（オプション）
 echo "📦 Building builder image for development..."
 docker build \
+  --platform linux/amd64 \
   -f "${DOCKER_FILE}" \
   -t "${IMAGE_NAME}-builder:${IMAGE_TAG}" \
   --target builder \
