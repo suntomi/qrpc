@@ -8,7 +8,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # 設定
 IMAGE_NAME="qrpc/e2e-server"
 IMAGE_TAG="${1:-latest}"
-DOCKER_FILE="${PROJECT_ROOT}/deploy/docker/Dockerfile"
+DOCKER_FILE="${PROJECT_ROOT}/deploy/image/e2e/Dockerfile"
 
 echo "🔨 Building QRPC3 E2E Server Docker image..."
 echo "  Project root: ${PROJECT_ROOT}"
@@ -18,16 +18,20 @@ echo "  Dockerfile: ${DOCKER_FILE}"
 cd "${PROJECT_ROOT}"
 
 # マルチステージビルドの実行
-echo "📦 Building with multi-stage Docker build..."
-docker build \
-  -f "${DOCKER_FILE}" \
-  -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-  --target runtime \
-  .
+# echo "📦 Building with multi-stage Docker build..."
+# docker build \
+#   --progress plain \
+#   --platform linux/arm64 \
+#   -f "${DOCKER_FILE}" \
+#   -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+#   --target runtime \
+#  .
 
 # 開発用にビルダーイメージも保存（オプション）
 echo "📦 Building builder image for development..."
 docker build \
+  --progress plain \
+  --platform linux/arm64 \
   -f "${DOCKER_FILE}" \
   -t "${IMAGE_NAME}-builder:${IMAGE_TAG}" \
   --target builder \

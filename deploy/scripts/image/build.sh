@@ -28,7 +28,7 @@ cd "${PROJECT_ROOT}"
 # マルチステージビルドの実行
 echo "📦 Building with multi-stage Docker build... $(docker context show)"
 docker build \
-  --platform linux/amd64 \
+  --platform linux/arm64 \
   --progress plain \
   -f "${DOCKER_FILE}" \
   -t "${IMAGE_NAME}:${IMAGE_TAG}" \
@@ -38,7 +38,7 @@ docker build \
 # 開発用にビルダーイメージも保存（オプション）
 echo "📦 Building builder image for development..."
 docker build \
-  --platform linux/amd64 \
+  --platform linux/arm64 \
   -f "${DOCKER_FILE}" \
   -t "${IMAGE_NAME}-builder:${IMAGE_TAG}" \
   --target builder \

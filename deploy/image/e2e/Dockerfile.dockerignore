@@ -1,25 +1,31 @@
-# Docker除外設定
+# git
 .git
 .gitignore
 .gitmodules
+
+# docs
 docs/
 *.md
-.build/
-**/pip_invoke
-**/pip_meson_ninja
 
-# Bazel関連
+# mediasoup
+**/pip_invoke
+**/out
+**/generated_config/
+**/packagecache/
+**/benchmarks/
+
+# Bazel
 bazel-*
 .bazel
 
-# VS Code設定
+# VS Code
 .vscode/
 
-# macOS関連
+# macOS
 .DS_Store
 **/.DS_Store
 
-# 開発用ファイル
+# development
 *.log
 *.tmp
 *.swp
