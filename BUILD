@@ -15,6 +15,30 @@ config_setting(
     visibility = ["//visibility:public"],
 )
 
+platform(
+    name = "platform_linux_arm64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+platform(
+    name = "platform_linux_amd64", 
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+platform(
+    name = "platform_darwin_arm64", 
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:darwin_arm64",
+    ],
+)
+
 # this cannot work on OSX because wrapped version of libtool 
 # in bazel sandbox does not support --version option, which is necessary for meson.
 # I had to build mediasoup separately in makefile and use it as cc_import.
