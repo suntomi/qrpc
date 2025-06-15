@@ -52,6 +52,19 @@ E2E test scripts are located in `sys/tests/e2e/`:
 ./sys/tests/e2e/rest.sh
 ```
 
+## Debugging
+
+For debugging with lldb, the project is configured to include debug symbols. Build with:
+
+```bash
+# Debug build without sanitizer (recommended for debugging)
+make build MODE=debug SAN=
+
+# The build includes --features=oso_prefix=.build and debug configuration
+# This ensures file names and line numbers appear in lldb stack traces
+# Note: The oso_prefix must match the symlink_prefix directory (.build)
+```
+
 ## Code Architecture
 
 ### Directory Structure

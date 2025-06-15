@@ -1,0 +1,6 @@
+# Debug configuration for lldb
+build:debug --compilation_mode=dbg
+build:debug --strip=never
+build:debug --features=oso_prefix=.build
+build:debug --spawn_strategy=local
+build:debug --genrule_strategy=local
