@@ -12,7 +12,7 @@ QRPC is a high-performance RPC framework with real-time media capabilities, prim
 The project uses Bazel wrapped by Make commands:
 
 ```bash
-# Complete build (debug mode with address sanitizer)
+# Complete build (debug mode with address sanitizer - default)
 make build
 
 # Release build
@@ -21,14 +21,20 @@ make build MODE=release
 # Debug build with thread sanitizer
 make build MODE=debug SAN=thread
 
+# Debug build without sanitizer (not recommended)
+make build MODE=debug SAN=
+
 # Clean build artifacts
 make clean
 ```
 
 ### Direct Bazel Commands
 ```bash
-# Build server and client
-bazel build :server :client --compilation_mode=dbg --cpu=darwin_arm64
+# Debug build with address sanitizer
+bazel build :server :client --config=debug --define=SAN=address
+
+# Release build
+bazel build :server :client --config=release
 
 # Clean
 bazel clean --expunge
@@ -58,12 +64,10 @@ For debugging with lldb, the project is configured to include debug symbols. Bui
 
 ```bash
 # Debug build without sanitizer (recommended for debugging)
-make build MODE=debug SAN=
-
-# The build includes --features=oso_prefix=.build and debug configuration
-# This ensures file names and line numbers appear in lldb stack traces
-# Note: The oso_prefix must match the symlink_prefix directory (.build)
+make build MODE=debug SAN=address
 ```
+
+Always try to use address sanitizer even if you directly use bazel command to build for debugging
 
 ## Code Architecture
 
