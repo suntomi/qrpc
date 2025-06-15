@@ -44,9 +44,9 @@ class Server {
   qrpc_time_t timer_intv_;
 
  public:
-	Server(uint32_t n_worker, qrpc_time_t timer_intv) : 
+	Server(uint32_t n_worker) : 
     status_(RUNNING), n_worker_(n_worker), worker_queue_(nullptr), 
-    stream_index_factory_(0x7FFFFFFF), timer_intv_(timer_intv) {}
+    stream_index_factory_(0x7FFFFFFF) {}
   ~Server() {}
   HandlerMap *Open(const qrpc_addr_t &addr, const qrpc_svconf_t &conf) {
     if (port_configs_.find(addr.port) != port_configs_.end()) {
@@ -75,20 +75,18 @@ class Server {
 				return r;
 			}
 		}
-    if (block) {
+    auto shutdown_block = [this]() {
       std::unique_lock<std::mutex> lock(mutex_);
       cond_.wait(lock, [this]() { return !alive(); });
       //TRACE("exit wait: mutex_ should locked");
       ASSERT(lock.owns_lock() && !alive());
-      Stop();
       //TRACE("exit thread: mutex_ should unlocked");
+      Stop();
+    };
+    if (block) {
+      shutdown_block();
     } else {
-      shutdown_thread_ = std::thread([this]() {
-        std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this]() { return !alive(); });
-        ASSERT(lock.owns_lock() && !alive());
-        Stop();
-      });
+      shutdown_thread_ = std::thread(shutdown_block);
     }
 		return QRPC_OK;
 	}
@@ -121,7 +119,6 @@ class Server {
   inline std::unordered_map<int, PortConfig> &port_configs() { return port_configs_; }
   inline qrpc_server_t ToHandle() { return (qrpc_server_t)this; }
   inline IdFactory<uint32_t> &stream_index_factory() { return stream_index_factory_; }
-  inline qrpc_time_t timer_interval() const { return timer_intv_; }
   static inline Server *FromHandle(qrpc_server_t sv) { return (Server *)sv; }
 
  protected:

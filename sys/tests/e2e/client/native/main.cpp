@@ -646,7 +646,7 @@ a=max-message-size:262144
 )sdp";
     auto s = base::webrtc::SDP(ffsdp);
     QRPC_LOGJ(info, s);
-    ASSERT(false);
+    // ASSERT(false);
     return true;
 }
 

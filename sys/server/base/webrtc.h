@@ -344,7 +344,6 @@ namespace webrtc {
     };
     struct Config {
       std::string ip;
-      std::vector<Port> ports;
       rtp::Handler::Config rtp;
       size_t max_outgoing_stream_size, initial_incoming_stream_size;
       size_t send_buffer_size, udp_batch_size;
@@ -388,16 +387,13 @@ namespace webrtc {
     const TcpListener::Config http_listener_config() const {
       return TcpListener::Config(config_.resolver, config_.http_timeout, config_.certpair);
     }
-    const std::string primary_proto() const {
-      return config_.ports[0].protocol == Port::Protocol::UDP ? "UDP" : "TCP";
-    }
   public:
     virtual bool is_client() const = 0;
-    virtual int Setup() = 0;
+    virtual int Setup(const std::vector<Port> &ports) = 0;
   public:
     int Init();
     void Fin();
-    int Start();
+    int Start(const std::vector<Port> &ports);
     std::shared_ptr<rtp::Handler> FindHandler(const std::string &cname);
     std::shared_ptr<Connection> FindFromUfrag(const IceUFrag &ufrag);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
@@ -487,6 +483,7 @@ namespace webrtc {
     struct Endpoint {
       std::string host, path;
       int port;
+      Port::Protocol protocol;
     };
   public:
     class TcpClient : public base::TcpClient {
@@ -530,15 +527,21 @@ namespace webrtc {
   public:
     std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
   public:
-    bool Connect(const std::string &host, int port, const std::string &path = "/qrpc");
+    bool Connect(
+      const std::string &host, int port,
+      const std::string &path = "/qrpc", Port::Protocol proto = Port::Protocol::UDP
+    );
     void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
     void Fin();
     // implement ConnectionFactory
     virtual bool is_client() const override { return true; }
-    virtual int Setup() override;
+    virtual int Setup(const std::vector<Port> &ports) override;
   public:
     int Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag);
-    bool Open(const std::vector<Candidate> &candidate, size_t idx, std::shared_ptr<Connection> &c);
+    bool Open(
+      const Endpoint &ep, const std::vector<Candidate> &candidate, 
+      size_t idx, std::shared_ptr<Connection> &c
+    );
   protected:
     HttpClient http_client_;
     std::map<IceUFrag, Endpoint> endpoints_;
@@ -632,7 +635,7 @@ namespace webrtc {
     HttpRouter &RestRouter() { return router_; }
     // implement ConnectionFactory
     virtual bool is_client() const override { return false; }
-    virtual int Setup() override;
+    virtual int Setup(const std::vector<Port> &ports) override;
   protected:
     HttpListener http_listener_;
     HttpRouter router_;

@@ -18,6 +18,7 @@ namespace webrtc {
   // for SDP example, see example/client/main.cpp test_sdp()
   class SDP : public json {
   public:
+    typedef ConnectionFactory::Port::Protocol TransportProtocol;
     struct MediaContext {
       std::map<rtp::Parameters::MediaKind, rtp::MediaStreamConfig::ControlOptions> options_map;
       std::map<std::string, rtp::Producer*> created_producers;
@@ -32,7 +33,8 @@ namespace webrtc {
       ConnectionFactory::Connection &c, std::string &answer,
       MediaContext *context = nullptr) const;
     static int Offer(const ConnectionFactory::Connection &c,
-      const std::string &ufrag, const std::string &pwd, std::string &offer);
+      const std::string &ufrag, const std::string &pwd, TransportProtocol proto,
+      std::string &offer);
   public:
     std::vector<Candidate> Candidates() const;
     bool FindMediaSection(const std::string &type, json &j) const;

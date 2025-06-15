@@ -10,110 +10,126 @@
 #include "nlohmann/json.hpp"
 using json = nlohmann::json;
 
-// #if defined(QAPI_THREADSAFE)
-// #undef QAPI_THREADSAFE
-// #define QAPI_THREADSAFE
-// #endif
+#include "qrpc/base.h"
+#include "qrpc/serial.h"
 
-// #if defined(QAPI_BOOTSTRAP)
-// #undef QAPI_BOOTSTRAP
-// #define QAPI_BOOTSTRAP
-// #endif
+#if defined(QRPC_THREADSAFE)
+#undef QRPC_THREADSAFE
+#define QRPC_THREADSAFE
+#endif
 
-// using namespace nq;
+#if defined(QRPC_BOOTSTRAP)
+#undef QRPC_BOOTSTRAP
+#define QRPC_BOOTSTRAP
+#endif
 
-
-
-// // --------------------------
-// //
-// // chaos modes
-// //
-// // --------------------------
-// #if defined(DEBUG)
-// static bool g_chaos_write = false;
-// extern bool chaos_write() {
-//   return g_chaos_write;
-// }
-// void chaos_init() {
-//   g_chaos_write = getenv("CHAOS") != nullptr;
-// }
-// #else
-// #define chaos_init()
-// #endif
+using namespace qrpc;
 
 
 
-// // --------------------------
-// //
-// // helper
-// //
-// // --------------------------
-// enum InvalidHandleReason {
-//   IHR_CONN_CREATE_FAIL = 1,
-//   IHR_INVALID_CONN = 2,
-//   IHR_CONN_NOT_FOUND = 3,
-//   IHR_INVALID_STREAM = 4,
-// };
-// template <class H> 
-// H INVALID_HANDLE(InvalidHandleReason ihr) {
-//   H h;
-//   h.p = reinterpret_cast<void *>(ihr);
-//   Serial::Clear(h.s);
-//   return h;
-// }
-// template <class H>
-// const char *INVALID_REASON(const H &h) {
-//   switch (reinterpret_cast<uintptr_t>(h.p)) {
-//     case IHR_CONN_CREATE_FAIL:
-//       return "conn create fail";
-//     case IHR_INVALID_CONN:
-//       return "invalid conn";
-//     case IHR_CONN_NOT_FOUND:
-//       return "conn not found";
-//     case IHR_INVALID_STREAM:    
-//       return "invalid stream";
-//     default:
-//       if (Serial::IsEmpty(h.s)) {
-//         return "deallocated handle";
-//       } else {
-//         return "outdated handle";
-//       }
-//   }
-// }
+// --------------------------
+//
+// chaos modes
+//
+// --------------------------
+#if defined(DEBUG)
+static bool g_chaos_write = false;
+extern bool chaos_write() {
+  return g_chaos_write;
+}
+void chaos_init() {
+  g_chaos_write = getenv("CHAOS") != nullptr;
+}
+#else
+#define chaos_init()
+#endif
 
-// static inline SessionDelegate *ToConn(qrpc_conn_t c) { 
-//   return reinterpret_cast<NqSessionDelegate *>(c.p); 
-// }
-// static inline Stream *ToStream(qrpc_rpc_t c) { 
-//   return reinterpret_cast<NqStream *>(c.p); 
-// }
-// static inline Stream *ToStream(qrpc_stream_t c) { 
-//   return reinterpret_cast<NqStream *>(c.p); 
-// }
-// static inline Alarm *ToAlarm(qrpc_alarm_t a) { 
-//   return reinterpret_cast<NqAlarm *>(a.p); 
-// }
-// static inline bool IsOutgoing(bool is_client, qrpc_sid_t stream_id) {
-//   return is_client ? ((stream_id % 2) != 0) : ((stream_id % 2) == 0);
-// }
-// static inline qrpc_transport_config_t DefaultTransportConfig() {
-//   return {
-//     //application protocols
-//     .alpn = nullptr,
-//     //enable early data in handshake
-//     .enable_earty_data = false,
-//     //udp payload size in bytes
-//     .udp_payload_size = 0,
-//     //initial max data size in bytes.
-//     .initial_max_data = 0, .initial_max_data_bidi_local = 0, .initial_max_data_bidi_remote = 0,
-//     //initial stream count
-//     .initial_max_stream_bidi = 0,
-//     //total handshake time limit / no input limit / shutdown wait. default 1000ms/5000ms/5sec
-//     .handshake_timeout = 0ULL, .idle_timeout = 0ULL,
-//     //length of source connection id in bytes
-//     .source_connection_id_length = 8
-//   };
-// }
+
+
+// --------------------------
+//
+// helper
+//
+// --------------------------
+enum InvalidHandleReason {
+  IHR_CREATE_FAIL = 1,
+  IHR_SERIAL_NOT_MATCH = 2,
+  IHR_NOT_FOUND = 3,
+};
+template <class H> 
+H INVALID_HANDLE(InvalidHandleReason ihr) {
+  H h;
+  h.p = reinterpret_cast<void *>(ihr);
+  Serial::Clear(h.s);
+  return h;
+}
+template <class H>
+const char *INVALID_REASON(const H &h) {
+  switch (reinterpret_cast<uintptr_t>(h.p)) {
+    case IHR_CREATE_FAIL:
+      return "create fail";
+    case IHR_SERIAL_NOT_MATCH:
+      return "serial not match";
+    case IHR_NOT_FOUND:
+      return "not found";
+    default:
+      if (Serial::IsEmpty(h.s)) {
+        return "deallocated handle";
+      } else {
+        return "outdated handle";
+      }
+  }
+}
+static inline bool IsOutgoing(bool is_client, qrpc_sid_t stream_id) {
+  return is_client ? ((stream_id % 2) != 0) : ((stream_id % 2) == 0);
+}
+static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_wire_proto_t p) {
+  switch (p) {
+  case QRPC_WIRE_PROTO_WEBTRANSPORT:
+    return {
+      .proto = p,
+      .webtx = {
+        //application protocols
+        .alpn = nullptr,
+        //enable early data in handshake
+        .enable_earty_data = false,
+        //udp payload size in bytes
+        .udp_payload_size = 0,
+        //initial max data size in bytes.
+        .initial_max_data = 0, .initial_max_data_bidi_local = 0, .initial_max_data_bidi_remote = 0,
+        //initial stream count
+        .initial_max_stream_bidi = 0,
+        //total handshake time limit / no input limit / shutdown wait. default 1000ms/5000ms/5sec
+        .handshake_timeout = 0ULL, .idle_timeout = 0ULL,
+        //length of source connection id in bytes
+        .source_connection_id_length = 8
+      }
+    };
+  case QRPC_WIRE_PROTO_WEBRTC:
+    return {
+      .proto = p,
+      .webrtc = {
+        // max outgoing stream of SCTP
+        .max_outgoing_stream_size = 32,
+        // initial incoming stream of SCTP
+        .initial_incoming_stream_size = 32,
+        // send buffer size of underlying session (TCP/UDP)
+        .send_buffer_size = 256 * 1024,
+        // timeout of underlying session
+        .session_timeout = qrpc_time_sec(15),
+        // webrtc's SCTP session timeout
+        .connection_timeout = qrpc_time_sec(60),
+        // fingerprint algorithm of DTLS
+        // any of "sha-1", "sha-224", "sha-256", "sha-384", "sha-512"
+        .fingerprint_algorithm = "sha-256",
+        // WHIP signaling server path
+        .whip_path = "qrpc",
+      }
+    };
+  default:
+    logger::die({{"ev","invalid wire proto"},{"proto",p}});
+  }
+}
 
 // static void lib_init(bool client) {
 //   //break some of the systems according to the env value "CHAOS"
@@ -142,7 +158,7 @@ using json = nlohmann::json;
 // // misc API
 // //
 // // --------------------------
-// QAPI_THREADSAFE const char *nq_error_detail_code2str(qrpc_error_t code, int detail_code) {
+// QRPC_THREADSAFE const char *nq_error_detail_code2str(qrpc_error_t code, int detail_code) {
 //   if (code == QRPC_EQUIC) {
 //     return QuicStrError(code);
 //   } else if (code == QRPC_ERESOLVE) {
@@ -161,7 +177,7 @@ using json = nlohmann::json;
 // // client API
 // //
 // // --------------------------
-// QAPI_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
+// QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
 //   qrpc_clconf_t conf = {
 //     //protocol type/version
 //     .protocol = QRPC_WIRE_PROTO_QUIC_NEGOTIATE,
@@ -178,7 +194,7 @@ using json = nlohmann::json;
 //   qrpc_closure_init_noop(conf.on_finalize, qrpc_on_client_conn_finalize_t);
 //   return conf;
 // }
-// QAPI_THREADSAFE qrpc_client_t qrpc_client_create(int max_nfd, int max_stream_hint, const qrpc_dns_conf_t *dns_conf) {
+// QRPC_THREADSAFE qrpc_client_t qrpc_client_create(int max_nfd, int max_stream_hint, const qrpc_dns_conf_t *dns_conf) {
 //   lib_init(true); //anchor
 //   auto l = new ClientLoop(max_nfd, max_stream_hint);
 //   if (l->Open(max_nfd, dns_conf) < 0) {
@@ -186,29 +202,29 @@ using json = nlohmann::json;
 //   }
 //   return l->ToHandle();
 // }
-// QAPI_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
+// QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
 //   auto c = ClientLoop::FromHandle(cl);
 //   c->Close();
 //   delete c;
 // }
-// QAPI_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl) {
+// QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl) {
 //   ClientLoop::FromHandle(cl)->Poll();
 // }
-// QAPI_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_addr_t *addr, const qrpc_clconf_t *conf) {
+// QRPC_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_addr_t *addr, const qrpc_clconf_t *conf) {
 //   auto loop = ClientLoop::FromHandle(cl);
 //   //we are not smart aleck and wanna use ipv4 if possible 
 //   return loop->Resolve(AF_INET, addr->host, addr->port, conf);
 // }
-// QAPI_BOOTSTRAP qrpc_hdmap_t qrpc_client_hdmap(qrpc_client_t cl) {
+// QRPC_BOOTSTRAP qrpc_hdmap_t qrpc_client_hdmap(qrpc_client_t cl) {
 //   return ClientLoop::FromHandle(cl)->mutable_handler_map()->ToHandle();
 // }
-// QAPI_BOOTSTRAP void qrpc_client_set_thread(qrpc_client_t cl) {
+// QRPC_BOOTSTRAP void qrpc_client_set_thread(qrpc_client_t cl) {
 //   ClientLoop::FromHandle(cl)->set_main_thread();
 // }
-// QAPI_BOOTSTRAP bool qrpc_client_resolve_host(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb) {
+// QRPC_BOOTSTRAP bool qrpc_client_resolve_host(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb) {
 //   return ClientLoop::FromHandle(cl)->Resolve(family_pref, hostname, cb);
 // }
-// QAPI_THREADSAFE const char *nq_ntop(const char *src, qrpc_size_t srclen, char *dst, qrpc_size_t dstlen) {
+// QRPC_THREADSAFE const char *nq_ntop(const char *src, qrpc_size_t srclen, char *dst, qrpc_size_t dstlen) {
 //   if (AsyncResolver::NtoP(src, srclen, dst, dstlen) < 0) {
 //     return nullptr;
 //   } else {
@@ -224,7 +240,7 @@ using json = nlohmann::json;
 // // server API
 // //
 // // --------------------------
-// QAPI_THREADSAFE qrpc_svconf_t qrpc_server_conf() {
+// QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf() {
 //   qrpc_svconf_t conf = {
 //     //cert cache size. default 16 and how meny sessions accepted per loop. default 1024
 //     .quic_cert_cache_size = 0, .accept_per_loop = 0,
@@ -242,7 +258,7 @@ using json = nlohmann::json;
 //   qrpc_closure_init_noop(conf.on_close, qrpc_on_server_conn_close_t);
 //   return conf;
 // }
-// QAPI_THREADSAFE qrpc_server_t qrpc_server_create(int n_worker) {
+// QRPC_THREADSAFE qrpc_server_t qrpc_server_create(int n_worker) {
 //   lib_init(false); //anchor
 //   auto sv = new Server(n_worker);
 //   return sv->ToHandle();
@@ -251,11 +267,11 @@ using json = nlohmann::json;
 //   auto psv = Server::FromHandle(sv);
 //   return psv->Open(addr, conf)->ToHandle();
 // }
-// QAPI_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block) {
+// QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block) {
 //   auto psv = Server::FromHandle(sv);
 //   psv->Start(block);
 // }
-// QAPI_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv) {
+// QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv) {
 //   auto psv = Server::FromHandle(sv);
 //   psv->Join();
 //   delete psv;
@@ -268,16 +284,16 @@ using json = nlohmann::json;
 // // hdmap API
 // //
 // // --------------------------
-// QAPI_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *name, qrpc_stream_handler_t handler) {
+// QRPC_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *name, qrpc_stream_handler_t handler) {
 //   return HandlerMap::FromHandle(h)->AddEntry(name, handler);
 // }
-// QAPI_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *name, qrpc_rpc_handler_t handler) {
+// QRPC_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *name, qrpc_rpc_handler_t handler) {
 //   return HandlerMap::FromHandle(h)->AddEntry(name, handler);
 // }
-// QAPI_BOOTSTRAP bool qrpc_hdmap_stream_factory(qrpc_hdmap_t h, const char *name, qrpc_stream_factory_t factory) {
+// QRPC_BOOTSTRAP bool qrpc_hdmap_stream_factory(qrpc_hdmap_t h, const char *name, qrpc_stream_factory_t factory) {
 //   return HandlerMap::FromHandle(h)->AddEntry(name, factory);
 // }
-// QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t handler) {
+// QRPC_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t handler) {
 //   HandlerMap::FromHandle(h)->SetRawHandler(handler);
 // }
 
@@ -287,22 +303,22 @@ using json = nlohmann::json;
 // // conn API
 // //
 // // --------------------------
-// QAPI_THREADSAFE bool qrpc_conn_app_proto(qrpc_conn_t conn, const uint8_t **pp_proto, qrpc_size_t *p_proto_len) {
+// QRPC_THREADSAFE bool qrpc_conn_app_proto(qrpc_conn_t conn, const uint8_t **pp_proto, qrpc_size_t *p_proto_len) {
 //   return SessionDelegate::FromHandle(conn)->GetAppProto(pp_proto, p_proto_len);
 // }
-// QAPI_THREADSAFE void qrpc_conn_close_ex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len) {
+// QRPC_THREADSAFE void qrpc_conn_close_ex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len) {
 //   Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Disconnect, code, detail, detail_len);
 // }
-// QAPI_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn) {
+// QRPC_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn) {
 //   Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Reconnect);
 // } 
-// QAPI_THREADSAFE void qrpc_conn_flush(qrpc_conn_t conn) {
+// QRPC_THREADSAFE void qrpc_conn_flush(qrpc_conn_t conn) {
 //   Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Flush);
 // } 
-// QAPI_THREADSAFE bool qrpc_conn_is_client(qrpc_conn_t conn) {
+// QRPC_THREADSAFE bool qrpc_conn_is_client(qrpc_conn_t conn) {
 //   return Serial::IsClient(conn.s);
 // }
-// QAPI_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_t cb) {
+// QRPC_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_t cb) {
 //   SessionDelegate *d;
 //   UNWRAP_CONN(conn, d, {
 //     no_ret_closure_call_with_check(cb, conn, nullptr);
@@ -311,7 +327,7 @@ using json = nlohmann::json;
 //   no_ret_closure_call_with_check(cb, conn, INVALID_REASON(conn));
 //   return false;
 // }
-// QAPI_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modify_hdmap_t modifier) {
+// QRPC_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modify_hdmap_t modifier) {
 //   SessionDelegate *d;
 //   Boxer *b;
 //   UNWRAP_CONN_OR_ENQUEUE(conn, d, b, {
@@ -321,14 +337,14 @@ using json = nlohmann::json;
 //     b->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::ModifyHandlerMap, qrpc_to_dyn_closure(modifier));
 //   }, "nq_conn_modify_hdmap");
 // }
-// QAPI_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn) {
+// QRPC_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn) {
 //   SessionDelegate *d;
 //   UNWRAP_CONN(conn, d, {
 //     return qrpc_time_usec(d->ReconnectDurationUS());
 //   }, "nq_conn_reconnect_wait");
 //   return 0;
 // }
-// QAPI_CLOSURECALL void *nq_conn_ctx(qrpc_conn_t conn) {
+// QRPC_CLOSURECALL void *nq_conn_ctx(qrpc_conn_t conn) {
 //   SessionDelegate *d;
 //   UNSAFE_UNWRAP_CONN(conn, d, {
 //     return d->Context();
@@ -337,17 +353,17 @@ using json = nlohmann::json;
 // }
 // //these are hidden API for test, because returned value is unstable
 // //when used with client connection (under reconnection)
-// QAPI_THREADSAFE qrpc_cid_t qrpc_conn_id(qrpc_conn_t conn) {
+// QRPC_THREADSAFE qrpc_cid_t qrpc_conn_id(qrpc_conn_t conn) {
 //   SessionDelegate *d;
 //   UNWRAP_CONN(conn, d, {
 //     return d->ConnectionId();
 //   }, "nq_conn_id");
 //   return 0;
 // }
-// QAPI_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reachability_t state) {
+// QRPC_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reachability_t state) {
 //   Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Reachability, state);
 // }
-// QAPI_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn) {
+// QRPC_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn) {
 //   SessionDelegate *d;
 //   UNWRAP_CONN(conn, d, {
 //     return d->UnderlyingFd();
@@ -370,21 +386,21 @@ using json = nlohmann::json;
 // }
 
 
-// QAPI_CLOSURECALL void qrpc_conn_stream(qrpc_conn_t conn, const char *name, void *ctx) {
+// QRPC_CLOSURECALL void qrpc_conn_stream(qrpc_conn_t conn, const char *name, void *ctx) {
 //   conn_stream_common(conn, name, ctx, "nq_conn_stream");
 // }
-// QAPI_THREADSAFE qrpc_conn_t qrpc_stream_conn(qrpc_stream_t s) {
+// QRPC_THREADSAFE qrpc_conn_t qrpc_stream_conn(qrpc_stream_t s) {
 //   Stream *st;
 //   UNWRAP_STREAM(s, st, ({
 //     return Unwrapper::Stream2Conn(s.s, st);
 //   }), "nq_stream_conn");
 //   return INVALID_HANDLE<qrpc_conn_t>(IHR_CONN_NOT_FOUND);
 // }
-// QAPI_CLOSURECALL qrpc_alarm_t qrpc_stream_alarm(qrpc_stream_t s) {
+// QRPC_CLOSURECALL qrpc_alarm_t qrpc_stream_alarm(qrpc_stream_t s) {
 //   // TODO(iyatomi): if possible, make this real thread safe
 //   return Unwrapper::UnwrapBoxer(s)->NewAlarm()->ToHandle();
 // }
-// QAPI_THREADSAFE bool qrpc_stream_is_valid(qrpc_stream_t s, qrpc_on_stream_validate_t cb) {
+// QRPC_THREADSAFE bool qrpc_stream_is_valid(qrpc_stream_t s, qrpc_on_stream_validate_t cb) {
 //   Stream *st;
 //   UNWRAP_STREAM(s, st, {
 //     no_ret_closure_call_with_check(cb, s, nullptr);
@@ -393,7 +409,7 @@ using json = nlohmann::json;
 //   no_ret_closure_call_with_check(cb, s, INVALID_REASON(s));
 //   return false;
 // }
-// QAPI_THREADSAFE bool qrpc_stream_outgoing(qrpc_stream_t s, bool *p_valid) {
+// QRPC_THREADSAFE bool qrpc_stream_outgoing(qrpc_stream_t s, bool *p_valid) {
 //   Stream *st;
 //   UNWRAP_STREAM(s, st, {
 //     *p_valid = true;
@@ -402,10 +418,10 @@ using json = nlohmann::json;
 //   *p_valid = false;
 //   return false;
 // }
-// QAPI_THREADSAFE void qrpc_stream_close(qrpc_stream_t s) {
+// QRPC_THREADSAFE void qrpc_stream_close(qrpc_stream_t s) {
 //   Unwrapper::UnwrapBoxer(s)->InvokeStream(s.s, ToStream(s), Boxer::OpCode::Disconnect);
 // }
-// QAPI_THREADSAFE void qrpc_stream_send(qrpc_stream_t s, const void *data, qrpc_size_t datalen) {
+// QRPC_THREADSAFE void qrpc_stream_send(qrpc_stream_t s, const void *data, qrpc_size_t datalen) {
 //   Stream *st; Boxer *b;
 //   UNWRAP_STREAM_OR_ENQUEUE(s, st, b, {
 //     st->Handler<NqStreamHandler>()->Send(data, datalen);
@@ -413,7 +429,7 @@ using json = nlohmann::json;
 //     b->InvokeStream(s.s, st, Boxer::OpCode::Send, data, datalen);
 //   }, "nq_stream_send");
 // }
-// QAPI_THREADSAFE void qrpc_stream_send_ex(qrpc_stream_t s, const void *data, qrpc_size_t datalen, qrpc_stream_opt_t *opt) {
+// QRPC_THREADSAFE void qrpc_stream_send_ex(qrpc_stream_t s, const void *data, qrpc_size_t datalen, qrpc_stream_opt_t *opt) {
 //   Stream *st; Boxer *b;
 //   UNWRAP_STREAM_OR_ENQUEUE(s, st, b, {
 //     st->Handler<NqStreamHandler>()->SendEx(data, datalen, *opt);
@@ -421,16 +437,16 @@ using json = nlohmann::json;
 //     b->InvokeStream(s.s, st, Boxer::OpCode::SendEx, data, datalen, *opt);
 //   }, "nq_stream_send");
 // }
-// QAPI_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb) {
+// QRPC_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb) {
 //   Unwrapper::UnwrapBoxer(s)->InvokeStream(s.s, ToStream(s), Boxer::OpCode::Task, qrpc_to_dyn_closure(cb));
 // }
-// QAPI_CLOSURECALL void *nq_stream_ctx(qrpc_stream_t s) {
+// QRPC_CLOSURECALL void *nq_stream_ctx(qrpc_stream_t s) {
 //   Stream *st;
 //   UNSAFE_UNWRAP_STREAM(s, st, {
 //     return st->Context();
 //   }, "nq_stream_ctx");
 // }
-// QAPI_THREADSAFE qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s) {
+// QRPC_THREADSAFE qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s) {
 //   Stream *st;
 //   UNWRAP_STREAM(s, st, {
 //     return st->id();
@@ -456,21 +472,21 @@ using json = nlohmann::json;
 // }
 
 
-// QAPI_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const char *name, void *ctx) {
+// QRPC_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const char *name, void *ctx) {
 //   conn_stream_common(conn, name, ctx, "nq_conn_rpc");
 // }
-// QAPI_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc) {
+// QRPC_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc) {
 //   Stream *st;
 //   UNWRAP_STREAM(rpc, st, ({
 //     return Unwrapper::Stream2Conn(rpc.s, st);
 //   }), "nq_rpc_conn");
 //   return INVALID_HANDLE<qrpc_conn_t>(IHR_CONN_NOT_FOUND);
 // }
-// QAPI_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc) {
+// QRPC_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc) {
 //   // TODO(iyatomi): if possible, make this real thread safe
 //   return Unwrapper::UnwrapBoxer(rpc)->NewAlarm()->ToHandle();
 // }
-// QAPI_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc, qrpc_on_rpc_validate_t cb) {
+// QRPC_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc, qrpc_on_rpc_validate_t cb) {
 //   Stream *st;
 //   UNWRAP_STREAM(rpc, st, {
 //     no_ret_closure_call_with_check(cb, rpc, nullptr);
@@ -479,7 +495,7 @@ using json = nlohmann::json;
 //   no_ret_closure_call_with_check(cb, rpc, INVALID_REASON(rpc));
 //   return false;
 // }
-// QAPI_THREADSAFE bool qrpc_rpc_outgoing(qrpc_rpc_t rpc, bool *p_valid) {
+// QRPC_THREADSAFE bool qrpc_rpc_outgoing(qrpc_rpc_t rpc, bool *p_valid) {
 //   Stream *st;
 //   UNWRAP_STREAM(rpc, st, {
 //     *p_valid = true;
@@ -488,10 +504,10 @@ using json = nlohmann::json;
 //   *p_valid = false;
 //   return false;
 // }
-// QAPI_THREADSAFE void qrpc_rpc_close(qrpc_rpc_t rpc) {
+// QRPC_THREADSAFE void qrpc_rpc_close(qrpc_rpc_t rpc) {
 //   Unwrapper::UnwrapBoxer(rpc)->InvokeStream(rpc.s, ToStream(rpc), Boxer::OpCode::Disconnect);
 // }
-// QAPI_THREADSAFE void qrpc_rpc_call(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_on_rpc_reply_t on_reply) {
+// QRPC_THREADSAFE void qrpc_rpc_call(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_on_rpc_reply_t on_reply) {
 //   ASSERT(type > 0);
 //   Stream *st; Boxer *b;
 //   UNWRAP_STREAM_OR_ENQUEUE(rpc, st, b, {
@@ -500,7 +516,7 @@ using json = nlohmann::json;
 //     b->InvokeStream(rpc.s, st, Boxer::OpCode::Call, type, data, datalen, on_reply);
 //   }, "nq_rpc_call");
 // }
-// QAPI_THREADSAFE void qrpc_rpc_call_ex(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_rpc_opt_t *opts) {
+// QRPC_THREADSAFE void qrpc_rpc_call_ex(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_rpc_opt_t *opts) {
 //   ASSERT(type > 0);
 //   Stream *st; Boxer *b;
 //   UNWRAP_STREAM_OR_ENQUEUE(rpc, st, b, {
@@ -509,7 +525,7 @@ using json = nlohmann::json;
 //     b->InvokeStream(rpc.s, st, Boxer::OpCode::CallEx, type, data, datalen, *opts);
 //   }, "nq_rpc_call_ex");
 // }
-// QAPI_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen) {
+// QRPC_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen) {
 //   ASSERT(type > 0);
 //   Stream *st; Boxer *b;
 //   UNWRAP_STREAM_OR_ENQUEUE(rpc, st, b, {
@@ -518,22 +534,22 @@ using json = nlohmann::json;
 //     b->InvokeStream(rpc.s, st, Boxer::OpCode::Notify, type, data, datalen);
 //   }, "nq_rpc_notify");
 // }
-// QAPI_THREADSAFE void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen) {
+// QRPC_THREADSAFE void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen) {
 //   rpc_reply_common(rpc, QRPC_OK, msgid, data, datalen);
 // }
-// QAPI_THREADSAFE void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen) {
+// QRPC_THREADSAFE void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen) {
 //   rpc_reply_common(rpc, QRPC_EUSER, msgid, data, datalen);
 // }
-// QAPI_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb) {
+// QRPC_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb) {
 //   Unwrapper::UnwrapBoxer(rpc)->InvokeStream(rpc.s, ToStream(rpc), Boxer::OpCode::Task, qrpc_to_dyn_closure(cb));
 // }
-// QAPI_CLOSURECALL void *nq_rpc_ctx(qrpc_rpc_t rpc) {
+// QRPC_CLOSURECALL void *nq_rpc_ctx(qrpc_rpc_t rpc) {
 //   Stream *st;
 //   UNSAFE_UNWRAP_STREAM(rpc, st, {
 //     return st->Context();
 //   }, "nq_rpc_ctx");
 // }
-// QAPI_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc) {
+// QRPC_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc) {
 //   Stream *st;
 //   UNWRAP_STREAM(rpc, st, {
 //     return st->id();
@@ -548,21 +564,21 @@ using json = nlohmann::json;
 // time API
 //
 // --------------------------
-QAPI_THREADSAFE qrpc_time_t qrpc_time_now() {
+QRPC_THREADSAFE qrpc_time_t qrpc_time_now() {
   return base::clock::now();
 }
-QAPI_THREADSAFE qrpc_unix_time_t qrpc_time_unix() {
+QRPC_THREADSAFE qrpc_unix_time_t qrpc_time_unix() {
   long s, us;
   base::clock::now(s, us);
   return s;
 }
-QAPI_THREADSAFE qrpc_time_t qrpc_time_sleep(qrpc_time_t d) {
+QRPC_THREADSAFE qrpc_time_t qrpc_time_sleep(qrpc_time_t d) {
   return base::clock::sleep(d);
 }
-QAPI_THREADSAFE qrpc_time_t qrpc_time_pause(qrpc_time_t d) {
+QRPC_THREADSAFE qrpc_time_t qrpc_time_pause(qrpc_time_t d) {
   return base::clock::pause(d);
 }
-QAPI_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n) {
+QRPC_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n) {
   static thread_local uint32_t spec[2];
   spec[0] = n / 1000 / 1000 / 1000;
   spec[1] = n % (1000 * 1000 * 1000);
@@ -576,13 +592,13 @@ QAPI_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n) {
 // // alarm API
 // //
 // // --------------------------
-// QAPI_THREADSAFE void qrpc_alarm_set(qrpc_alarm_t a, qrpc_time_t invocation_ts, qrpc_on_alarm_t cb) {
+// QRPC_THREADSAFE void qrpc_alarm_set(qrpc_alarm_t a, qrpc_time_t invocation_ts, qrpc_on_alarm_t cb) {
 //   Unwrapper::UnwrapBoxer(a)->InvokeAlarm(a.s, ToAlarm(a), Boxer::OpCode::Start, invocation_ts, cb);
 // }
-// QAPI_THREADSAFE void qrpc_alarm_destroy(qrpc_alarm_t a) {
+// QRPC_THREADSAFE void qrpc_alarm_destroy(qrpc_alarm_t a) {
 //   Unwrapper::UnwrapBoxer(a)->InvokeAlarm(a.s, ToAlarm(a), Boxer::OpCode::Finalize);
 // }
-// QAPI_THREADSAFE bool qrpc_alarm_is_valid(qrpc_alarm_t a) {
+// QRPC_THREADSAFE bool qrpc_alarm_is_valid(qrpc_alarm_t a) {
 //   //because memory pointed to a.p never returned to heap 
 //   //(alarm memory is from pre-allocated block(by qrpc::Allocator), this check should work always.
 //   auto p = static_cast<NqAlarm *>(a.p);
@@ -596,7 +612,7 @@ QAPI_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n) {
 // log API
 //
 // --------------------------
-QAPI_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf) {
+QRPC_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf) {
   if (conf == nullptr) {
     // TODO: provide default log config
     base::logger::die({{"ev", "no log config"}});
@@ -605,7 +621,7 @@ QAPI_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf) {
   }
   base::logger::configure(conf->callback, conf->id, conf->manual_flush, static_cast<base::logger::level>(conf->level));
 }
-QAPI_THREADSAFE void qrpc_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params) {
+QRPC_THREADSAFE void qrpc_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params) {
   json j = {
     {"ev", msg}
   };
@@ -628,6 +644,6 @@ QAPI_THREADSAFE void qrpc_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t 
   }
   base::logger::log((base::logger::level)(int)lv, j);
 }
-QAPI_THREADSAFE void qrpc_log_flush() {
+QRPC_THREADSAFE void qrpc_log_flush() {
   base::logger::flush();
 }

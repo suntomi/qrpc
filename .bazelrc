@@ -1,0 +1,12 @@
+# Common build settings
+build --symlink_prefix=.build/bazel-
+build --cpu=darwin_arm64
+build -s  # show build commands
+build --features=oso_prefix=.build
+
+# Debug configuration
+build:debug --compilation_mode=dbg
+build:debug --strip=never
+
+# Release configuration
+build:release --compilation_mode=opt

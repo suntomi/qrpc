@@ -59,7 +59,7 @@ namespace base {
         a.Cancel(sctp_send_queue_alarm_id_);
         sctp_send_queue_alarm_id_ = AlarmProcessor::INVALID_ID;
         thread_queue_map_[RTC::SctpAssociation::GetSctpThreadId() - 1] = nullptr;
-        RTC::SctpAssociation::SetSctpThreadId(0);
+        RTC::SctpAssociation::ClearSctpThreadId();
       }
     }
     static int onSendStcpData(void* addr, void* data, size_t len, uint8_t /*tos*/, uint8_t /*setDf*/) {
