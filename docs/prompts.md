@@ -30,3 +30,29 @@ at 263f2588bb4035f138b019f241eb5222926638cf
 
 こちらで修正できました。bazelの出力ディレクトリ(bazel-out)を.buildの下に移動したことが原因でした。oso_prefix_is_pwdをoso_prefix=.buildに変更することでファイル名と行数が正しく表示されるようになりました。
 
+at 8352639891758ab5dd9d294847ebc8da220822d2
+sys/client/ts/client.jsをtsに変換したいです。npmパッケージとしてビルド、パブリッシュできるように環境整備も行なってください。
+
+results -> bf182ac335f7f420370c552e24a9443e1c710cce
+
+at bf182ac335f7f420370c552e24a9443e1c710cce
+current sys/client/ts genrates multiple js files as compile result. but I want to generate concatenate version of these files because generated js file will be downloaded from browser. concatenate & minify files improve startup time of pages that just use sys/client/ts as javascript library.
+
+results -> 7646e72e09775644e33b14d639262e4a40f330e0
+
+at 7646e72e09775644e33b14d639262e4a40f330e0
+I made some fix and now it works. then I have question.
+esbuild itself does not generate .d.ts? if so, should I change configuration to generate .d.ts file?
+
+* need to fix manually to remove compile error (remove tsconfig.types.json)
+
+now I could generate bundled js and .d.ts files. individual js need to be generated?
+
+results -> 2f4c1fac458cc741a3e22b4c81c698e95d83e429
+
+at 2f4c1fac458cc741a3e22b4c81c698e95d83e429
+nice. next I want to watch typescript codebase and update qrpc.bundle.js when typescript code changes.
+
+can you use english for message in esbuild.config.js?
+
+result -> 2303f85b179f6694624c0f83bee3ca9831f4ed1e

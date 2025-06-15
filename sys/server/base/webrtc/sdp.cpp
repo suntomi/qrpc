@@ -62,7 +62,8 @@ a=max-message-size:%u
         ASSERT(false);
         return false;
       }
-      auto algoit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(*type);
+      auto algoname = type->get<std::string>();
+      auto algoit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(algoname);
       if (algoit == RTC::DtlsTransport::GetString2FingerprintAlgorithm().end()) {
         answer = "unknown fingerprint algorithm:" + type->get<std::string>();
         ASSERT(false);

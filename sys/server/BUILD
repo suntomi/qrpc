@@ -27,16 +27,15 @@ cc_library(
     "qrpc.h",
     "qrpc/**/*.h",
     "base/**/*.h",
-    "ext/mediasoup/include/*.hpp",
-    "ext/mediasoup/include/**/*.hpp",
     "ext/moodycamel/*.h",
     "ext/hedley/*.h",
     "ext/sha1/*.h",
     "ext/libsdptransform/include/*.hpp",
+    "ext/json/include/**/*.hpp",
   ]),
   copts = [
     "-std=c++17",
-  ] 
+  ]
   + selects.with_or({
     "//:asan": ["-fsanitize=address"],
     "//conditions:default": [],
@@ -73,6 +72,7 @@ cc_library(
     "ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
     "ext/mediasoup/worker/subprojects/usrsctp-d45b53f5dfa79533f5c5e7aefa5d7570405afb39/usrsctplib",
     "ext/libsdptransform/include",
+    "ext/json/include",
   ] + selects.with_or({
     "//:is_debug_build": ["ext/mediasoup/worker/out/Debug/build/fbs"],
     "//conditions:default": ["ext/mediasoup/worker/out/Release/build/fbs"],

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/defs.h"
+#include <sstream>
 #define  _XOPEN_SOURCE_EXTENDED 1
 #include <strings.h>
 

@@ -9,10 +9,10 @@
                 "/Library/Developer/CommandLineTools/usr/lib/clang/12.0.0/include",
                 "/Library/Developer/CommandLineTools/usr/include",
                 "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include",
-                "${workspaceFolder}/src/ext/mediasoup/worker/subprojects/usrsctp-4e06feb01cadcd127d119486b98a4bd3d64aa1e7/usrsctplib",
-                "${workspaceFolder}/src/ext/mediasoup/worker/subprojects/libsrtp-2.5.0/include",
-                "${workspaceFolder}/src/ext/libsdptransform/include",
-                "${workspaceFolder}/src/ext/cares/cares/include"
+                "${workspaceFolder}/sys/server/ext/mediasoup/worker/subprojects/usrsctp-d45b53f5dfa79533f5c5e7aefa5d7570405afb39/usrsctplib",
+                "${workspaceFolder}/sys/server/ext/mediasoup/worker/subprojects/libsrtp-3.0-alpha/include",
+                "${workspaceFolder}/sys/server/ext/libsdptransform/include",
+                "${workspaceFolder}/sys/server/ext/cares/cares/include"
             ],
             "defines": [],
             "macFrameworkPath": [
