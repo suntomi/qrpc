@@ -25,6 +25,7 @@ cc_library(
   ]),
   hdrs = glob([
     "qrpc.h",
+    "qrpc/**/*.h",
     "base/**/*.h",
     "ext/mediasoup/include/*.hpp",
     "ext/mediasoup/include/**/*.hpp",

@@ -29,9 +29,9 @@ namespace base {
 namespace webrtc {
 
 // ConnectionFactory
-int ConnectionFactory::Start() {
+int ConnectionFactory::Start(const std::vector<Port> &ports) {
   int r;
-  if ((r = Setup())) {
+  if ((r = Setup(ports))) {
     return r;
   }
   if (config_.connection_timeout > 0) {
@@ -1823,7 +1823,7 @@ namespace client {
         client_.ScheduleClose(uf);
         return nullptr;
       }
-      if (!client_.Open(candidates, 0, c)) {
+      if (!client_.Open(ep_, candidates, 0, c)) {
         client_.ScheduleClose(uf);
       }
       return nullptr;
@@ -1933,21 +1933,39 @@ namespace client {
 
 // Client
 bool Client::Open(
+  const Endpoint &ep,
   const std::vector<Candidate> &candidates,
   size_t idx,
   std::shared_ptr<Connection> &c
 ) {
   if (candidates.size() <= idx) {
-    logger::info({{"ev","no more candidate to open"},
-      {"candidates_size", candidates.size()}});
+    logger::info({
+      {"ev","no more candidate to open"},
+      {"candidates_size", candidates.size()},
+      {"proto",std::get<0>(candidates[0]) ? "udp" : "tcp"}
+    });
+    if (std::get<0>(candidates[0])) {
+      // if all connect attempt for UDP fails, should fallback to TCP as last resort.
+      // this means, entire handshake process restarts ()
+      if (http_client_.Connect(ep.host, ep.port, new client::WhipHttpProcessor(*this, {
+        .host = ep.host, .port = ep.port, .path = ep.path, .protocol = Port::Protocol::TCP
+      }))) {
+        logger::info({{"ev","fallback to TCP connection"},{"host",ep.host},
+          {"port",ep.port},{"path",ep.path}});
+        return true;
+      } else {
+        logger::error({{"ev","fail to fallback to TCP connection"},
+          {"host",ep.host},{"port",ep.port},{"path",ep.path}});
+      }
+    }
     return false;
   }
   const auto &cand = candidates[idx];
   std::string ufrag = std::get<3>(cand);
   std::string pwd = std::get<4>(cand);
-  auto on_failure = [this, candidates, idx, c, ufrag](int status) mutable {
+  auto on_failure = [this, endpoint = ep, candidates, idx, c, ufrag](int status) mutable {
     // try next candidate
-    if (!this->Open(candidates, idx + 1, c)) {
+    if (!this->Open(endpoint, candidates, idx + 1, c)) {
       this->CloseConnection(ufrag);
     }
   };
@@ -1989,7 +2007,7 @@ int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
     return QRPC_EALLOC;
   }
   int r;
-  if ((r = SDP::Offer(*c, ufrag, pwd, sdp)) < 0) {
+  if ((r = SDP::Offer(*c, ufrag, pwd, ep.protocol, sdp)) < 0) {
     logger::error({{"ev","fail to create offer"},{"rc",r}});
     return QRPC_EINVAL;
   }
@@ -1997,16 +2015,18 @@ int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
   connections_[ufrag] = c;
   return QRPC_OK;
 }
-bool Client::Connect(const std::string &host, int port, const std::string &path) {
+bool Client::Connect(
+  const std::string &host, int port, const std::string &path,
+  Port::Protocol proto
+) {
   if (udp_clients_.size() <= 0 && tcp_clients_.size() <= 0) {
     // init client
-    config_.ports = {
-      // 0 for local port number auto assignment
+    int r;
+    if ((r = Start({
+      // .port = 0 for local port number auto assignment
       {.protocol = ConnectionFactory::Port::UDP, .port = 0},
       {.protocol = ConnectionFactory::Port::TCP, .port = 0}
-    };
-    int r;
-    if ((r = Start()) < 0) {
+    })) < 0) {
       QRPC_LOGJ(error, {{"ev","fail to init conection factory"},{"rc",r}});
       return r;
     }
@@ -2016,12 +2036,12 @@ bool Client::Connect(const std::string &host, int port, const std::string &path)
     {"ep",(host + ":" + std::to_string(port) + path)}});
   
   return http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, {
-    .host = host, .port = port, .path = path
+    .host = host, .port = port, .path = path, .protocol = proto,
   }));
 }
-int Client::Setup() {
+int Client::Setup(const std::vector<Port> &ports) {
   // setup TCP/UDP ports
-  for (auto port : config_.ports) {
+  for (const auto &port : ports) {
     switch (port.protocol) {
       case Port::Protocol::UDP:
         udp_clients_.emplace_back(*this);
@@ -2065,11 +2085,10 @@ bool Listener::Listen(
   if (signaling_port <= 0) {
     DIE("signaling port must be positive");
   }
-  config_.ports = {
+  if ((r = Start({
     {.protocol = ConnectionFactory::Port::UDP, .port = port},
     {.protocol = ConnectionFactory::Port::TCP, .port = port}
-  };
-  if ((r = Start()) < 0) {
+  })) < 0) {
     logger::error({{"ev","fail to start server"},{"rc",r}});
     return false;
   }
@@ -2150,9 +2169,9 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
   }
   return QRPC_OK;
 }
-int Listener::Setup() {
+int Listener::Setup(const std::vector<Port> &ports) {
   // setup TCP/UDP ports
-  for (auto port : config_.ports) {
+  for (const auto &port : ports) {
     switch (port.protocol) {
       case Port::Protocol::UDP: {
         auto &p = udp_ports_.emplace_back(*this);

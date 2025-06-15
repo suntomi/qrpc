@@ -18,7 +18,7 @@ extern "C" {
 //indicate this call only safe before/after main loop running, 
 //which means call of qrpc_server_start or qrpc_client_poll.
 //also not guaranteed to be safe from calling concurrently
-#define QAPI_BOOTSTRAP extern
+#define QRPC_BOOTSTRAP extern
 //indicate this call can be done concurrently, and works correctly
 //our thread safe approach is like following:
 //read operation: just checking object is valid by comparing serial in
@@ -26,12 +26,12 @@ extern "C" {
 //write operation: checking current thread is owner of objects (Alaram/NqClient/NqServerSession/NqStream) and
 //  owner => do operation directly
 //  non-owner => add operation to queue and owner thread process request
-#define QAPI_THREADSAFE extern
+#define QRPC_THREADSAFE extern
 //indicate this call only safe when invoked with nq_conn/rpc/stream_t which passed to
 //functions of closure type (declared with QRPC_DECL_CLOSURE). 
-#define QAPI_CLOSURECALL extern
+#define QRPC_CLOSURECALL extern
 //inline function
-#define QAPI_INLINE static inline
+#define QRPC_INLINE static inline
 
 
 
@@ -69,11 +69,11 @@ typedef uint32_t qrpc_msgid_t;
 
 typedef uint32_t qrpc_stream_id_t;
 
-typedef struct qrpc_client_tag *qrpc_client_t; //NqClientLoop
+typedef struct qrpc_client_tag *qrpc_client_t; //qrpc::Client
 
-typedef struct qrpc_server_tag *qrpc_server_t; //NqServer
+typedef struct qrpc_server_tag *qrpc_server_t; //qrpc::Server
 
-typedef struct qrpc_hdmap_tag *qrpc_hdmap_t; //HandlerMap
+typedef struct qrpc_hdmap_tag *qrpc_hdmap_t; //qrpc::HandlerMap
 
 typedef struct {
   uint64_t data[1];
@@ -133,8 +133,9 @@ struct qrpc_webrtc_config_tag {
   // default "/qrpc"
   const char *whip_path;
 };
+typedef qrpc_webrtc_config_tag qrpc_webrtc_config_t;
 
-// for future. webtransport will be based QUIC, so below fields are basically required to configure QUIC
+// for future. webtransport will be based QUIC, so below fields are required to configure QUIC
 struct qrpc_webtx_config_tag {
   //applicaiton protocol (ALPN) data, if you want to use the library
   //for implementing http3 server/client, you should set here the value `QRPC_H3_ALPN`
@@ -172,11 +173,13 @@ struct qrpc_webtx_config_tag {
   //length of source connection id in bytes
   qrpc_size_t source_connection_id_length;
 };
+typedef qrpc_webtx_config_tag qrpc_webtx_config_t;
+
 typedef struct {
   qrpc_wire_proto_t proto;
   union {
-    qrpc_webrtc_config_tag webrtc;
-    qrpc_webtx_config_tag webtx;
+    qrpc_webrtc_config_t webrtc;
+    qrpc_webtx_config_t webtx;
   };
 } qrpc_transport_config_t;
 
@@ -215,7 +218,7 @@ typedef struct {
   qrpc_size_t msglen;            //message length
 } qrpc_close_reason_t;
 
-QAPI_THREADSAFE const char *nq_error_detail_code2str(qrpc_error_t code, int detail_code);
+QRPC_THREADSAFE const char *nq_error_detail_code2str(qrpc_error_t code, int detail_code);
 
 typedef struct {
   const char *host, *cert, *key, *ca;
@@ -348,7 +351,7 @@ QRPC_DECL_CLOSURE(void, qrpc_on_resolve_host_t, void *, qrpc_error_t, const qrpc
   (__pclsr).proc = (__cb); \
 }
 
-QAPI_INLINE void *qrpc_closure_proc_generic_noop(...) { return nullptr; }
+QRPC_INLINE void *qrpc_closure_proc_generic_noop(...) { return nullptr; }
 #define qrpc_closure_init_noop(__pclsr, __typename) { \
   (__pclsr).arg = nullptr; \
   (__pclsr).proc = (__typename##_proc)(qrpc_closure_proc_generic_noop); \
@@ -392,28 +395,28 @@ typedef struct {
 } qrpc_clconf_t;
 
 // get default qrpc_clconf_t
-QAPI_THREADSAFE qrpc_clconf_t qrpc_client_conf();
+QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf();
 // create client object which have max_nfd of connection. 
-QAPI_BOOTSTRAP qrpc_client_t qrpc_client_create(int max_nfd, int max_stream_hint, const qrpc_dns_conf_t *dns_conf);
+QRPC_BOOTSTRAP qrpc_client_t qrpc_client_create(int max_nfd, int max_stream_hint, const qrpc_dns_conf_t *dns_conf);
 // do actual network IO. need to call periodically
-QAPI_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl);
+QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl);
 // close connections and destroy client object. after call this, do not call qrpc_client_* API.
-QAPI_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl);
+QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl);
 // create conn from client. can get qrpc_conn_t via argument of qrpc_clconf_t::on_open
-// return false on error. TODO(iyatomi): make it QAPI_THREADSAFE
-QAPI_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_addr_t *addr, const qrpc_clconf_t *conf);
+// return false on error. TODO(iyatomi): make it QRPC_THREADSAFE
+QRPC_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_addr_t *addr, const qrpc_clconf_t *conf);
 // get handler map of the client. 
-QAPI_BOOTSTRAP qrpc_hdmap_t qrpc_client_hdmap(qrpc_client_t cl);
+QRPC_BOOTSTRAP qrpc_hdmap_t qrpc_client_hdmap(qrpc_client_t cl);
 // set thread id that calls qrpc_client_poll.
 // call this if thread which polls this qrpc_client_t is different from creator thread.
-QAPI_BOOTSTRAP void qrpc_client_set_thread(qrpc_client_t cl);
+QRPC_BOOTSTRAP void qrpc_client_set_thread(qrpc_client_t cl);
 // resolve host. qrpc_client_t need to be polled by qrpc_client_poll to work correctly
 // family_pref can be AF_INET or AF_INET6, and control which address family searched first. 
-QAPI_BOOTSTRAP bool qrpc_client_resolve_host(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb);
+QRPC_BOOTSTRAP bool qrpc_client_resolve_host(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb);
 // for subsequent use of qrpc_client_resolve_host. passing 3rd and 4th argument of qrpc_on_resolve_host_t to this function,
 // as src and srcsz. and passing buffer for dst and dstsz, to store string converted result of src/srcsz.
 // return dst if succeed otherwise nullptr returned.
-QAPI_THREADSAFE const char *nq_ntop(const char *src, qrpc_size_t srcsz, char *dst, qrpc_size_t dstsz);
+QRPC_THREADSAFE const char *nq_ntop(const char *src, qrpc_size_t srcsz, char *dst, qrpc_size_t dstsz);
 
 
 
@@ -441,15 +444,15 @@ typedef struct {
 } qrpc_svconf_t;
 
 // get default qrpc_svconf_t
-QAPI_THREADSAFE qrpc_svconf_t qrpc_server_conf();
+QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf();
 //create server which has n_worker of workers
-QAPI_BOOTSTRAP qrpc_server_t qrpc_server_create(int n_worker);
+QRPC_BOOTSTRAP qrpc_server_t qrpc_server_create(int n_worker);
 //listen and returns handler map associated with it. 
-QAPI_BOOTSTRAP qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_addr_t *addr, const qrpc_svconf_t *config);
+QRPC_BOOTSTRAP qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_addr_t *addr, const qrpc_svconf_t *config);
 //if block is true, qrpc_server_start blocks until some other thread calls qrpc_server_join. 
-QAPI_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block);
+QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block);
 //request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API anymore
-QAPI_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv);
+QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv);
 
 
 
@@ -485,21 +488,21 @@ QRPC_DECL_CLOSURE(qrpc_stream_handler_t *, qrpc_stream_director_t, void *, const
 //decide handler for each incoming maeia on demand
 QRPC_DECL_CLOSURE(qrpc_media_handler_t *, qrpc_media_director_t, void *, const char *, qrpc_conn_t);
 //setup original stream protocol (client) based on its label, with 3 pattern.
-QAPI_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *label, qrpc_stream_handler_t handler);
+QRPC_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *label, qrpc_stream_handler_t handler);
 
-QAPI_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *label, qrpc_rpc_handler_t handler);
+QRPC_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *label, qrpc_rpc_handler_t handler);
 //media handler
-QAPI_BOOTSTRAP bool qrpc_hdmap_media_handler(qrpc_hdmap_t h, const char *label, qrpc_media_handler_t handler);
+QRPC_BOOTSTRAP bool qrpc_hdmap_media_handler(qrpc_hdmap_t h, const char *label, qrpc_media_handler_t handler);
 // set stream director. unlike qrpc_hdmap_raw_handler, the director is used as "fallback". that is, if label is matched
 // above qrpc_hdmap_XXX_handler entry, director will not be called.
-QAPI_BOOTSTRAP bool qrpc_hdmap_stream_director(qrpc_hdmap_t h, qrpc_stream_director_t director);
+QRPC_BOOTSTRAP bool qrpc_hdmap_stream_director(qrpc_hdmap_t h, qrpc_stream_director_t director);
 // set media director. unlike qrpc_hdmap_raw_handler, the director is used as "fallback". that is, if label is matched
 // above qrpc_hdmap_XXX_handler entry, director will not be called.
-QAPI_BOOTSTRAP bool qrpc_hdmap_media_director(qrpc_hdmap_t h, qrpc_media_director_t director);
+QRPC_BOOTSTRAP bool qrpc_hdmap_media_director(qrpc_hdmap_t h, qrpc_media_director_t director);
 //if you call this API, qrpc_hdmap_t become "raw mode". any other hdmap settings are ignored, 
 //and all incoming/outgoing streams are handled with the handler which is given to this API.
 //even media stream packet is handled by handler.on_stream_record.
-QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t sh, qrpc_media_handler_t mh);
+QRPC_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t sh, qrpc_media_handler_t mh);
 
 
 // --------------------------
@@ -512,39 +515,39 @@ QAPI_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t
 //all modification of hdmap will be immediately finished. (this is recommended usage)
 //if it called from outside of callback functions for qrpc_conn_t, it will be queued
 //and actual modification will not immediately take place.
-QAPI_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modify_hdmap_t modifier);
+QRPC_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modify_hdmap_t modifier);
 //close connection with reason_code and reason_detail through close frame.
 //close and destroy conn/associated stream eventually, so never touch conn/stream/rpc after calling this API
-QAPI_THREADSAFE void qrpc_conn_closex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len);
+QRPC_THREADSAFE void qrpc_conn_closex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len);
 //same as qrpc_conn_close_ex but do not send reason code and detail
-QAPI_INLINE void qrpc_conn_close(qrpc_conn_t conn) { qrpc_conn_closex(conn, QRPC_CLOSE_REASON_LOCAL, (const uint8_t *)"", 0); }
+QRPC_INLINE void qrpc_conn_close(qrpc_conn_t conn) { qrpc_conn_closex(conn, QRPC_CLOSE_REASON_LOCAL, (const uint8_t *)"", 0); }
 //this just restart connection, if connection not start, start it, otherwise close connection once, then start again.
 //it never destroy connection itself, but associated stream/rpc all destroyed. (client only)
-QAPI_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn); 
+QRPC_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn); 
 //flush buffered packets of all stream
-QAPI_THREADSAFE void qrpc_conn_flush(qrpc_conn_t conn);
+QRPC_THREADSAFE void qrpc_conn_flush(qrpc_conn_t conn);
 //check connection is client mode or not.
-QAPI_THREADSAFE bool qrpc_conn_is_client(qrpc_conn_t conn);
+QRPC_THREADSAFE bool qrpc_conn_is_client(qrpc_conn_t conn);
 //check conn is valid. invalid means fail to create or closed, or temporary disconnected (will reconnect soon).
 //note that if (nq_conn_is_valid(...)) does not assure any safety of following operation, when multi threaded event loop runs
 //you should give cb parameter with filling qrpc_on_conn_validate member, to operate this conn safety on validation success.
 //you can pass qrpc_closure_empty() for qrpc_conn_is_valid, if you dont need to callback.
-QAPI_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_t cb);
+QRPC_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_t cb);
 //get reconnect wait duration in us. 0 means does not wait reconnection
-QAPI_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn);
+QRPC_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn);
 //get context, which is set at on_conn_open
-QAPI_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn);
+QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn);
 //check equality of qrpc_conn_t.
-QAPI_INLINE bool qrpc_conn_equal(qrpc_conn_t c1, qrpc_conn_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
+QRPC_INLINE bool qrpc_conn_equal(qrpc_conn_t c1, qrpc_conn_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
 //manually set reachability change for current connection
-QAPI_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reachability_t new_status);
+QRPC_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reachability_t new_status);
 //get fd attached to the conn. client conn returns dedicated fd for the connection,
 //server side returns lister fd, which is shared among connections.sz
-QAPI_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn);
+QRPC_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn);
 //emit event on this conn. when this called, cb registered by qrpc_conn_watch, is called with `args`
-QAPI_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, const char *event, const void *args);
+QRPC_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, const char *event, const void *args);
 //make cb callbacked when corresponding qrpc_conn_emit with `event` called
-QAPI_THREADSAFE void qrpc_conn_watch(const char *event, qrpc_on_event_t cb);
+QRPC_THREADSAFE void qrpc_conn_watch(const char *event, qrpc_on_event_t cb);
 
 
 // --------------------------
@@ -555,31 +558,31 @@ QAPI_THREADSAFE void qrpc_conn_watch(const char *event, qrpc_on_event_t cb);
 //create single stream from conn, which has type specified by "name". need to use valid conn
 //open callback of this stream handler will receive invalid stream and null **ppctx on error, 
 //valid stream handler and **ppctx where *ppctx == ctx on success.
-QAPI_CLOSURECALL void qrpc_conn_stream(qrpc_conn_t conn, const char *name, void *ctx);
+QRPC_CLOSURECALL void qrpc_conn_stream(qrpc_conn_t conn, const char *name, void *ctx);
 //get parent conn from rpc. it is possible returned qrpc_conn_t already become invalid when this function is called from non-owner thread of s
-QAPI_THREADSAFE qrpc_conn_t qrpc_stream_conn(qrpc_stream_t s);
+QRPC_THREADSAFE qrpc_conn_t qrpc_stream_conn(qrpc_stream_t s);
 //get alarm from stream
-QAPI_CLOSURECALL qrpc_alarm_t qrpc_stream_alarm(qrpc_stream_t s);
+QRPC_CLOSURECALL qrpc_alarm_t qrpc_stream_alarm(qrpc_stream_t s);
 //check stream is valid. note that if (nq_stream_is_valid(...)) does not assure any safety of following operation.
 //you should give cb parameter with filling qrpc_on_stream_validate member, to operate this stream object safely on validation success.
 //you can pass qrpc_closure_empty() for qrpc_conn_is_valid, if you dont need to callback.
-QAPI_THREADSAFE bool qrpc_stream_is_valid(qrpc_stream_t s, qrpc_on_stream_validate_t cb);
+QRPC_THREADSAFE bool qrpc_stream_is_valid(qrpc_stream_t s, qrpc_on_stream_validate_t cb);
 //check stream is outgoing. otherwise incoming. optionally you can get stream is valid, via p_valid. 
 //if p_valid returns true, means stream is incoming.
-QAPI_THREADSAFE bool qrpc_stream_outgoing(qrpc_stream_t s, bool *p_valid);
+QRPC_THREADSAFE bool qrpc_stream_outgoing(qrpc_stream_t s, bool *p_valid);
 //close this stream only (conn not closed.) useful if you use multiple stream and only 1 of them go wrong
-QAPI_THREADSAFE void qrpc_stream_close(qrpc_stream_t s);
+QRPC_THREADSAFE void qrpc_stream_close(qrpc_stream_t s);
 //send arbiter byte array/arbiter object to stream peer. if you want ack for each send, use qrpc_stream_send_ex
-QAPI_THREADSAFE void qrpc_stream_send(qrpc_stream_t s, const void *data, qrpc_size_t datalen);
+QRPC_THREADSAFE void qrpc_stream_send(qrpc_stream_t s, const void *data, qrpc_size_t datalen);
 //schedule execution of closure which is given to cb, will called with given s.
-QAPI_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb);
+QRPC_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb);
 //check equality of qrpc_stream_t.
-QAPI_INLINE bool qrpc_stream_equal(qrpc_stream_t c1, qrpc_stream_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
+QRPC_INLINE bool qrpc_stream_equal(qrpc_stream_t c1, qrpc_stream_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
 //get stream id. this may change as you re-created stream on reconnection. 
 //useful if you need to give special meaning to specified stream_id, like http2 over quic
-QAPI_THREADSAFE qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s);
+QRPC_THREADSAFE qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s);
 //get context, which is set at qrpc_conn_stream. only safe with qrpc_stream_t which passed to closure callbacks
-QAPI_CLOSURECALL void *qrpc_stream_ctx(qrpc_stream_t s);
+QRPC_CLOSURECALL void *qrpc_stream_ctx(qrpc_stream_t s);
 
 
 
@@ -596,39 +599,39 @@ typedef struct {
 //create single rpc object from conn, which has type specified by "name". need to use valid conn
 //open callback of this rpc handler will receive invalid rpc and null **ppctx on error, 
 //valid stream handler and **ppctx where *ppctx == ctx on success.
-QAPI_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const char *name, void *ctx);
+QRPC_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const char *name, void *ctx);
 //get parent conn from rpc. it is possible returned qrpc_conn_t already become invalid when this function is called from non-owner thread of rpc
-QAPI_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc);
+QRPC_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc);
 //get alarm from stream or rpc
-QAPI_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc);
+QRPC_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc);
 //check rpc is valid. note that if (nq_rpc_is_valid(...)) does not assure any safety of following operation.
 //you should give cb parameter with filling qrpc_on_rpc_validate member, to operate this rpc object safely on validation success.
 //you can pass qrpc_closure_empty() for qrpc_conn_is_valid, if you dont need to callback.
-QAPI_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc, qrpc_on_rpc_validate_t cb);
+QRPC_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc, qrpc_on_rpc_validate_t cb);
 //check rpc is outgoing. otherwise incoming. optionally you can get stream is valid, via p_valid. 
 //if p_valid returns true, means stream is incoming.
-QAPI_THREADSAFE bool qrpc_rpc_outgoing(qrpc_rpc_t s, bool *p_valid);
+QRPC_THREADSAFE bool qrpc_rpc_outgoing(qrpc_rpc_t s, bool *p_valid);
 //close this stream only (conn not closed.) useful if you use multiple stream and only 1 of them go wrong
-QAPI_THREADSAFE void qrpc_rpc_close(qrpc_rpc_t rpc);
+QRPC_THREADSAFE void qrpc_rpc_close(qrpc_rpc_t rpc);
 //send arbiter byte array or object to stream peer. type should be positive
-QAPI_THREADSAFE void qrpc_rpc_call(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_on_rpc_reply_t on_reply);
+QRPC_THREADSAFE void qrpc_rpc_call(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_on_rpc_reply_t on_reply);
 //same as qrpc_rpc_call but can specify various options like per call timeout
-QAPI_THREADSAFE void qrpc_rpc_callx(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_rpc_opt_t *opts);
+QRPC_THREADSAFE void qrpc_rpc_callx(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_rpc_opt_t *opts);
 //send arbiter byte array or object to stream peer, without receving reply. type should be positive
-QAPI_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen);
+QRPC_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen);
 //send reply of specified request. result >= 0, data and datalen is response, otherwise error detail
-QAPI_THREADSAFE void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen);
+QRPC_THREADSAFE void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen);
 //send error response to specified request. data and datalen is error detail
-QAPI_THREADSAFE void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen);
+QRPC_THREADSAFE void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen);
 //schedule execution of closure which is given to cb, will called with given rpc.
-QAPI_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb);
+QRPC_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb);
 //check equality of qrpc_rpc_t.
-QAPI_INLINE bool qrpc_rpc_equal(qrpc_rpc_t c1, qrpc_rpc_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
+QRPC_INLINE bool qrpc_rpc_equal(qrpc_rpc_t c1, qrpc_rpc_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
 //get rpc id. this may change as you re-created rpc on reconnection.
 //useful if you need to give special meaning to specified stream_id, like http2 over quic
-QAPI_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc);
+QRPC_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc);
 //get context, which is set at qrpc_conn_rpc. only safe with qrpc_rpc_t which passed to closure callbacks
-QAPI_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t s);
+QRPC_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t s);
 
 
 
@@ -671,46 +674,46 @@ struct qrpc_media_params_t {
   struct qrpc_media_codec_t codecs[];
 };
 // publish media stream, which name is label
-QAPI_THREADSAFE void qrpc_conn_media(qrpc_conn_t conn, const char *name, qrpc_media_producer_t p);
+QRPC_THREADSAFE void qrpc_conn_media(qrpc_conn_t conn, const char *name, qrpc_media_producer_t p);
 // get correspond connection from media
-QAPI_THREADSAFE qrpc_conn_t qrpc_media_conn(qrpc_media_t media);
+QRPC_THREADSAFE qrpc_conn_t qrpc_media_conn(qrpc_media_t media);
 // consume media stream packet
-QAPI_THREADSAFE void qrpc_media_consume(qrpc_media_t media, qrpc_media_consumer_t c);
+QRPC_THREADSAFE void qrpc_media_consume(qrpc_media_t media, qrpc_media_consumer_t c);
 // create media subscriber object from conn, which can be used for qrpc_media_sub
-QAPI_THREADSAFE qrpc_media_consumer_t qrpc_conn_media_consumer(qrpc_conn_t conn, qrpc_media_params_t params);
+QRPC_THREADSAFE qrpc_media_consumer_t qrpc_conn_media_consumer(qrpc_conn_t conn, qrpc_media_params_t params);
 
 // --------------------------
 //
 // time API
 //
 // --------------------------
-QAPI_INLINE qrpc_time_t qrpc_time_sec(uint64_t n) { return ((n) * 1000 * 1000 * 1000); }
+QRPC_INLINE qrpc_time_t qrpc_time_sec(uint64_t n) { return ((n) * 1000 * 1000 * 1000); }
 
-QAPI_INLINE qrpc_time_t qrpc_time_msec(uint64_t n) { return ((n) * 1000 * 1000); }
+QRPC_INLINE qrpc_time_t qrpc_time_msec(uint64_t n) { return ((n) * 1000 * 1000); }
 
-QAPI_INLINE qrpc_time_t qrpc_time_usec(uint64_t n) { return ((n) * 1000); }
+QRPC_INLINE qrpc_time_t qrpc_time_usec(uint64_t n) { return ((n) * 1000); }
 
-QAPI_INLINE qrpc_time_t qrpc_time_nsec(uint64_t n) { return (n); }
+QRPC_INLINE qrpc_time_t qrpc_time_nsec(uint64_t n) { return (n); }
 
-QAPI_INLINE double qrpc_time_to_sec(qrpc_time_t n) { return ((n) / (1000 * 1000 * 1000)); }
+QRPC_INLINE double qrpc_time_to_sec(qrpc_time_t n) { return ((n) / (1000 * 1000 * 1000)); }
 
-QAPI_INLINE double qrpc_time_to_msec(qrpc_time_t n) { return ((n) / (1000 * 1000)); }
+QRPC_INLINE double qrpc_time_to_msec(qrpc_time_t n) { return ((n) / (1000 * 1000)); }
 
-QAPI_INLINE double qrpc_time_to_usec(qrpc_time_t n) { return ((n) / 1000); }
+QRPC_INLINE double qrpc_time_to_usec(qrpc_time_t n) { return ((n) / 1000); }
 
-QAPI_INLINE double qrpc_time_to_nsec(qrpc_time_t n) { return (n); }
+QRPC_INLINE double qrpc_time_to_nsec(qrpc_time_t n) { return (n); }
 
-QAPI_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n);
+QRPC_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n);
 
-QAPI_THREADSAFE qrpc_time_t qrpc_time_now();
+QRPC_THREADSAFE qrpc_time_t qrpc_time_now();
 
-QAPI_INLINE qrpc_time_t qrpc_time_max() { return (UINT64_MAX); }
+QRPC_INLINE qrpc_time_t qrpc_time_max() { return (UINT64_MAX); }
 
-QAPI_THREADSAFE qrpc_unix_time_t qrpc_time_unix();
+QRPC_THREADSAFE qrpc_unix_time_t qrpc_time_unix();
 //ignore EINTR
-QAPI_THREADSAFE qrpc_time_t qrpc_time_sleep(qrpc_time_t d);
+QRPC_THREADSAFE qrpc_time_t qrpc_time_sleep(qrpc_time_t d);
 //break with EINTR
-QAPI_THREADSAFE qrpc_time_t qrpc_time_pause(qrpc_time_t d);
+QRPC_THREADSAFE qrpc_time_t qrpc_time_pause(qrpc_time_t d);
 
 
 
@@ -726,11 +729,11 @@ QAPI_THREADSAFE qrpc_time_t qrpc_time_pause(qrpc_time_t d);
 //if you set the value to 0(STOP_INVOKE_QRPC_TIME), it stopped (still valid and can reactivate with qrpc_alarm_set). 
 //otherwise alarm remove its memory, further use of qrpc_alarm_t is not possible (silently ignored)
 //suitable if you want to create some kind of poll method of your connection.
-QAPI_THREADSAFE void qrpc_alarm_set(qrpc_alarm_t a, qrpc_time_t first, qrpc_on_alarm_t cb);
+QRPC_THREADSAFE void qrpc_alarm_set(qrpc_alarm_t a, qrpc_time_t first, qrpc_on_alarm_t cb);
 //destroy alarm. after call this, any attempt to call qrpc_alarm_set will be ignored.
-QAPI_THREADSAFE void qrpc_alarm_destroy(qrpc_alarm_t a);
+QRPC_THREADSAFE void qrpc_alarm_destroy(qrpc_alarm_t a);
 //check if alarm is valid
-QAPI_THREADSAFE bool qrpc_alarm_is_valid(qrpc_alarm_t a);
+QRPC_THREADSAFE bool qrpc_alarm_is_valid(qrpc_alarm_t a);
 
 
 
@@ -786,14 +789,14 @@ typedef struct {
   } value;
 } qrpc_logparam_t;
 
-QAPI_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf);
+QRPC_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf);
 //write JSON structured log output. 
-QAPI_THREADSAFE void qrpc_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params);
+QRPC_THREADSAFE void qrpc_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params);
 //write JSON Structured log output, with only msg
-QAPI_INLINE void qrpc_msg(qrpc_loglv_t lv, const char *msg) { qrpc_log(lv, msg, NULL, 0); }
+QRPC_INLINE void qrpc_msg(qrpc_loglv_t lv, const char *msg) { qrpc_log(lv, msg, NULL, 0); }
 //flush cached log. only enable if you configure manual_flush to true. 
 //recommend to call from only one thread. otherwise log output order may change from actual order.
-QAPI_THREADSAFE void qrpc_log_flush(); 
+QRPC_THREADSAFE void qrpc_log_flush(); 
 
 
 

@@ -23,7 +23,7 @@ namespace webrtc {
     qrpc_conn_t ToHandle() { return { .p = this, .s = 0 }; }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { return qrpc_closure_call(on_close_, ToHandle(), ctx_); }
-  }
+  };
 
   // NewStream
   static inline Stream *NewStream(

@@ -9,7 +9,8 @@
 namespace base {
 namespace webrtc {
   int SDP::Offer(const ConnectionFactory::Connection &c,
-    const std::string &ufrag, const std::string &pwd, std::string &offer) {
+    const std::string &ufrag, const std::string &pwd, TransportProtocol proto,
+    std::string &offer) {
     auto now = qrpc_time_now();
     // string value to the str::Format should be converted to c string like str.c_str()
     // TODO: add sdp for audio and video
@@ -32,7 +33,7 @@ a=sctp-port:5000
 a=max-message-size:%u
 )sdp",
       now, now,
-      c.factory().primary_proto().c_str(),
+      proto == TransportProtocol::UDP ? "UDP" : "TCP",
       ufrag.c_str(), pwd.c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
       c.factory().config().send_buffer_size
