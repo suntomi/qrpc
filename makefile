@@ -10,6 +10,8 @@ ifneq ($(SAN),)
 	CONFIG += --define=SAN=$(SAN)
 endif
 
+.PHONY: sys
+
 all:
 	bazel build :server :client $(CONFIG)
 
