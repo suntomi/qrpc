@@ -12,7 +12,7 @@ endif
 
 .PHONY: sys
 
-all:
+sys:
 	bazel build :server :client $(CONFIG)
 
 ext:

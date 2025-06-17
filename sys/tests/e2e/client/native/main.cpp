@@ -194,11 +194,12 @@ public:
         }
     }
 };
-class TestUdpSession : public UdpSession {
+template<class P>
+class TestUdpSession : public P {
 public:
     Handler &handler_;
 public:
-    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a, Handler &h) : UdpSession(f, fd, a), handler_(h) {}
+    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a, Handler &h) : P(f, fd, a), handler_(h) {}
     int OnConnect() override { return handler_.Connect(*this, "udp"); }
     int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "udp", p, sz); }
     qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "udp"); }
@@ -286,10 +287,10 @@ bool test_udp_session(Loop &l, Resolver &r, bool listen) {
             DIE("fail to bind");
             return false;
         }
-        return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
+        return test_session<UdpSessionFactory, TestUdpSession<UdpListener::UdpSession>>(l, uc, 10000);
     } else {
         auto uc = UdpClient(l, r, qrpc_time_sec(1));
-        return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
+        return test_session<UdpSessionFactory, TestUdpSession<UdpClient::UdpSession>>(l, uc, 10000);
     }
 }
 
@@ -299,13 +300,18 @@ bool test_http_client(Loop &l, Resolver &r) {
     hc.Connect("localhost", 8888, [](HttpSession &s) {
         return s.Request("GET", "/test");
     }, [&error_msg](HttpSession &s) {
-        auto b = std::string(s.fsm().body(), s.fsm().bodylen());
-        auto j = json::parse(b);
-        if (j["sdp"].get<std::string>() != "hoge") {
-            logger::error({{"ev","wrong response"},{"body",b}});
-            error_msg = "wrong response";
-        } else {
-            error_msg = "success";
+        auto b = s.fsm().body();
+        try {
+            auto j = json::parse(b);
+            if (j["sdp"].get<std::string>() != "hoge") {
+                logger::error({{"ev","wrong response"},{"body",b}});
+                error_msg = "wrong response";
+            } else {
+                error_msg = "success";
+            }
+        } catch (const json::parse_error &e) {
+            logger::error({{"ev","json parse error"},{"msg",e.what()},{"body",b}});
+            error_msg = "json parse error";
         }
         return nullptr;
     });

@@ -46,7 +46,7 @@ public:
     }
 };
 int Handler::count_ = 0;
-class TestUdpSession : public UdpSession {
+class TestUdpSession : public UdpListener::UdpSession {
     Handler handler_;
 public:
     TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}

@@ -1836,12 +1836,14 @@ namespace client {
         return QRPC_ESYSCALL;
       }
       SetUFrag(std::move(ufrag));
-      std::string sdplen = std::to_string(sdp.length());
+      json sdp_json = {{"sdp", sdp}};
+      std::string sdp_json_str = sdp_json.dump(), 
+        sdp_json_len_str = std::to_string(sdp_json_str.length());
       HttpHeader h[] = {
           {.key = "Content-Type", .val = "application/sdp"},
-          {.key = "Content-Length", .val = sdplen.c_str()}
+          {.key = "Content-Length", .val = sdp_json_len_str.c_str()}
       };
-      return s.Request("POST", ep_.path.c_str(), h, 2, sdp.c_str(), sdp.length());
+      return s.Request("POST", ep_.path.c_str(), h, 2, sdp_json_str.c_str(), sdp_json_str.length());
     }
     void HandleClose(HttpSession &, const CloseReason &r) override {
       // in here, session that related with webrtc connection should not be actively callbacked, 

@@ -179,6 +179,9 @@ namespace base {
 
   int UdpSessionFactory::UdpSession::Flush() {
     auto size = write_vecs_.size();
+    if (size == 0) {
+      return QRPC_OK; // nothing to flush
+    }
   #if defined(__QRPC_USE_RECVMMSG__)
     mmsghdr mmsg[size];
     for (size_t idx = 0; idx < size; idx++) {

@@ -319,6 +319,7 @@ namespace base {
                 write_vecs_.clear();
             }
             void Reset(size_t size) {
+                ASSERT(size > 0);
                 if (size >= write_vecs_.size()) {
                     for (int i = 0; i < ((int)size) - 1; i++) {
                         struct iovec &iov = write_vecs_.back();
@@ -446,7 +447,7 @@ namespace base {
                         if (sz == 0 || (sz = OnRead(buffer, sz)) < 0) {
                             TryFlush();
                             Close(sz == 0 ? QRPC_CLOSE_REASON_REMOTE : QRPC_CLOSE_REASON_LOCAL, sz);
-                            break;
+                            return;
                         }
                     }
                     TryFlush();
