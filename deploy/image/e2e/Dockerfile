@@ -55,7 +55,7 @@ ENV TZ=UTC
 ARG TARGETARCH
 ENV TARGETARCH=${TARGETARCH}
 
-RUN --mount=type=bind,rw,source=artifacts/${TARGETARCH}/installs,target=/var/lib/apt/lists \
+RUN --mount=type=cache,from=builder,target=/var/lib/apt/lists \
     apt-get update && apt-get install -y \
     ca-certificates
 

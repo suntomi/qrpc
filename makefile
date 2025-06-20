@@ -13,7 +13,8 @@ endif
 .PHONY: sys
 
 sys:
-	bazel build :server :client $(CONFIG)
+	bazel query //...
+	bazel build :server :client $(CONFIG) --verbose_failures
 
 ext:
 	make -C $(CURDIR)/sys/server/ext setup MODE=$(MODE) SAN=$(SAN)

@@ -33,12 +33,12 @@ bazel-*
 *~
 
 
-# Node.js関連（TypeScriptクライアント用）
+# nodejs
 node_modules/
 npm-debug.log
 yarn-error.log
 
-# C++関連
+# C++
 *.o
 *.so
 *.a
