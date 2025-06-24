@@ -4,6 +4,7 @@
 #include <sstream>
 #define  _XOPEN_SOURCE_EXTENDED 1
 #include <strings.h>
+#include <stdarg.h>
 
 namespace base {
 namespace str {

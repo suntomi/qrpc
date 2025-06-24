@@ -264,7 +264,6 @@ namespace base {
         };
         #endif
         struct ReadPacketBuffer {
-            struct cmsghdr chdr;
             struct iovec iov;
             char buf[Syscall::kMaxIncomingPacketSize];
             char cbuf[Syscall::kDefaultUdpPacketControlBufferSize];
@@ -284,6 +283,25 @@ namespace base {
             const UdpSessionFactory &udp_session_factory() const { return factory().to<UdpSessionFactory>(); }
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
             int Flush(); 
+            void Reset(size_t size) {
+                ASSERT(size > 0);
+                if (size >= write_vecs_.size()) {
+                    for (int i = 0; i < ((int)size) - 1; i++) {
+                        struct iovec &iov = write_vecs_.back();
+                        FreeIovec(iov);
+                        write_vecs_.pop_back();
+                    }
+                    // remain first buffer for next write
+                    auto &iov = write_vecs_[0];
+                    iov.iov_len = 0;
+                } else if (size > 0) {
+                    for (size_t i = 0; i < size; i++) {
+                        struct iovec &iov = write_vecs_[i];
+                        FreeIovec(iov);
+                    }
+                    write_vecs_.erase(write_vecs_.begin(), write_vecs_.begin() + size);
+                }
+            }            
             // implements Session
             const char *proto() const override { return "UDP"; }
             // Send is implemented in subclass
@@ -318,25 +336,6 @@ namespace base {
                 }
                 write_vecs_.clear();
             }
-            void Reset(size_t size) {
-                ASSERT(size > 0);
-                if (size >= write_vecs_.size()) {
-                    for (int i = 0; i < ((int)size) - 1; i++) {
-                        struct iovec &iov = write_vecs_.back();
-                        FreeIovec(iov);
-                        write_vecs_.pop_back();
-                    }
-                    // remain first buffer for next write
-                    auto &iov = write_vecs_[0];
-                    iov.iov_len = 0;
-                } else if (size > 0) {
-                    for (size_t i = 0; i < size; i++) {
-                        struct iovec &iov = write_vecs_[i];
-                        FreeIovec(iov);
-                    }
-                    write_vecs_.erase(write_vecs_.begin(), write_vecs_.begin() + size);
-                }
-            }
             int Write(const char *p, size_t sz) {
                 if (!AllocIovec(sz)) {
                     ASSERT(false);
@@ -369,7 +368,7 @@ namespace base {
                         return qrpc_time_now() + qrpc_time_usec(100);
                     } else {
                         c.alarm_id_ = AlarmProcessor::INVALID_ID;
-                        return 0ULL;
+                        return qrpc_alarm_stop_rv();
                     }
                 }, qrpc_time_now() + qrpc_time_usec(100));
             }

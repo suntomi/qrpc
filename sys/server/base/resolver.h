@@ -7,6 +7,7 @@
 #include <ares.h>
 
 #include "base/defs.h"
+#include "base/address.h"
 #include "base/alarm.h"
 #include "base/io_processor.h"
 #include "base/loop.h"
@@ -44,7 +45,9 @@ public:
           auto *sa = reinterpret_cast<struct sockaddr_in *>(&address);
           sa->sin_family = entries->h_addrtype;
           sa->sin_port = Endian::HostToNet(static_cast<in_port_t>(port));
+          #if !OS_LINUX
           sa->sin_len = sizeof(sockaddr_in);
+          #endif
           memcpy(&sa->sin_addr, entries->h_addr_list[0], sizeof(in_addr_t));
           addr.Reset(*sa);
         } break;
@@ -52,8 +55,10 @@ public:
           auto *sa = reinterpret_cast<sockaddr_in6 *>(&address);
           sa->sin6_family = entries->h_addrtype;
           sa->sin6_port = Endian::HostToNet(static_cast<in_port_t>(port));          
+          #if !OS_LINUX
           sa->sin6_len = sizeof(sockaddr_in6);
-          memcpy(&sa->sin6_addr, entries->h_addr_list[0], sizeof(in6_addr_t));
+          #endif
+          memcpy(&sa->sin6_addr, entries->h_addr_list[0], sizeof(struct in6_addr));
           addr.Reset(*sa);
         } break;
         default:

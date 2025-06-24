@@ -13,6 +13,7 @@
 #include <openssl/err.h>
 
 #include <functional>
+#include <optional>
 
 namespace base {
     class CertificatePair {

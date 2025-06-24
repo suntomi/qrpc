@@ -77,6 +77,14 @@ template <typename T, size_t N> char (&ArraySizeHelper(T (&array)[N]))[N];
 #define DISABLE_UNUSED_PARAMETER_WARNING_POP \
     HEDLEY_DIAGNOSTIC_POP
 
+#define DISABLE_USE_AFTER_FREE_WARNING_PUSH \
+    HEDLEY_DIAGNOSTIC_PUSH \
+    HEDLEY_PRAGMA(clang diagnostic ignored "-Wuse-after-free") \
+    HEDLEY_PRAGMA(GCC diagnostic ignored "-Wuse-after-free")
+
+#define DISABLE_USE_AFTER_FREE_WARNING_POP \
+    HEDLEY_DIAGNOSTIC_POP
+
 #define DISABLE_CAST_QUAL_WARNING_PUSH \
     HEDLEY_DIAGNOSTIC_PUSH \
     HEDLEY_DIAGNOSTIC_DISABLE_CAST_QUAL
@@ -84,7 +92,7 @@ template <typename T, size_t N> char (&ArraySizeHelper(T (&array)[N]))[N];
 #define DISABLE_CAST_QUAL_WARNING_POP \
     HEDLEY_DIAGNOSTIC_POP
 
-// 非推奨警告を無効化するマクロ
+// disable warnings
 #define DISABLE_DEPRECATED_WARNING_PUSH \
     HEDLEY_DIAGNOSTIC_PUSH \
     HEDLEY_DIAGNOSTIC_DISABLE_DEPRECATED
@@ -95,3 +103,34 @@ template <typename T, size_t N> char (&ArraySizeHelper(T (&array)[N]))[N];
 #define STRINIFY(x) #x
 #define TOSTR(x) STRINIFY(x)
 #define LINESTR TOSTR(__LINE__)
+
+// network byte order conversion macros
+#if !defined(ntohll)
+#if defined(__GNUC__) || defined(__clang__)
+    // GCC and Clang support builtin byte swap
+    #define ntohll(x) __builtin_bswap64(x)
+#elif defined(_MSC_VER)
+    // Microsoft Visual C++
+    #include <stdlib.h>
+    #define ntohll(x) _byteswap_uint64(x)
+#elif defined(__APPLE__)
+    // macOS/iOS
+    #include <libkern/_OSByteOrder.h>
+    #define ntohll(x) __DARWIN_OSSwapInt64(x)
+#else
+    // Fallback implementation for other compilers
+    #define ntohll(x) \
+        ((((uint64_t)(x) & 0xff00000000000000ULL) >> 56) | \
+         (((uint64_t)(x) & 0x00ff000000000000ULL) >> 40) | \
+         (((uint64_t)(x) & 0x0000ff0000000000ULL) >> 24) | \
+         (((uint64_t)(x) & 0x000000ff00000000ULL) >> 8)  | \
+         (((uint64_t)(x) & 0x00000000ff000000ULL) << 8)  | \
+         (((uint64_t)(x) & 0x0000000000ff0000ULL) << 24) | \
+         (((uint64_t)(x) & 0x000000000000ff00ULL) << 40) | \
+         (((uint64_t)(x) & 0x00000000000000ffULL) << 56))
+#endif
+#endif
+
+#if !defined(htonll)
+#define htonll(x) ntohll(x)
+#endif

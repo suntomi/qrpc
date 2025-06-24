@@ -131,71 +131,59 @@ static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_wire_proto_t p
   }
 }
 
-// static void lib_init(bool client) {
-//   //break some of the systems according to the env value "CHAOS"
-//   chaos_init();
-//   if (client) {
-//     //initialize c-ares
-//     auto status = ares_library_init(ARES_LIB_INIT_ALL);
-//     if (status != ARES_SUCCESS) {
-//       logger::fatal({
-//         {"ev", "fail to init ares"},
-//         {"status", status}
-//       });
-//     }    
-//   }
-// }
+static void lib_init() {
+  //break some of the systems according to the env value "CHAOS"
+  chaos_init();
+}
 
-// #define no_ret_closure_call_with_check(__pclsr, ...) \
-//   if ((__pclsr).proc != nullptr) { \
-//     (__pclsr).proc((__pclsr).arg, __VA_ARGS__); \
-//   }
+#define no_ret_closure_call_with_check(__pclsr, ...) \
+  if ((__pclsr).proc != nullptr) { \
+    (__pclsr).proc((__pclsr).arg, __VA_ARGS__); \
+  }
 
 
 
-// // --------------------------
-// //
-// // misc API
-// //
-// // --------------------------
-// QRPC_THREADSAFE const char *nq_error_detail_code2str(qrpc_error_t code, int detail_code) {
-//   if (code == QRPC_EQUIC) {
-//     return QuicStrError(code);
-//   } else if (code == QRPC_ERESOLVE) {
-//     //TODO ares erorr code
-//     ASSERT(false);
-//     return "";
-//   } else {
-//     ASSERT(false);
-//     return "";
-//   }
-// }
+// --------------------------
+//
+// misc API
+//
+// --------------------------
+QRPC_THREADSAFE const char *qrpc_error_str(qrpc_error_t code, int /* detail_code */) {
+  static const char *errstr[] = {
+    "no error",
+    "syscall fails",
+    "timeout",
+    "allocation fails",
+    "unsupported",
+    "target gone",
+    "dependent library error",
+    "user raise error",
+    "resolve fails",
+    "invalid value",
+    "not enough size",
+    "callback returns error"
+  };
+  return errstr[-code];
+}
 
 
-// // --------------------------
-// //
-// // client API
-// //
-// // --------------------------
-// QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
-//   qrpc_clconf_t conf = {
-//     //protocol type/version
-//     .protocol = QRPC_WIRE_PROTO_QUIC_NEGOTIATE,
-//     //set true to ignore proof verification
-//     .insecure = false,
-//     //track reachability to the provide hostname and recreate socket if changed.
-//     //useful for mobile connection. currently iOS only. use qrpc_conn_reachability_change for android.
-//     .track_reachability = false,
-//     //transport config
-//     .transport = DefaultTransportConfig()
-//   };
-//   qrpc_closure_init_noop(conf.on_open, qrpc_on_client_conn_open_t);
-//   qrpc_closure_init_noop(conf.on_close, qrpc_on_client_conn_close_t);
-//   qrpc_closure_init_noop(conf.on_finalize, qrpc_on_client_conn_finalize_t);
-//   return conf;
-// }
+// --------------------------
+//
+// client API
+//
+// --------------------------
+QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
+  qrpc_clconf_t conf = {
+    //transport config
+    .transport = DefaultTransportConfig(QRPC_WIRE_PROTO_DEFAULT)
+  };
+  qrpc_closure_init_noop(conf.on_open, qrpc_on_client_conn_open_t);
+  qrpc_closure_init_noop(conf.on_close, qrpc_on_client_conn_close_t);
+  qrpc_closure_init_noop(conf.on_finalize, qrpc_on_client_conn_finalize_t);
+  return conf;
+}
 // QRPC_THREADSAFE qrpc_client_t qrpc_client_create(int max_nfd, int max_stream_hint, const qrpc_dns_conf_t *dns_conf) {
-//   lib_init(true); //anchor
+//   lib_init(); //anchor
 //   auto l = new ClientLoop(max_nfd, max_stream_hint);
 //   if (l->Open(max_nfd, dns_conf) < 0) {
 //     return nullptr;

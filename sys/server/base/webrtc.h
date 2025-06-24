@@ -15,6 +15,8 @@
 #include "RTC/SrtpSession.hpp"
 #include "RTC/RTCP/Packet.hpp"
 
+#include <mutex>
+
 namespace base {
 namespace webrtc {
   typedef base::Stream Stream;
@@ -407,7 +409,7 @@ namespace webrtc {
         }
         c.alarm_id_ = AlarmProcessor::INVALID_ID; // prevent AlarmProcessor::Cancel to be called
         CloseConnection(c);
-        return 0ULL; // because this return value stops the alarm
+        return qrpc_alarm_stop_rv(); // because this return value stops the alarm
       }, qrpc_time_now());
     }
     void ScheduleClose(const IceUFrag &ufrag) {

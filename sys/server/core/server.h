@@ -3,27 +3,26 @@
 // found in the LICENSE file.
 #pragma once
 
+#include <atomic>
 #include <map>
 #include <tuple>
 #include <mutex>
 #include <condition_variable>
 
-#include "base/handler_map.h"
-#include "core/nq_worker.h"
-#include "core/nq_config.h"
+#include "qrpc/handler_map.h"
+#include "qrpc/worker.h"
 
 namespace qrpc {
 class Server {
  public:
-	typedef Worker::PacketQueue PacketQueue;
-  typedef Worker::InvokeQueue InvokeQueue;
-  struct PortConfig : class ServerConfig {
+	typedef Worker::TaskQueue TaskQueue;
+  struct PortConfig {
     qrpc_addr_t address_;
     HandlerMap handler_map_;
 
-    PortConfig(const qrpc_addr_t &a) : ServerConfig(a), address_(a), handler_map_() {}
+    PortConfig(const qrpc_addr_t &a) : address_(a), handler_map_() {}
     PortConfig(const qrpc_addr_t &a, const qrpc_svconf_t &port_config) : 
-      ServerConfig(a, port_config), address_(a), handler_map_() {}
+      address_(a), handler_map_() {}
 
     inline const HandlerMap *handler_map() const { return &handler_map_; }
   }; 
@@ -33,10 +32,9 @@ class Server {
     TERMINATED,
   };
  protected:
-  atomic<Status> status_;
+  std::atomic<Status> status_;
   uint32_t n_worker_;
-	std::unique_ptr<PacketQueue[]> worker_queue_;
-  std::unordered_map<int, std::unique_ptr<InvokeQueue[]>> invoke_queues_list_;
+	std::unique_ptr<TaskQueue[]> worker_queue_;
 	std::unordered_map<int, PortConfig> port_configs_;
   std::unordered_map<int, Worker*> workers_;
   std::mutex mutex_;
@@ -48,7 +46,7 @@ class Server {
 	Server(uint32_t n_worker) : 
     status_(RUNNING), n_worker_(n_worker), worker_queue_(nullptr), invoke_queues_list_(), 
     stream_index_factory_(0x7FFFFFFF) {}
-  ~NqServer() {}
+  ~Server() {}
   HandlerMap *Open(const qrpc_addr_t *addr, const qrpc_svconf_t *conf) {
     if (port_configs_.find(addr->port) != port_configs_.end()) {
       return nullptr; //already port used

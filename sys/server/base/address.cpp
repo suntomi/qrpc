@@ -20,7 +20,9 @@ namespace base {
         sin->sin_family = af; // no endian conversion of 1byte value
         sin->sin_port = Endian::HostToNet(port);
         sin->sin_addr = *reinterpret_cast<struct in_addr *>(abuff);
+        #if !OS_LINUX
         sin->sin_len = r; // no endian conversion of 1byte value
+        #endif
         assign(buff, r);
         return 0;
       } else if (af == AF_INET6) {
@@ -28,7 +30,9 @@ namespace base {
         sin6->sin6_family = af; // no endian conversion of 1byte value
         sin6->sin6_port = Endian::HostToNet(port);
         sin6->sin6_addr = *reinterpret_cast<struct in6_addr *>(abuff);
+        #if !OS_LINUX
         sin6->sin6_len = r; // no endian conversion of 1byte value
+        #endif
         sin6->sin6_flowinfo = 0;
         sin6->sin6_scope_id = 0;
         assign(buff, r);

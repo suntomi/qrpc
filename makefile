@@ -1,4 +1,6 @@
 .PHONY: build
+# Platform
+PLATFORM=platform_darwin_arm64
 # debug/release
 MODE=debug
 # sanitize
@@ -13,8 +15,7 @@ endif
 .PHONY: sys
 
 sys:
-	bazel query //...
-	bazel build :server :client $(CONFIG) --verbose_failures
+	bazel build :server :client $(CONFIG) --platforms=//:$(PLATFORM) --verbose_failures
 
 ext:
 	make -C $(CURDIR)/sys/server/ext setup MODE=$(MODE) SAN=$(SAN)

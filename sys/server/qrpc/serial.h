@@ -45,8 +45,9 @@ class Serial : public qrpc_serial_t {
       return Compare(lhs, rhs);
     }
   };
-  static inline Serial &New() {
-    
+  static inline const Serial &New() {
+    static Serial s;
+    return s;
   }
  public:
   inline Serial() { Clear(); }

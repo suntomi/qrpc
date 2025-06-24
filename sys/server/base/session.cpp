@@ -198,7 +198,7 @@ namespace base {
     int r;
     if ((r = Syscall::SendTo(fd_, mmsg, size)) < 0) {
       if (Syscall::IOMayBlocked(r, false)) {
-        return count; // nothing should be sent
+        return size; // nothing should be sent
       }
       ASSERT(false);
       QRPC_LOGJ(error, {{"ev", "Syscall::SendTo fails"}, {"errno", Syscall::Errno()}});
@@ -243,7 +243,7 @@ namespace base {
     auto n_sessions = sessions_.size();
     int sends[n_sessions];
     UdpSession *sessions[n_sessions];
-    size_t count = 0, session_idx = 0;
+    int count = 0, session_idx = 0;
     for (auto kv : sessions_) {
       auto s = dynamic_cast<UdpSession *>(kv.second);
       auto size = s->write_vecs().size();
@@ -383,7 +383,7 @@ namespace base {
       if (Syscall::IOMayBlocked(eno, false)) {
         return QRPC_EAGAIN;
       }
-      logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
+      logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});
       return QRPC_ESYSCALL;
     }
     return r;

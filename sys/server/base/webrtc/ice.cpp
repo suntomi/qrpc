@@ -1062,10 +1062,10 @@ namespace webrtc {
 		case STOPPED:
       state_ = NEW;
 			last_success_ = 0;
-      return 0ULL; // alarm stops
+      return qrpc_alarm_stop_rv(); // alarm stops
     default:
       ASSERT(false);
-      return 0ULL;
+      return qrpc_alarm_stop_rv();
     }
   }
 } // namespace webrtc

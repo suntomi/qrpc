@@ -191,7 +191,7 @@ int ConnectionFactory::ThreadInit(AlarmProcessor &a) {
       return a.Set([hh = h]() {
         auto intv = hh();
         if (intv <= 0) {
-          return 0ULL;
+          return qrpc_alarm_stop_rv(); // stop alarm
         }
         return qrpc_time_now() + qrpc_time_msec(intv);
       }, qrpc_time_now() + qrpc_time_msec(start_at));
@@ -1892,7 +1892,7 @@ namespace client {
       BASE::OnShutdown();
       if (BASE::close_reason().code == QRPC_CLOSE_REASON_TIMEOUT) {
         on_ice_failure_(QRPC_CLOSE_REASON_TIMEOUT);
-        return 0ULL; // stop reconnection;
+        return qrpc_alarm_stop_rv(); // stop reconnection;
       }
       rctc_.Shutdown();
       return rctc_.Timeout();
@@ -1900,7 +1900,7 @@ namespace client {
     qrpc_time_t operator()() {
       ASSERT(prober_ != nullptr);
       auto next = prober_->OnTimer(this);
-      if (next == 0ULL) {
+      if (next == qrpc_alarm_stop_rv()) {
         // prevent OnShutdown from canceling alarm
         alarm_id_ = AlarmProcessor::INVALID_ID;
         BASE::Close(QRPC_CLOSE_REASON_TIMEOUT, 0, "wait ice prober connected");

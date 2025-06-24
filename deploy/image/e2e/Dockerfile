@@ -12,7 +12,7 @@ ENV BUILDARCH=${BUILDARCH}
 # basic packages and bazel installation
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     apt-get update && apt-get install -y \
-    build-essential \
+    build-essential linux-libc-dev \
     cmake \
     curl \
     git \
@@ -25,10 +25,15 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
     ca-certificates
 
 # Install Bazel using Bazelisk
-RUN curl --output /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-${BUILDARCH} && \
-    chmod +x /usr/local/bin/bazel && bazel version
+RUN curl --output /usr/local/bin/bazel -L https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-${BUILDARCH} && \
+    chmod +x /usr/local/bin/bazel
 
 WORKDIR /work
+
+# preinstall required bazel version
+RUN --mount=type=bind,source=.bazeliskrc,target=/work/.bazeliskrc \
+    --mount=type=bind,source=WORKSPACE,target=/work/WORKSPACE \
+    bazel version
 
 # make ext will be automatically detect cpu architecture
 RUN --mount=type=bind,rw,source=sys/server/ext,target=/work/src/sys/server/ext \
@@ -39,6 +44,9 @@ RUN --mount=type=bind,rw,source=sys/server/ext,target=/work/src/sys/server/ext \
     --mount=type=cache,target=/work/src/.build/bazel-cache \
     WORKDIR=/work TARGETARCH=${TARGETARCH} bash /work/src/scripts/image/with-artifacts.sh \
         make -C src ext MODE=release
+
+RUN --mount=type=cache,target=/var/lib/apt/lists \
+    apt-get install -y linux-libc-dev
 
 RUN --mount=type=bind,rw,source=.,target=/work/src \
     --mount=type=cache,target=/work/artifacts \

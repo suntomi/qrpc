@@ -51,7 +51,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
             return qrpc_time_sec(2);
         } else {
             error_msg = "success";
-            return 0ULL;
+            return qrpc_alarm_stop_rv();
         }
     }, [&error_msg](Stream &s, const char *p, size_t sz) -> int {
         auto pl = std::string(p, sz);
@@ -65,7 +65,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
             const auto &ctx = s.context<TestStreamContext>();
             auto &text = ctx.texts[count];
             if (hello != ("test:" + text)) {
-                error_msg = ("stream message hello wrong: [" + hello + "] should be [", text + "]");
+                error_msg = ("stream message hello wrong: [" + hello + "] should be [" + text + "]");
                 return QRPC_EINVAL;
             }
             if (count < 2) {

@@ -25,7 +25,7 @@ bool AsyncResolver::Config::SetServerHostPort(const std::string &host, int port)
     tmp->family = af;
     tmp->udp_port = tmp->tcp_port = port;
   } else {
-    Syscall::MemFree(tmp);
+    delete tmp;
     return false;
   }
   tmp->next = server_list;

@@ -101,12 +101,12 @@ namespace webrtc {
   };
 
   // WebRTCClient
-  class WebRTCClient : public base::webrtc::Client, Client {
-    WebRTCClient(Worker &w, const qrpc_addr_t &addr, const qrpc_clconf_t &config) : base::webrtc::Client(
+  class Client : public base::webrtc::Client, BaseClient {
+    Client(Worker &w, const qrpc_addr_t &addr, const qrpc_clconf_t &config) : base::webrtc::Client(
       w.loop(), ConfigFrom(addr, config.transport),
       // connection factory method
       [this](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
-        return new WebRTCConnection(cf, role);
+        return new Connection(cf, role);
       },
       // stream factory
       [this, &w](const Stream::Config &c, base::Connection &conn) {
