@@ -52,7 +52,7 @@ RUN --mount=type=bind,rw,source=.,target=/work/src \
     --mount=type=cache,target=/work/artifacts \
     --mount=type=cache,target=/work/src/.build/bazel-cache \
     WORKDIR=/work TARGETARCH=${TARGETARCH} bash /work/src/scripts/image/with-artifacts.sh \
-        make -C src sys MODE=release PLATFORM=platform_linux_${TARGETARCH} && \
+        make -C src sys MODE=release PLATFORM=linux_${TARGETARCH} && \
     mv /work/.build/bazel-bin/sys /work/artifacts/${TARGETARCH}/qrpc
 # ========================================================================
 # stage 2

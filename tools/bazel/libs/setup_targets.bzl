@@ -97,8 +97,13 @@ def setup_targets():
       values = {"cpu": "openbsd"},
   )
 
-  # sanitizer
+  # QRPC Linux platform support
   native.config_setting(
-    name = "asan",
-    define_values= {"SAN": "address"},
+      name = "linux_arm64",
+      values = {"cpu": "linux_arm64"},
+  )
+
+  native.config_setting(
+      name = "linux_amd64",
+      values = {"cpu": "linux_amd64"},
   )

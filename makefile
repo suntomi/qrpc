@@ -1,21 +1,27 @@
 .PHONY: build
-# Platform
-PLATFORM=platform_darwin_arm64
 # debug/release
 MODE=debug
 # sanitize
 SAN=address
-
-# Set config based on MODE and SAN
-CONFIG=--config=$(MODE)
-ifneq ($(SAN),)
-	CONFIG += --define=SAN=$(SAN)
+# architecture
+PLATFORM=darwin_arm64
+# build options
+BUILD_OPT=--config=$(MODE) 
+ifneq ($(SAN),none)
+	BUILD_OPT += --define=SAN=$(SAN)
+endif
+ifeq ($(PLATFORM),linux_arm64)
+	BUILD_OPT += --cpu=aarch64
+else ifeq ($(PLATFORM),linux_amd64)
+	BUILD_OPT += --cpu=x86_64
+else
+	BUILD_OPT += --cpu=$(PLATFORM)
 endif
 
 .PHONY: sys
 
 sys:
-	bazel build :server :client $(CONFIG) --platforms=//:$(PLATFORM) --verbose_failures
+	bazel build :server :client $(BUILD_OPT)
 
 ext:
 	make -C $(CURDIR)/sys/server/ext setup MODE=$(MODE) SAN=$(SAN)
