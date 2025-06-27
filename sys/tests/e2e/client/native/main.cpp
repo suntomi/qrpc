@@ -22,23 +22,25 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
     TestStreamContext testctx = { .texts = {"aaaa", "bbbb", "cccc"} };
     Test3StreamContext test3ctx;
     int closed = 0;
+    bool secure = false;
     const int MAX_RECONNECT = 2;
     base::webrtc::AdhocClient w(l, base::webrtc::ConnectionFactory::Config {
-        .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .rtp = {
             .initial_outgoing_bitrate = 10000000,
-            .max_incoming_bitrate = 10000000,
             .max_outgoing_bitrate = 0,
+            .max_incoming_bitrate = 10000000,
             .min_outgoing_bitrate = 0,
         },
+        .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .send_buffer_size = 256 * 1024,
-        .http_timeout = qrpc_time_sec(5),
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
-        .connection_timeout = qrpc_time_sec(60),
+        .http_timeout = qrpc_time_sec(5),
         .shutdown_timeout = qrpc_time_sec(3),
+        .connection_timeout = qrpc_time_sec(60),
         .consent_check_interval = qrpc_time_sec(10),
         .fingerprint_algorithm = "sha-256",
         .resolver = r,
+        .certpair = secure ? std::optional(CertificatePair::Default()) : std::nullopt,
     }, [](base::webrtc::ConnectionFactory::Connection &c) {
         logger::info({{"ev","webrtc connected"}});
         c.OpenStream({.label = "test"});
@@ -652,6 +654,8 @@ a=max-message-size:262144
 )sdp";
     auto s = base::webrtc::SDP(ffsdp);
     QRPC_LOGJ(info, s);
+    auto s2 = base::webrtc::SDP(sdp);
+    QRPC_LOGJ(info, s2);
     // ASSERT(false);
     return true;
 }

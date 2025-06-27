@@ -2,7 +2,7 @@
 #include "base/loop.h"
 
 #if defined(__ENABLE_EPOLL__)
-#include <timerfd.h>
+#include <sys/timerfd.h>
 #elif defined(__ENABLE_KQUEUE__)
 #include <sys/event.h>
 #endif
@@ -23,7 +23,7 @@ namespace base {
       logger::error({{"ev","timerfd_create fails"},{"errno",Syscall::Errno()}});
       return QRPC_ESYSCALL;
     }
-    struct itimespec itv;
+    struct itimerspec itv;
     auto spec = qrpc_time_to_spec(granularity_);
     itv.it_interval.tv_sec = spec[0];
     itv.it_interval.tv_nsec = spec[1];

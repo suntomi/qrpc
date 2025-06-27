@@ -35,7 +35,7 @@ namespace rtp {
   static const std::string RED_PAYLOAD_PARAM = "red_payload_params";
 
   static uint64_t SelectRtpmap(std::map<uint64_t, RtpMap> &rtpmaps) {
-    size_t candidate_index = -1;
+    ptrdiff_t candidate_index = -1;
     uint64_t current_candidate = 0;
     for (auto &kv : rtpmaps) {
       if (kv.second.rtx) {

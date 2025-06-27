@@ -241,9 +241,9 @@ namespace base {
   #if defined(__QRPC_USE_RECVMMSG__)
     mmsghdr mmsg[n_writebuf];
     auto n_sessions = sessions_.size();
-    int sends[n_sessions];
+    size_t sends[n_sessions];
     UdpSession *sessions[n_sessions];
-    int count = 0, session_idx = 0;
+    size_t count = 0, session_idx = 0;
     for (auto kv : sessions_) {
       auto s = dynamic_cast<UdpSession *>(kv.second);
       auto size = s->write_vecs().size();
@@ -262,7 +262,7 @@ namespace base {
         mmsg[count - 1].msg_len = 0;
       }
     }
-    int r;
+    size_t r;
     if ((r = Syscall::SendTo(fd_, mmsg, count)) < 0) {
       if (Syscall::IOMayBlocked(r, false)) {
         return count; // nothing should be sent
@@ -274,7 +274,7 @@ namespace base {
     if (r < count) {
       auto remain = count - r;
       // partially sent. reset iovs due to sent count
-      for (size_t idx; idx < session_idx; idx++) {
+      for (size_t idx = 0; idx < session_idx; idx++) {
         auto s = sessions[idx];
         if (sends[idx] < r) {
           s->Reset(sends[idx]);

@@ -20,6 +20,13 @@ namespace base {
     public:
         std::string cert, privkey;
         std::vector<std::string> hostnames;
+
+        CertificatePair() : cert(), privkey(), hostnames() {}
+        CertificatePair(const CertificatePair& other) :
+            cert(other.cert), privkey(other.privkey), hostnames(other.hostnames) {}
+        CertificatePair(CertificatePair&& other) noexcept :
+            cert(std::move(other.cert)), privkey(std::move(other.privkey)), 
+            hostnames(std::move(other.hostnames)) {}
     public:
         bool empty() const {
           return (!Syscall::FileExists(cert) || !Syscall::FileExists(privkey)) && hostnames.empty();

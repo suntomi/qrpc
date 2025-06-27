@@ -218,7 +218,8 @@ namespace rtp {
       return Channel::ChannelRequest(&socket(), ::flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()));
     }
     template <typename Body> void HandleRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs) { 
-      RTC::Transport::HandleRequest(&Handler::CreateRequest(fbb, m, ofs));
+      auto req = CreateRequest(fbb, m, ofs);
+      RTC::Transport::HandleRequest(&req);
     }
     void Close();
     Producer *Produce(const MediaStreamConfig &p);

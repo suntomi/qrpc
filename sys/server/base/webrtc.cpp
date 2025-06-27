@@ -1950,7 +1950,7 @@ bool Client::Open(
       // if all connect attempt for UDP fails, should fallback to TCP as last resort.
       // this means, entire handshake process restarts ()
       if (http_client_.Connect(ep.host, ep.port, new client::WhipHttpProcessor(*this, {
-        .host = ep.host, .port = ep.port, .path = ep.path, .protocol = Port::Protocol::TCP
+        .host = ep.host, .path = ep.path, .port = ep.port, .protocol = Port::Protocol::TCP
       }))) {
         logger::info({{"ev","fallback to TCP connection"},{"host",ep.host},
           {"port",ep.port},{"path",ep.path}});
@@ -2038,7 +2038,7 @@ bool Client::Connect(
     {"ep",(host + ":" + std::to_string(port) + path)}});
   
   return http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, {
-    .host = host, .port = port, .path = path, .protocol = proto,
+    .host = host, .path = path, .port = port, .protocol = proto,
   }));
 }
 int Client::Setup(const std::vector<Port> &ports) {

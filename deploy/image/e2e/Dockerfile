@@ -22,7 +22,8 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
     python3-venv \
     pkg-config \
     unzip \
-    ca-certificates
+    ca-certificates \
+    zlib1g-dev
 
 # Install Bazel using Bazelisk
 RUN curl --output /usr/local/bin/bazel -L https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-${BUILDARCH} && \

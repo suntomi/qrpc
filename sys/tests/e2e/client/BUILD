@@ -32,6 +32,10 @@ cc_binary(
   linkopts = selects.with_or({
     "//:asan": ["-fsanitize=address"],
     "//conditions:default": [],
+  }) + select({
+    "//:linux_arm64": ["-lz"],
+    "//:linux_amd64": ["-lz"],
+    "//conditions:default": [],
   }),
   deps = ["//sys/server:qrpc_server_lib"],
   linkstatic = True,
