@@ -287,7 +287,7 @@ namespace base {
       return remain;
     } else {
       // all sent
-      for (size_t idx; idx < session_idx; idx++) {
+      for (size_t idx = 0; idx < session_idx; idx++) {
         auto s = sessions[idx];
         s->Reset(sends[idx]);
       }

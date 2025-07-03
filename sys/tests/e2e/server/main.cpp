@@ -6,7 +6,7 @@
 #include "base/webrtc.h"
 #include "base/string.h"
 #include "base/webrtc/sdp.h"
-#include "nlohmann/json.hpp"
+#include "json.hpp"
 
 using json = nlohmann::json;
 using namespace base;

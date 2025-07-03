@@ -39,22 +39,19 @@ RUN --mount=type=bind,source=.bazeliskrc,target=/work/.bazeliskrc \
 # make ext will be automatically detect cpu architecture
 RUN --mount=type=bind,rw,source=sys/server/ext,target=/work/src/sys/server/ext \
     --mount=type=bind,source=makefile,target=/work/src/makefile \
-    --mount=type=bind,source=scripts,target=/work/src/scripts \
+    --mount=type=bind,source=deploy/scripts,target=/work/src/deploy/scripts \
     --mount=type=bind,rw,source=tools,target=/work/src/tools \
     --mount=type=cache,target=/work/artifacts \
     --mount=type=cache,target=/work/src/.build/bazel-cache \
-    WORKDIR=/work TARGETARCH=${TARGETARCH} bash /work/src/scripts/image/with-artifacts.sh \
+    WORKDIR=/work TARGETARCH=${TARGETARCH} bash /work/src/deploy/scripts/image/with-artifacts.sh \
         make -C src ext MODE=release
-
-RUN --mount=type=cache,target=/var/lib/apt/lists \
-    apt-get install -y linux-libc-dev
 
 RUN --mount=type=bind,rw,source=.,target=/work/src \
     --mount=type=cache,target=/work/artifacts \
     --mount=type=cache,target=/work/src/.build/bazel-cache \
-    WORKDIR=/work TARGETARCH=${TARGETARCH} bash /work/src/scripts/image/with-artifacts.sh \
+    WORKDIR=/work TARGETARCH=${TARGETARCH} bash /work/src/deploy/scripts/image/with-artifacts.sh \
         make -C src sys MODE=release PLATFORM=linux_${TARGETARCH} && \
-    mv /work/.build/bazel-bin/sys /work/artifacts/${TARGETARCH}/qrpc
+    mv /work/src/.build/bazel-bin/sys /work/artifacts/${TARGETARCH}/qrpc
 # ========================================================================
 # stage 2
 FROM ubuntu:24.04 AS runtime

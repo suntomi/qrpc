@@ -89,5 +89,19 @@ step2
 作られたファイルについていくつか教えてください
 - マルチステージビルドのためのdockerfileですが、２つに分かれています。私の理解ではマルチステージビルドを行う場合には１つのdockerfileに複数のステージを記述する必要があったと思うのですが、最近のdockerではその必要がなくなったのでしょうか？
 
-step3
-では、
+============================
+<functional> header included from nlohmann/json.hpp causes similar warning ```#10 36.93 In file included from /usr/include/c++/13/functional:59,
+#10 36.93                  from sys/server/ext/libsdptransform/include/json.hpp:23,
+#10 36.93                  from sys/server/ext/libsdptransform/include/sdptransform.hpp:4,
+#10 36.93                  from sys/server/ext/libsdptransform/src/parser.cpp:1:
+#10 36.93 In constructor 'std::function<_Res(_ArgTypes ...)>::function(std::function<_Res(_ArgTypes ...)>&&) [with _Res = bool; _ArgTypes = {char}]',
+#10 36.93     inlined from 'std::__detail::_State<_Char_type>::_State(std::__detail::_State<_Char_type>&&) [with _Char_type = char]' at /usr/include/c++/13/bits/regex_automaton.h:149:4,
+#10 36.93     inlined from 'std::__detail::_State<_Char_type>::_State(std::__detail::_State<_Char_type>&&) [with _Char_type = char]' at /usr/include/c++/13/bits/regex_automaton.h:146:7,
+#10 36.93     inlined from 'std::__detail::_StateIdT std::__detail::_NFA<_TraitsT>::_M_insert_subexpr_end() [with _TraitsT = std::__cxx11::regex_traits<char>]' at /usr/include/c++/13/bits/regex_automaton.h:290:24:
+#10 36.93 /usr/include/c++/13/bits/std_function.h:405:42: warning: '*(std::function<bool(char)>*)((char*)&__tmp + offsetof(std::__detail::_StateT, std::__detail::_State<char>::<unnamed>.std::__detail::_State_base::<unnamed>)).std::function<bool(char)>::_M_invoker' may be used uninitialized [-Wmaybe-uninitialized]```
+
+fix it by following storategy:
+
+1. create wrapper header of json.hpp at sys/server/base/wrapped/json.hpp
+2. wrapped nlohmann/json.hpp with DISABLE_MAYBE_UNINITIALIZED_WARNING_PUSH/POP
+3. replace #include <nlohmann/json.hpp> to #include "base/wrapped/json.hpp"

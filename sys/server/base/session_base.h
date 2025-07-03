@@ -16,17 +16,11 @@
 #include <optional>
 
 namespace base {
+    DISABLE_MAYBE_UNINITIALIZED_WARNING_PUSH    
     class CertificatePair {
     public:
         std::string cert, privkey;
         std::vector<std::string> hostnames;
-
-        CertificatePair() : cert(), privkey(), hostnames() {}
-        CertificatePair(const CertificatePair& other) :
-            cert(other.cert), privkey(other.privkey), hostnames(other.hostnames) {}
-        CertificatePair(CertificatePair&& other) noexcept :
-            cert(std::move(other.cert)), privkey(std::move(other.privkey)), 
-            hostnames(std::move(other.hostnames)) {}
     public:
         bool empty() const {
           return (!Syscall::FileExists(cert) || !Syscall::FileExists(privkey)) && hostnames.empty();
@@ -36,6 +30,7 @@ namespace base {
         static inline CertificatePair Default() { return CertificatePair(); }
     };
     typedef std::optional<CertificatePair> MaybeCertPair;
+    DISABLE_MAYBE_UNINITIALIZED_WARNING_POP
     class SessionFactory {
     public:
         struct Config {

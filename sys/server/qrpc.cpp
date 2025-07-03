@@ -7,7 +7,7 @@
 #include "base/defs.h"
 #include "base/timespec.h"
 
-#include "nlohmann/json.hpp"
+#include "json.hpp"
 using json = nlohmann::json;
 
 #include "qrpc/base.h"

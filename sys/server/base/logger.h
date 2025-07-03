@@ -1,7 +1,7 @@
 #pragma once
 
 #include "base/assert.h"
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 #include "base/timespec.h"
 #include "base/macros.h"
 #include <stdlib.h>

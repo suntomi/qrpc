@@ -21,7 +21,7 @@ endif
 .PHONY: sys
 
 sys:
-	bazel build -s :server :client $(BUILD_OPT)
+	bazel build -s :server :client :lib $(BUILD_OPT)
 
 ext:
 	make -C $(CURDIR)/sys/server/ext setup MODE=$(MODE) SAN=$(SAN)

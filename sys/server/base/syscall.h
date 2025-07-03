@@ -18,7 +18,7 @@
 
 #include <filesystem>
 
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 
 #include "base/defs.h"
 #include "base/endian.h"

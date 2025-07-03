@@ -46,6 +46,7 @@ namespace webrtc {
 				return IceServer::IceState::DISCONNECTED;
 			}
 		}
+		logger::die({{"ev","unknown IceServer::IceState value"},{"state",state}});
 	}
 
 	FBS::WebRtcTransport::IceState IceServer::IceStateToFbs(IceServer::IceState state)
@@ -72,6 +73,7 @@ namespace webrtc {
 				return FBS::WebRtcTransport::IceState::DISCONNECTED;
 			}
 		}
+		logger::die({{"ev","unknown IceServer::IceState value"},{"state",state}});
 	}
 
 	/* Instance methods. */

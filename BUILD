@@ -48,3 +48,8 @@ alias(
   name = "client", 
   actual = "//sys/tests/e2e/client:e2e_client_native",
 )
+
+alias(
+  name = "lib",
+  actual = "//sys/server:qrpc_lib",
+)

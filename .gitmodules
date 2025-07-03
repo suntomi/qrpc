@@ -10,3 +10,6 @@
 [submodule "src/ext/libsdptransform"]
 	path = sys/server/ext/libsdptransform
 	url = https://github.com/ibc/libsdptransform.git
+[submodule "sys/server/ext/json"]
+	path = sys/server/ext/json
+	url = https://github.com/nlohmann/json.git
