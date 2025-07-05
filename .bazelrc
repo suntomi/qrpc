@@ -1,6 +1,6 @@
 # Common build settings
 build --symlink_prefix=.build/bazel-
-build -s  # show build commands
+# build -s  # show build commands
 build --features=oso_prefix=.build
 build --spawn_strategy=local
 
