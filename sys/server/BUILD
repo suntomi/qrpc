@@ -2,6 +2,8 @@ load("//tools/bazel/libs:selects.bzl", "selects")
 load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
 load("//tools/bazel/libs:cc_static_library.bzl", "cc_static_library")
 
+OPENSSL_INCLUDE_PREFIX = "ext/mediasoup/worker/subprojects/openssl-3.0.8/generated-config/archs"
+
 cc_library(
   name = "qrpc_server_lib",
   srcs = glob([
@@ -57,13 +59,18 @@ cc_library(
     "ext/mediasoup/worker/subprojects/libuv-v1.48.0/include",
     "ext/mediasoup/worker/subprojects/libsrtp-3.0-alpha/include",
     "ext/mediasoup/worker/subprojects/nlohmann_json-3.10.5/include",
-    "ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
     "ext/mediasoup/worker/subprojects/usrsctp-d45b53f5dfa79533f5c5e7aefa5d7570405afb39/usrsctplib",
     "ext/json/include",
   ] + selects.with_or({
     "//:is_debug_build": ["ext/mediasoup/worker/out/Debug/build/fbs"],
     "//conditions:default": ["ext/mediasoup/worker/out/Release/build/fbs"],
-  }),
+  }) + selects.with_or({
+    "//:linux_arm64": [OPENSSL_INCLUDE_PREFIX + "/linux-aarch64/asm/include"],
+    "//:linux_amd64": [OPENSSL_INCLUDE_PREFIX + "/linux-x86_64/asm/include"],
+    "//:darwin_arm64": [OPENSSL_INCLUDE_PREFIX + "/darwin64-arm64-cc/asm/include"],
+  }) + [
+    "ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
+  ],
   deps = ["//sys/server/ext/cares:ares"],
   visibility = ["//visibility:public"],
 )

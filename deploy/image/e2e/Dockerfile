@@ -10,7 +10,7 @@ ENV TARGETARCH=${TARGETARCH}
 
 RUN --mount=type=cache,from=builder,source=/var/lib/apt/lists,target=/var/lib/apt/lists \
     apt-get update && apt-get install -y \
-    ca-certificates
+    ca-certificates libasan8
 
 WORKDIR /app
 

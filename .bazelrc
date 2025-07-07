@@ -10,3 +10,6 @@ build:debug --strip=never
 
 # Release configuration
 build:release --compilation_mode=opt
+build:release --strip=never
+build:release --copt=-g
+build:release --linkopt=-g

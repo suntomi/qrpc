@@ -100,10 +100,10 @@ def setup_targets():
   # QRPC Linux platform support
   native.config_setting(
       name = "linux_arm64",
-      values = {"cpu": "linux_arm64"},
+      values = {"cpu": "aarch64"},
   )
 
   native.config_setting(
       name = "linux_amd64",
-      values = {"cpu": "linux_amd64"},
+      values = {"cpu": "x86_64"},
   )
