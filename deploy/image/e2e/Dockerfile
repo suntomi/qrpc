@@ -13,6 +13,7 @@ RUN --mount=type=cache,from=builder,source=/var/lib/apt/lists,target=/var/lib/ap
     ca-certificates libasan8
 
 WORKDIR /app
+ENV RSC_ROOT=/app
 
 # copy binary and resources from builder stage
 COPY --from=builder /build/sys/tests/e2e/server/e2e_server /app

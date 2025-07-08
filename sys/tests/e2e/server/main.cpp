@@ -162,10 +162,12 @@ int main(int argc, char *argv[]) {
         logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
     });
     // signaling: 8888(http), webrtc: 11111(udp/tcp)
-    std::filesystem::path p(__FILE__);
-    auto rootpath = p.parent_path().string();
+    auto rsc_root_env = std::getenv("RSC_ROOT");
+    auto rootpath = ((rsc_root_env != nullptr) ?
+        std::filesystem::path(rsc_root_env) :
+        std::filesystem::path(__FILE__).parent_path()).string();
     auto htmlpath = rootpath + "/resources/client.html";
-    w.RestRouter().
+    w.http_router().
     Route(std::regex("/"), [&htmlpath](HttpSession &s, std::cmatch &) {
         size_t htmlsz;
         auto html = Syscall::ReadFile(htmlpath, &htmlsz);

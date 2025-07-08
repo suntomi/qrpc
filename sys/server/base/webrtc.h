@@ -630,7 +630,7 @@ namespace webrtc {
       int signaling_port, int port,
       const std::string &listen_ip = "", const std::string &path = "/qrpc"
     );
-    HttpRouter &RestRouter() { return router_; }
+    HttpRouter &http_router() { return router_; }
     // implement ConnectionFactory
     virtual bool is_client() const override { return false; }
     virtual int Setup(const std::vector<Port> &ports) override;

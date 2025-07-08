@@ -34,7 +34,7 @@ class Serial : public qrpc_serial_t {
   }
   static inline const std::string Dump(const qrpc_serial_t &serial) {
     char buff[256];
-    auto sz = sprintf(buff, "%" PRIx64, serial.data[0]);
+    auto sz = snprintf(buff, sizeof(buff), "%" PRIx64, serial.data[0]);
     return std::string(buff, sz);
   }
   static inline bool Compare(const qrpc_serial_t &s1, const qrpc_serial_t &s2) {

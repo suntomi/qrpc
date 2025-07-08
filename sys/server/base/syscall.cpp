@@ -30,6 +30,9 @@ namespace base {
       }
       for (auto p = ifaddrs; p != nullptr; p = p->ifa_next) {
         if (p->ifa_addr == nullptr) { continue; }
+        if (p->ifa_addr->sa_family != AF_INET && p->ifa_addr->sa_family != AF_INET6) {
+          continue; // skip non-ipv4/ipv6 addresses
+        }
         if (p->ifa_flags & IFF_LOOPBACK) { continue; }
         if ((p->ifa_flags & (IFF_UP|IFF_RUNNING)) != (IFF_UP|IFF_RUNNING)) { continue; }
         auto a = Address(*p->ifa_addr);

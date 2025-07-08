@@ -37,7 +37,7 @@ namespace base {
                 m_p = (char *)realloc(m_p, m_max * 2);
                 m_max = m_max * 2;
                 // m_buf, m_ctx.hd[i], m_ctx.bd is pointer which is offset of old m_p
-                // so, calculate offset using old m_p, is completely valid
+                // so, calculate offset using old m_p, is completely valid.
                 DISABLE_USE_AFTER_FREE_WARNING_PUSH
                 m_buf = m_p + (m_buf - org);
                 for (int i = 0; i < m_ctx.n_hd; i++) {

@@ -2,9 +2,6 @@
 
 #include <unistd.h>
 #include <errno.h>
-#ifdef OS_LINUX
-#include <linux/net_tstamp.h>
-#endif
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <string.h>
@@ -22,6 +19,14 @@
 
 #include "base/defs.h"
 #include "base/endian.h"
+
+#ifdef OS_MACOSX || OS_IOS
+#include <mach-o/dyld.h>
+#elif OS_LINUX
+#include <linux/net_tstamp.h>
+#elif OS_WINDOWS
+#include <windows.h>
+#endif
 
 namespace base {
 
@@ -149,7 +154,7 @@ public:
       return sizeof(struct sockaddr_in6);
       break;
     default:
-      logger::fatal({
+      logger::die({
         {"ev", "unsupported address family"},
         {"address_family", address_family}
       });
@@ -166,7 +171,7 @@ public:
       return sizeof(struct in6_addr);
       break;
     default:
-      logger::fatal({
+      logger::die({
         {"ev", "unsupported address family"},
         {"address_family", address_family}
       });
@@ -554,5 +559,30 @@ public:
   static bool RemoveFile(const std::string &path) {
     return std::filesystem::remove(path);
   }
+  static std::string GetExecutablePath() {
+    std::string path;
+#ifdef OS_MACOSX || OS_IOS
+    // macOS implementation
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    path.resize(size);
+    _NSGetExecutablePath(&path[0], &size);
+    path.resize(size - 1); // Remove null terminator
+#elif OS_LINUX
+    // Linux implementation
+    char buffer[1024];
+    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len != -1) {
+        buffer[len] = '\0';
+        path = buffer;
+    }
+#elif _WIN32
+    // Windows implementation
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+    path = buffer;
+#endif   
+    return path;
+}  
 };
 }

@@ -83,13 +83,22 @@ template <typename T, size_t N> char (&ArraySizeHelper(T (&array)[N]))[N];
 #define DISABLE_UNUSED_PARAMETER_WARNING_POP \
     HEDLEY_DIAGNOSTIC_POP
 
-#define DISABLE_USE_AFTER_FREE_WARNING_PUSH \
-    HEDLEY_DIAGNOSTIC_PUSH \
-    HEDLEY_PRAGMA(clang diagnostic ignored "-Wuse-after-free") \
-    HEDLEY_PRAGMA(GCC diagnostic ignored "-Wuse-after-free")
-
-#define DISABLE_USE_AFTER_FREE_WARNING_POP \
-    HEDLEY_DIAGNOSTIC_POP
+#ifdef __GNUC__
+  #if __GNUC__ >= 12
+    #define DISABLE_USE_AFTER_FREE_WARNING_PUSH \
+      _Pragma("GCC diagnostic push") \
+      _Pragma("GCC diagnostic ignored \"-Wuse-after-free\"")
+    #define DISABLE_USE_AFTER_FREE_WARNING_POP \
+      _Pragma("GCC diagnostic pop")
+  #else
+    #define DISABLE_USE_AFTER_FREE_WARNING_PUSH
+    #define DISABLE_USE_AFTER_FREE_WARNING_POP
+  #endif
+#else
+  // For Clang and other compilers that don't support -Wuse-after-free
+  #define DISABLE_USE_AFTER_FREE_WARNING_PUSH
+  #define DISABLE_USE_AFTER_FREE_WARNING_POP
+#endif
 
 #define DISABLE_CAST_QUAL_WARNING_PUSH \
     HEDLEY_DIAGNOSTIC_PUSH \

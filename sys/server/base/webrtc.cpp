@@ -2161,6 +2161,7 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
     connections_[std::move(ufrag)] = c;
     c->RegisterCname();
     // generate response
+    logger::info({{"ev","generate answer sdp"},{"sdp",answer},{"ufrag",ufrag}});
     response.emplace("sdp", std::move(answer));
     if (c->rtp_enabled()) {
       response.emplace("mid_media_path_map",c->rtp_handler().mid_media_path_map());
