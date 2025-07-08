@@ -421,7 +421,7 @@ namespace webrtc {
   protected:
     void RegisterCname(const std::string &cname, std::shared_ptr<Connection> &c);
     std::shared_ptr<Connection> Create(
-      RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd, bool do_entry = false);
+      RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd);
     void CloseConnection(Connection &c);
     void CloseConnection(const IceUFrag &ufrag) {
       auto it = connections_.find(ufrag);

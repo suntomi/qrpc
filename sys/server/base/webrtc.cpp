@@ -159,6 +159,13 @@ ConnectionFactory::FindHandler(const std::string &cname) {
     //   - so maybe this function acts like async function because it needs to query remote controller which knows where `cname` is
     // 2. create handler with that proxy connection
     QRPC_LOGJ(info, {{"ev","peer not found"},{"cname",cname}});
+    // debug logs
+    for (auto &kv : cnmap_) {
+      QRPC_LOGJ(info, {{"ev","cnmap entry"},{"cname",kv.first},{"ufrag",kv.second->ufrag()}});
+    }
+    for (auto &kv : connections_) {
+      QRPC_LOGJ(info, {{"ev","connection entry"},{"ufrag",kv.first},{"cname",kv.second->cname()}});
+    }
     return nullptr;
   }
   return it->second->rtp_handler_;
@@ -298,8 +305,7 @@ void ConnectionFactory::GlobalFin() {
 	}
 }
 std::shared_ptr<Connection> ConnectionFactory::Create(
-  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd,
-  bool do_entry
+  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd
 ) {
   auto c = std::shared_ptr<Connection>(factory_method_(*this, dtls_role));
   if (c == nullptr) {
@@ -310,9 +316,6 @@ std::shared_ptr<Connection> ConnectionFactory::Create(
   if ((r = c->Init(ufrag, pwd)) < 0) {
     logger::error({{"ev","fail to init connection"},{"rc",r}});
     return nullptr;
-  }
-  if (do_entry) {
-    connections_[ufrag] = c;
   }
   return c;
 }
