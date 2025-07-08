@@ -18,7 +18,9 @@ ENV RSC_ROOT=/app
 # copy binary and resources from builder stage
 COPY --from=builder /build/sys/tests/e2e/server/e2e_server /app
 RUN --mount=type=bind,source=sys,target=/tmp/sys \
-    cp -r /tmp/sys/tests/e2e/server/resources /app
+    cp -r /tmp/sys/tests/e2e/server/resources /app && \
+    rm -f /app/resources/qrpc.bundle.* && \
+    cp -f /tmp/sys/client/ts/dist/qrpc.bundle.* /app/resources/
 
 RUN chmod +x /app/e2e_server
 
