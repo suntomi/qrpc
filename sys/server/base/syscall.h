@@ -90,7 +90,7 @@ public:
       return false;
     }
   }
-  static bool SetListenerAddress(
+  static socklen_t SetListenerAddress(
     struct sockaddr_storage &addr, uint16_t port, bool in6
   ) {
     if (in6) {
@@ -101,6 +101,7 @@ public:
       tmp->sin6_family = AF_INET6;
       tmp->sin6_addr = IN6ADDR_ANY_INIT;
       tmp->sin6_port = Endian::HostToNet(port);
+      return GetSockAddrLen(AF_INET6);
     } else {
       auto tmp = (struct sockaddr_in *)&addr;
       #if !OS_LINUX
@@ -109,8 +110,8 @@ public:
       tmp->sin_family = AF_INET;
       tmp->sin_addr.s_addr = htonl(INADDR_ANY);
       tmp->sin_port = Endian::HostToNet(port);
+      return GetSockAddrLen(AF_INET);
     }
-    return true;
   }
   static int GetSockAddrFromFd(Fd fd, Address &a);
   static const void *GetSockAddrPtr(const struct sockaddr_storage &addr) {
@@ -287,12 +288,7 @@ public:
   // if caller omit port, OS will allocate available port number
   static int Bind(Fd fd, int port = 0, bool in6 = false) {
     struct sockaddr_storage sas;
-    socklen_t salen = sizeof(sas);
-    if ((salen = SetListenerAddress(sas, port, in6)) < 0) {
-      logger::error({{"ev", "fail to create listner address"},{"errno", Errno()},
-        {"port", port},{"in6", in6}});
-      return QRPC_EINVAL;
-    }
+    socklen_t salen = SetListenerAddress(sas, port, in6);
     if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), salen) < 0) {
       logger::error({{"ev", "bind() fails"},{"errno", Errno()},{"port", port}});
       return QRPC_ESYSCALL;

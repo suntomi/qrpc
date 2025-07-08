@@ -18,7 +18,7 @@ namespace str {
     }
     return s;
   }
-  static char *dptr(void *p) {
+  static char *dptr(const void *p) {
     static thread_local char buff[32];
     snprintf(buff, sizeof(buff), "%p", p);
     return buff;

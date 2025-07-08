@@ -2,7 +2,11 @@
 # debug/release
 MODE=debug
 # sanitize
-SAN=address
+ifeq ($(MODE),debug)
+	SAN=address
+else
+	SAN=none
+endif
 # architecture
 PLATFORM=darwin_arm64
 # build options
