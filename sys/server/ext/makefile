@@ -23,10 +23,6 @@ setup:
 		cp -r $(CURDIR)/mediasoup/worker/out/$(MS_PROFILE)/build/fbs/FBS $(CURDIR)/mediasoup/worker/include/FBS
 	echo "export mediasoup cpparg info"
 	bash $(CURDIR)/../../../tools/scripts/gen_mscppargs.sh $(CURDIR)
-	echo "configure openssl to generate configure.h"
-	cd $(CURDIR)/mediasoup/worker/subprojects/openssl-3.0.8 && ./config
-	echo "build openssl mandatory generated files"
-	make -C $(CURDIR)/mediasoup/worker/subprojects/openssl-3.0.8 build_generated
 
 clean:
 	make -C $(CURDIR)/mediasoup/worker clean-all
