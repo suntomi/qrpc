@@ -3,6 +3,7 @@ load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
 load("//tools/bazel/libs:cc_static_library.bzl", "cc_static_library")
 
 OPENSSL_INCLUDE_PREFIX = "ext/mediasoup/worker/subprojects/openssl-3.0.8/generated-config/archs"
+MS_EXCLUDED_OBJECTS = ["ext/mediasoup/worker/out/Debug/build/subprojects/flatbuffers-*/**/*.o"]
 
 cc_library(
   name = "qrpc_server_lib",
@@ -11,8 +12,14 @@ cc_library(
     "base/**/*.cpp",
     "ext/libsdptransform/src/*.cpp",
   ]) + selects.with_or({
-    "//:is_debug_build": glob(["ext/mediasoup/worker/out/Debug/build/**/*.o"]),
-    "//conditions:default": glob(["ext/mediasoup/worker/out/Release/build/**/*.o"]),
+    "//:is_debug_build": glob(
+      ["ext/mediasoup/worker/out/Debug/build/**/*.o"],
+      exclude = MS_EXCLUDED_OBJECTS
+    ),
+    "//conditions:default": glob(
+      ["ext/mediasoup/worker/out/Release/build/**/*.o"],
+      exclude = MS_EXCLUDED_OBJECTS
+    ),
   }),
   hdrs = glob([
     "qrpc.h",
@@ -44,7 +51,7 @@ cc_library(
       "-D__ENABLE_UV__",
     ],
     ("//:android", "//conditions:default"): [
-      "-D__ENABLE_EPOLL__", "-D__QRPC_USE_RECVMMSG__"
+      "-D__ENABLE_EPOLL__"
     ],
   }),
   includes = [

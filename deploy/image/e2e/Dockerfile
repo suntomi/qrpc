@@ -7,6 +7,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 ARG TARGETARCH
 ENV TARGETARCH=${TARGETARCH}
+ARG MODE=release
+ENV MODE=${MODE}
 
 RUN --mount=type=cache,from=builder,source=/var/lib/apt/lists,target=/var/lib/apt/lists \
     apt-get update && apt-get install -y \
@@ -23,6 +25,16 @@ RUN --mount=type=bind,source=sys,target=/tmp/sys \
     cp -f /tmp/sys/client/ts/dist/qrpc.bundle.* /app/resources/
 
 RUN chmod +x /app/e2e_server
+
+RUN --mount=type=cache,target=/var/lib/apt/lists \
+    if [ "${MODE}" = "debug" ]; then \
+        apt-get install -y lldb; \
+        cat > /root/.lldbinit << 'EOF' \
+settings set target.load-cwd-lldbinit true \
+settings set target.disable-aslr false \
+settings set target.load-script-from-symbol-file \
+EOF\
+    fi
 
 EXPOSE 8888 11111
 

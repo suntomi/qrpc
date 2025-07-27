@@ -6,6 +6,8 @@ ARG TARGETARCH
 ENV TARGETARCH=${TARGETARCH}
 ARG BUILDARCH
 ENV BUILDARCH=${BUILDARCH}
+ARG MODE=release
+ENV MODE=${MODE}
 
 # basic packages and bazel installation
 RUN --mount=type=cache,target=/var/lib/apt/lists \
@@ -40,13 +42,12 @@ RUN --mount=type=bind,rw,source=sys/server/ext,target=/work/src/sys/server/ext \
     --mount=type=bind,source=makefile,target=/work/src/makefile \
     --mount=type=bind,source=deploy/scripts,target=/work/src/deploy/scripts \
     --mount=type=bind,rw,source=tools,target=/work/src/tools \
-    --mount=type=cache,target=/work/artifacts \
-    WORKDIR=/work TARGETARCH=${TARGETARCH} bash /work/src/deploy/scripts/image/with-artifacts.sh \
-        make -C src ext MODE=release
+    --mount=type=cache,target=/root/.cache \
+    CACHEDIR=/root/.cache TARGETARCH=${TARGETARCH} bash /work/src/deploy/scripts/image/with-cache.sh \
+        make -C src ext MODE=${MODE}
 
 RUN --mount=type=bind,rw,source=.,target=/work/src \
-    --mount=type=cache,target=/work/artifacts \
     --mount=type=cache,target=/root/.cache \
-    WORKDIR=/work TARGETARCH=${TARGETARCH} bash /work/src/deploy/scripts/image/with-artifacts.sh \
-        make -C src sys MODE=release PLATFORM=linux_${TARGETARCH} && \
-        rsync -av --delete /work/src/.build/bazel-bin/ /build/
+    CACHEDIR=/root/.cache TARGETARCH=${TARGETARCH} bash /work/src/deploy/scripts/image/with-cache.sh \
+        make -C src sys MODE=${MODE} PLATFORM=linux_${TARGETARCH} && \
+        rsync -a --delete /work/src/.build/bazel-bin/ /build/

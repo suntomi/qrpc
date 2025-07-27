@@ -18,6 +18,7 @@ echo "==== building builder image for ${type}..."
 docker build \
   --progress plain \
   --platform linux/arm64 \
+  --build-arg MODE="debug" \
   -f "${BUILDER_DOCKER_FILE}" \
   -t "${IMAGE_NAME}:builder" .
 
@@ -27,6 +28,7 @@ docker build \
   --progress plain \
   --platform linux/arm64 \
   --build-arg BASE_IMAGE="${IMAGE_NAME}:builder" \
+  --build-arg MODE="debug" \
   -f "${DOCKER_FILE}" \
   -t "${IMAGE_NAME}:${type}" .
 

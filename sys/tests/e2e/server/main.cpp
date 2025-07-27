@@ -98,7 +98,9 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
+    auto rtc_ip = std::getenv("SFU_IP");
     base::webrtc::AdhocListener w(l, base::webrtc::AdhocListener::Config {
+        .ip = (rtc_ip != nullptr) ? rtc_ip : "",
         .rtp = {
             .initial_outgoing_bitrate = 10000000,
             .max_outgoing_bitrate = 100000000,
