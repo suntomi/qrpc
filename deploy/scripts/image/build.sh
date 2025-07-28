@@ -2,6 +2,7 @@
 set -euo pipefail
 
 type=$1
+san=${SAN:-""}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -18,7 +19,7 @@ echo "==== building builder image for ${type}..."
 docker build \
   --progress plain \
   --platform linux/arm64 \
-  --build-arg MODE="debug" \
+  --build-arg MODE="debug" --build-arg SAN="${san}" \
   -f "${BUILDER_DOCKER_FILE}" \
   -t "${IMAGE_NAME}:builder" .
 
@@ -28,7 +29,7 @@ docker build \
   --progress plain \
   --platform linux/arm64 \
   --build-arg BASE_IMAGE="${IMAGE_NAME}:builder" \
-  --build-arg MODE="debug" \
+  --build-arg MODE="debug" --build-arg SAN="${san}" \
   -f "${DOCKER_FILE}" \
   -t "${IMAGE_NAME}:${type}" .
 

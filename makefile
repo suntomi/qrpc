@@ -1,22 +1,24 @@
 .PHONY: build
 # debug/release
-MODE=debug
+MODE ?= debug
 # architecture
-PLATFORM=darwin_arm64
+PLATFORM ?= darwin_arm64
 # sanitize
 ifeq ($(MODE),debug)
 	ifeq ($(PLATFORM),darwin_arm64)
-		SAN=address
+		SAN ?= address
 	else
-# even for debug mode, sanitizer is off by default
+# for non-darwin platform, sanitizer is off by default
+# even if it is set to debug mode
 # because asan seems to be too slow on linux platform
-		SAN=address
+# should use valgrind instead
+		SAN ?= none
 	endif
 else
-	SAN=none
+	SAN ?= none
 endif
 # build options
-BUILD_OPT=--config=$(MODE) 
+BUILD_OPT = --config=$(MODE) 
 ifneq ($(SAN),none)
 	BUILD_OPT += --define=SAN=$(SAN)
 endif
