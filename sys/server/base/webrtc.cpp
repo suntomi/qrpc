@@ -1971,7 +1971,7 @@ bool Client::Open(
   auto on_failure = [this, endpoint = ep, candidates, idx, c, ufrag](int status) mutable {
     // try next candidate
     if (!this->Open(endpoint, candidates, idx + 1, c)) {
-      this->CloseConnection(ufrag);
+      this->ScheduleClose(ufrag);
     }
   };
   // set remote finger print

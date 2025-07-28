@@ -14,6 +14,13 @@ RUN --mount=type=cache,from=builder,source=/var/lib/apt/lists,target=/var/lib/ap
     apt-get update && apt-get install -y \
     ca-certificates libasan8
 
+RUN --mount=type=cache,target=/var/lib/apt/lists \
+    if [ "${MODE}" = "debug" ]; then \
+        apt-get install -y gdb; \
+        echo "handle SIGINT stop print nopass" >> /root/.gdbinit; \
+        echo "set substitute-path /app/sys sys" >> /root/.gdbinit; \
+    fi
+
 WORKDIR /app
 ENV RSC_ROOT=/app
 
@@ -26,14 +33,9 @@ RUN --mount=type=bind,source=sys,target=/tmp/sys \
 
 RUN chmod +x /app/e2e_server
 
-RUN --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=bind,source=sys,target=/tmp/sys \
     if [ "${MODE}" = "debug" ]; then \
-        apt-get install -y lldb; \
-        cat > /root/.lldbinit << 'EOF' \
-settings set target.load-cwd-lldbinit true \
-settings set target.disable-aslr false \
-settings set target.load-script-from-symbol-file \
-EOF\
+        cp -rf /tmp/sys /app/sys; \
     fi
 
 EXPOSE 8888 11111

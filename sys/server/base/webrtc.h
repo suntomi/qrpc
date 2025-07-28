@@ -403,7 +403,7 @@ namespace webrtc {
       c.alarm_id_ = alarm_processor().Set([this, &c]() {
         // wait for sending all buffered data to peer
         if (c.sctp_association_->GetSctpBufferedAmount() > 0) {
-          if (c.start_shutdown_ + qrpc_time_msec(config_.shutdown_timeout) > qrpc_time_now()) {
+          if (c.start_shutdown_ + config_.shutdown_timeout > qrpc_time_now()) {
             return qrpc_time_now();
           } // if 1 second passed, force close the connection
         }
@@ -423,21 +423,16 @@ namespace webrtc {
     std::shared_ptr<Connection> Create(
       RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd);
     void CloseConnection(Connection &c);
-    void CloseConnection(const IceUFrag &ufrag) {
-      auto it = connections_.find(ufrag);
-      if (it != connections_.end()) {
-        CloseConnection(*it->second);
-      }
-    }
     qrpc_time_t CheckTimeout() {
         qrpc_time_t now = qrpc_time_now();
         qrpc_time_t nearest_check = now + config_.connection_timeout;
         for (auto s = connections_.begin(); s != connections_.end();) {
             qrpc_time_t next_check;
             auto cur = s++;
+            if (cur->second->closed_) { continue; } // wait for scheduleclose done
             if (cur->second->Timeout(now, config_.connection_timeout, next_check)) {
                 // inside CloseConnection, the entry will be erased
-                CloseConnection(*cur->second);
+                ScheduleClose(*cur->second);
             } else {
                 nearest_check = std::min(nearest_check, next_check);
             }
@@ -529,7 +524,7 @@ namespace webrtc {
       const std::string &host, int port,
       const std::string &path = "/qrpc", Port::Protocol proto = Port::Protocol::UDP
     );
-    void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
+    void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c)); }
     void Fin();
     // implement ConnectionFactory
     virtual bool is_client() const override { return true; }
@@ -624,7 +619,7 @@ namespace webrtc {
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
   public:
     int Accept(const std::string &client_sdp, json &response);
-    void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
+    void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c)); }
     void Fin();
     bool Listen(
       int signaling_port, int port,

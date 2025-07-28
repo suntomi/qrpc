@@ -243,7 +243,7 @@ namespace base {
             Config(Resolver &r, qrpc_time_t st, int mbs, bool sw, bool is_listener) :
                 SessionFactory::Config(r, st, is_listener), max_batch_size(
                 #if defined(__QRPC_USE_RECVMMSG__)
-                    mbs
+                    mbs > 0 ? mbs : BATCH_SIZE
                 #else
                     1
                 #endif

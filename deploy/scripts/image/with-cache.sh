@@ -3,7 +3,7 @@
 set -eou pipefail
 
 CACHE_ROOT="${CACHEDIR}/qrpc"
-WORK_ROOT="${WORKDIR:-"/work"}
+WORK_ROOT="${WORKDIR:-"/work"}"
 
 mkdir -p ${CACHE_ROOT}/${TARGETARCH}/mediasoup
 

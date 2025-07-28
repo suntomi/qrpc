@@ -31,7 +31,12 @@ public:
     }
     max_nfd_ = max_nfd; //TODO: use getrlimit if max_nfd omitted
     ToTimeout(timeout_ns, timeout_);
-    processors_ = (IoProcessor**)std::malloc(sizeof(IoProcessor*) * max_nfd_);
+    processors_ = new IoProcessor*[max_nfd_];
+    if (processors_ == nullptr) {
+      QRPC_LOGJ(error, {{"ev","failed to allocate processors_"}, {"max_nfd", max_nfd}});
+      ASSERT(false);
+      return QRPC_EALLOC;
+    }
     memset(processors_, 0, sizeof(IoProcessor*) * max_nfd_);
     return LoopImpl::Open(max_nfd_);
   }

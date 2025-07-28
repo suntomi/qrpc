@@ -105,3 +105,10 @@ fix it by following storategy:
 1. create wrapper header of json.hpp at sys/server/base/wrapped/json.hpp
 2. wrapped nlohmann/json.hpp with DISABLE_MAYBE_UNINITIALIZED_WARNING_PUSH/POP
 3. replace #include <nlohmann/json.hpp> to #include "base/wrapped/json.hpp"
+
+
+===================
+linux版のe2e_serverをdebug mode + address sanitizerを有効にしてビルドすると、
+docs/reference/asan/schedule_close.txt
+のようなエラーを報告します。このバグを修正してください。
+動作確認はこちらで行いますので、修正が完了したら入力を待ってください。
