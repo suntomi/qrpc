@@ -68,7 +68,10 @@ public:
 };
 
 int main(int argc, char *argv[]) {
-    bool secure = (argc > 1) && !std::string(argv[1]).empty();
+    bool secure = (
+        ((argc > 1) && !std::string(argv[1]).empty()) ||
+        (std::getenv("QRPC_E2E_SECURE") != nullptr)
+    );
     bool alive = true;
     Loop l; {
     if (l.Open(1024) < 0) {
@@ -98,7 +101,7 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    auto rtc_ip = std::getenv("SFU_IP");
+    auto rtc_ip = std::getenv("QRPC_E2E_SFU_IP");
     base::webrtc::AdhocListener w(l, base::webrtc::AdhocListener::Config {
         .ip = (rtc_ip != nullptr) ? rtc_ip : "",
         .rtp = {

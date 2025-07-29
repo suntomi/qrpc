@@ -57,6 +57,7 @@ int ConnectionFactory::Init() {
 }
 void ConnectionFactory::Fin() {
   connections_.clear();
+  cnmap_.clear();
   if (alarm_id_ != AlarmProcessor::INVALID_ID) {
     alarm_processor().Cancel(alarm_id_);
     alarm_id_ = AlarmProcessor::INVALID_ID;
