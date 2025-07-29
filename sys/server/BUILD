@@ -1,18 +1,9 @@
 load("//tools/bazel/libs:selects.bzl", "selects")
 load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
+load("//tools/bazel/libs:cc_static_library.bzl", "cc_static_library")
 
-cc_import(
-  name = "mediasoup",
-  hdrs = glob([
-    "ext/mediasoup/worker/include/**",
-    "ext/mediasoup/worker/subprojects/**",
-    "ext/mediasoup/worker/deps/libwebrtc/**"
-  ]),
-  static_library = selects.with_or({
-    "//:is_debug_build": "ext/mediasoup/worker/out/Debug/libmediasoup-worker.a",
-    "//conditions:default": "ext/mediasoup/worker/out/Release/libmediasoup-worker.a",
-  })
-)
+OPENSSL_INCLUDE_PREFIX = "ext/mediasoup/worker/subprojects/openssl-3.0.8/generated-config/archs"
+MS_EXCLUDED_OBJECTS = ["ext/mediasoup/worker/out/Debug/build/subprojects/flatbuffers-*/**/*.o"]
 
 cc_library(
   name = "qrpc_server_lib",
@@ -20,18 +11,23 @@ cc_library(
     "qrpc.cpp",
     "base/**/*.cpp",
     "ext/libsdptransform/src/*.cpp",
-  ], exclude = [
-    "**/*.md"
-  ]),
+  ]) + selects.with_or({
+    "//:is_debug_build": glob(
+      ["ext/mediasoup/worker/out/Debug/build/**/*.o"],
+      exclude = MS_EXCLUDED_OBJECTS
+    ),
+    "//conditions:default": glob(
+      ["ext/mediasoup/worker/out/Release/build/**/*.o"],
+      exclude = MS_EXCLUDED_OBJECTS
+    ),
+  }),
   hdrs = glob([
     "qrpc.h",
     "qrpc/**/*.h",
     "base/**/*.h",
     "ext/moodycamel/*.h",
     "ext/hedley/*.h",
-    "ext/sha1/*.h",
-    "ext/libsdptransform/include/*.hpp",
-    "ext/json/include/**/*.hpp",
+    "ext/sha1/*.h"
   ]),
   copts = [
     "-std=c++17",
@@ -55,11 +51,12 @@ cc_library(
       "-D__ENABLE_UV__",
     ],
     ("//:android", "//conditions:default"): [
-      "-D__ENABLE_EPOLL__", "-D__QRPC_USE_RECVMMSG__"
+      "-D__ENABLE_EPOLL__"
     ],
   }),
   includes = [
     ".",
+    "base/patched",
     "ext",
     "ext/mediasoup/worker/deps/libwebrtc",
     "ext/mediasoup/worker/deps/libwebrtc/libwebrtc",
@@ -69,14 +66,25 @@ cc_library(
     "ext/mediasoup/worker/subprojects/libuv-v1.48.0/include",
     "ext/mediasoup/worker/subprojects/libsrtp-3.0-alpha/include",
     "ext/mediasoup/worker/subprojects/nlohmann_json-3.10.5/include",
-    "ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
     "ext/mediasoup/worker/subprojects/usrsctp-d45b53f5dfa79533f5c5e7aefa5d7570405afb39/usrsctplib",
-    "ext/libsdptransform/include",
     "ext/json/include",
   ] + selects.with_or({
     "//:is_debug_build": ["ext/mediasoup/worker/out/Debug/build/fbs"],
     "//conditions:default": ["ext/mediasoup/worker/out/Release/build/fbs"],
-  }),
-  deps = [":mediasoup", "//sys/server/ext/cares:ares"],
+  }) + selects.with_or({
+    "//:linux_arm64": [OPENSSL_INCLUDE_PREFIX + "/linux-aarch64/asm/include"],
+    "//:linux_amd64": [OPENSSL_INCLUDE_PREFIX + "/linux-x86_64/asm/include"],
+    "//:darwin_arm64": [OPENSSL_INCLUDE_PREFIX + "/darwin64-arm64-cc/asm/include"],
+  }) + [
+    "ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
+  ],
+  deps = ["//sys/server/ext/cares:ares"],
+  visibility = ["//visibility:public"],
+)
+
+cc_static_library(
+  name = "qrpc_lib",
+  dep = ":qrpc_server_lib",
+  output = "libqrpc.a",
   visibility = ["//visibility:public"],
 )

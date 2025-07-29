@@ -28,6 +28,7 @@ using json = nlohmann::json;
 namespace base {
 namespace rtp {
   struct MediaStreamConfig : public Parameters {
+  public:
     struct ControlOptions {
       ControlOptions(const json &j);
       ControlOptions() : pause(false) {}
@@ -179,7 +180,7 @@ namespace rtp {
     typedef Listener::onSendCallback onSendCallback;
   public:
     Handler(Listener &l) : RTC::Transport(&shared(), l.rtp_id(), &router(), TransportOptions(l.GetRtpConfig())),
-      listener_(l), producer_factory_(*this), consumer_factory_(*this), medias_(), mid_media_path_map_() {}
+      listener_(l), producer_factory_(*this), consumer_factory_(*this) {}
     ~Handler() override { RTC::Transport::CloseProducersAndConsumers(); }
     inline Listener &listener() { return listener_; }
     inline const std::string &rtp_id() const { return listener_.rtp_id(); }
@@ -203,7 +204,6 @@ namespace rtp {
     static const FBS::Transport::Options* TransportOptions(const Config &c);
     static const std::vector<Parameters::MediaKind> &SupportedMediaKind();
     inline std::string GenerateMid() { return listener_.GenerateMid(); }
-    qrpc_time_t OnTimer(qrpc_time_t now);
     template <typename Body>
     static Channel::ChannelRequest CreateRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs = 0) {
       auto btit = payload_map_.find(m);
@@ -218,7 +218,8 @@ namespace rtp {
       return Channel::ChannelRequest(&socket(), ::flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()));
     }
     template <typename Body> void HandleRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs) { 
-      RTC::Transport::HandleRequest(&Handler::CreateRequest(fbb, m, ofs));
+      auto req = CreateRequest(fbb, m, ofs);
+      RTC::Transport::HandleRequest(&req);
     }
     void Close();
     Producer *Produce(const MediaStreamConfig &p);

@@ -26,7 +26,7 @@ cc_binary(
       "-D__ENABLE_UV__",
     ],
     ("//:android", "//conditions:default"): [
-      "-D__ENABLE_EPOLL__", "-D__QRPC_USE_RECVMMSG__"
+      "-D__ENABLE_EPOLL__"
     ],
   }),
   linkopts = selects.with_or({

@@ -7,6 +7,7 @@
 #include <ares.h>
 
 #include "base/defs.h"
+#include "base/address.h"
 #include "base/alarm.h"
 #include "base/io_processor.h"
 #include "base/loop.h"
@@ -44,7 +45,9 @@ public:
           auto *sa = reinterpret_cast<struct sockaddr_in *>(&address);
           sa->sin_family = entries->h_addrtype;
           sa->sin_port = Endian::HostToNet(static_cast<in_port_t>(port));
+          #if !OS_LINUX
           sa->sin_len = sizeof(sockaddr_in);
+          #endif
           memcpy(&sa->sin_addr, entries->h_addr_list[0], sizeof(in_addr_t));
           addr.Reset(*sa);
         } break;
@@ -52,8 +55,10 @@ public:
           auto *sa = reinterpret_cast<sockaddr_in6 *>(&address);
           sa->sin6_family = entries->h_addrtype;
           sa->sin6_port = Endian::HostToNet(static_cast<in_port_t>(port));          
+          #if !OS_LINUX
           sa->sin6_len = sizeof(sockaddr_in6);
-          memcpy(&sa->sin6_addr, entries->h_addr_list[0], sizeof(in6_addr_t));
+          #endif
+          memcpy(&sa->sin6_addr, entries->h_addr_list[0], sizeof(struct in6_addr));
           addr.Reset(*sa);
         } break;
         default:
@@ -80,9 +85,9 @@ public:
 class AsyncResolver : public Resolver {
  public:
   struct Config : ares_options {
-    int optmask;
-    qrpc_time_t granularity;
-    ares_addr_port_node *server_list;
+    int optmask{0};
+    qrpc_time_t granularity{qrpc_time_msec(10)};
+    ares_addr_port_node *server_list{nullptr};
     Config();
     ~Config();
     const ares_options *options() const { 
@@ -105,12 +110,12 @@ class AsyncResolver : public Resolver {
   class IoRequest : public IoProcessor {
    private:
     uint32_t current_flags_;
-    bool alive_;
+    bool alive_{true};
     Channel channel_;
-    Fd fd_;
+    Fd fd_{INVALID_FD};
    public:
     IoRequest(Channel channel, Fd fd, uint32_t flags) : 
-      current_flags_(flags), alive_(true), channel_(channel), fd_(fd) {}
+      current_flags_(flags), channel_(channel), fd_(fd) {}
     virtual ~IoRequest() {}
     // implements IoProcessor
     void OnEvent(Fd fd, const Event &e) override;

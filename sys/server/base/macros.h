@@ -58,6 +58,94 @@ template <typename T, size_t N> char (&ArraySizeHelper(T (&array)[N]))[N];
 #define LIKELY(expr) HEDLEY_LIKELY(expr)
 #define UNLIKELY(expr) HEDLEY_UNLIKELY(expr)
 
+// disable warnings
+#define DISABLE_FORMAT_SECURITY_WARNING_PUSH \
+    HEDLEY_DIAGNOSTIC_PUSH \
+    HEDLEY_PRAGMA(clang diagnostic ignored "-Wformat-security") \
+    HEDLEY_PRAGMA(GCC diagnostic ignored "-Wformat-security")
+
+#define DISABLE_FORMAT_SECURITY_WARNING_POP \
+    HEDLEY_DIAGNOSTIC_POP
+
+#define DISABLE_MAYBE_UNINITIALIZED_WARNING_PUSH \
+    HEDLEY_DIAGNOSTIC_PUSH \
+    HEDLEY_PRAGMA(clang diagnostic ignored "-Wmaybe-uninitialized") \
+    HEDLEY_PRAGMA(GCC diagnostic ignored "-Wmaybe-uninitialized")
+
+#define DISABLE_MAYBE_UNINITIALIZED_WARNING_POP \
+    HEDLEY_DIAGNOSTIC_POP
+
+#define DISABLE_UNUSED_PARAMETER_WARNING_PUSH \
+    HEDLEY_DIAGNOSTIC_PUSH \
+    HEDLEY_PRAGMA(clang diagnostic ignored "-Wunused-parameter") \
+    HEDLEY_PRAGMA(GCC diagnostic ignored "-Wunused-parameter")
+
+#define DISABLE_UNUSED_PARAMETER_WARNING_POP \
+    HEDLEY_DIAGNOSTIC_POP
+
+#ifdef __GNUC__
+  #if __GNUC__ >= 12
+    #define DISABLE_USE_AFTER_FREE_WARNING_PUSH \
+      _Pragma("GCC diagnostic push") \
+      _Pragma("GCC diagnostic ignored \"-Wuse-after-free\"")
+    #define DISABLE_USE_AFTER_FREE_WARNING_POP \
+      _Pragma("GCC diagnostic pop")
+  #else
+    #define DISABLE_USE_AFTER_FREE_WARNING_PUSH
+    #define DISABLE_USE_AFTER_FREE_WARNING_POP
+  #endif
+#else
+  // For Clang and other compilers that don't support -Wuse-after-free
+  #define DISABLE_USE_AFTER_FREE_WARNING_PUSH
+  #define DISABLE_USE_AFTER_FREE_WARNING_POP
+#endif
+
+#define DISABLE_CAST_QUAL_WARNING_PUSH \
+    HEDLEY_DIAGNOSTIC_PUSH \
+    HEDLEY_DIAGNOSTIC_DISABLE_CAST_QUAL
+
+#define DISABLE_CAST_QUAL_WARNING_POP \
+    HEDLEY_DIAGNOSTIC_POP
+
+// disable warnings
+#define DISABLE_DEPRECATED_WARNING_PUSH \
+    HEDLEY_DIAGNOSTIC_PUSH \
+    HEDLEY_DIAGNOSTIC_DISABLE_DEPRECATED
+
+#define DISABLE_DEPRECATED_WARNING_POP \
+    HEDLEY_DIAGNOSTIC_POP
+
 #define STRINIFY(x) #x
 #define TOSTR(x) STRINIFY(x)
 #define LINESTR TOSTR(__LINE__)
+
+// network byte order conversion macros
+#if !defined(ntohll)
+#if defined(__GNUC__) || defined(__clang__)
+    // GCC and Clang support builtin byte swap
+    #define ntohll(x) __builtin_bswap64(x)
+#elif defined(_MSC_VER)
+    // Microsoft Visual C++
+    #include <stdlib.h>
+    #define ntohll(x) _byteswap_uint64(x)
+#elif defined(__APPLE__)
+    // macOS/iOS
+    #include <libkern/_OSByteOrder.h>
+    #define ntohll(x) __DARWIN_OSSwapInt64(x)
+#else
+    // Fallback implementation for other compilers
+    #define ntohll(x) \
+        ((((uint64_t)(x) & 0xff00000000000000ULL) >> 56) | \
+         (((uint64_t)(x) & 0x00ff000000000000ULL) >> 40) | \
+         (((uint64_t)(x) & 0x0000ff0000000000ULL) >> 24) | \
+         (((uint64_t)(x) & 0x000000ff00000000ULL) >> 8)  | \
+         (((uint64_t)(x) & 0x00000000ff000000ULL) << 8)  | \
+         (((uint64_t)(x) & 0x0000000000ff0000ULL) << 24) | \
+         (((uint64_t)(x) & 0x000000000000ff00ULL) << 40) | \
+         (((uint64_t)(x) & 0x00000000000000ffULL) << 56))
+#endif
+#endif
+
+#if !defined(htonll)
+#define htonll(x) ntohll(x)
+#endif

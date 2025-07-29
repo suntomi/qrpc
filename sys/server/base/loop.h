@@ -12,14 +12,15 @@ namespace base {
 class Loop : public LoopImpl, IoProcessor {
   // because objects that behave as IoProcessor are allocated both on heap and stack,
   // using smart pointer like shared_ptr is not easy.
-  IoProcessor **processors_;
+  IoProcessor **processors_{nullptr};
   TimerScheduler timer_;
-  int max_nfd_;
-  LoopImpl::Timeout timeout_;
+  int max_nfd_{-1};
+  LoopImpl::Timeout timeout_; // not initailized in constructor.
+  // TODO: define default constructor of LoopImpl::Timeout in loop_impl.h
 public:
   static const int kMinimumProcessorArraySize = 16;
   typedef LoopImpl::Event Event;
-  Loop() : LoopImpl(), processors_(nullptr), timer_(), max_nfd_(-1) {}
+  Loop() : LoopImpl() {}
   ~Loop() { Close(); }
   template <class T> T *ProcessorAt(int fd) { return (T *)processors_[fd]; }
   inline AlarmProcessor &alarm_processor() { return timer_; }
@@ -30,7 +31,12 @@ public:
     }
     max_nfd_ = max_nfd; //TODO: use getrlimit if max_nfd omitted
     ToTimeout(timeout_ns, timeout_);
-    processors_ = (IoProcessor**)std::malloc(sizeof(IoProcessor*) * max_nfd_);
+    processors_ = new IoProcessor*[max_nfd_];
+    if (processors_ == nullptr) {
+      QRPC_LOGJ(error, {{"ev","failed to allocate processors_"}, {"max_nfd", max_nfd}});
+      ASSERT(false);
+      return QRPC_EALLOC;
+    }
     memset(processors_, 0, sizeof(IoProcessor*) * max_nfd_);
     return LoopImpl::Open(max_nfd_);
   }
@@ -76,7 +82,7 @@ public:
   inline int ForceDelWithCheck(Fd fd, IoProcessor *proc) {
     if (processors_[fd] == proc) {
       if (Del(fd) < 0) {
-        auto h = processors_[fd];
+        // auto h = processors_[fd];
         processors_[fd] = nullptr;
       }
       return QRPC_OK;					

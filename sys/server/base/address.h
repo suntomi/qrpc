@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/assert.h"
+#include "base/syscall.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -13,7 +14,7 @@ namespace base {
       reinterpret_cast<const char *>(&sa), salen
     ) {}
     Address(const sockaddr &sa) : std::string(
-      reinterpret_cast<const char *>(&sa), sa.sa_len
+      reinterpret_cast<const char *>(&sa), Syscall::GetSockAddrLen(sa.sa_family)
     ) {}
     Address(const void *p, socklen_t salen) : std::string(
       reinterpret_cast<const char *>(p), salen
@@ -21,6 +22,10 @@ namespace base {
     Address(const std::string &host, uint16_t port) : std::string() { Set(host, port); }
     Address(const Address &a) : std::string(a) {}
     Address() : std::string() {}
+    const Address &operator=(const Address &a) {
+      std::string::assign(a);
+      return *this;
+    }
     const sockaddr *sa() const { return reinterpret_cast<const sockaddr *>(c_str()); }
     socklen_t salen() const { return size(); }
     int family() const { return sa()->sa_family; }

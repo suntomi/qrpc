@@ -87,10 +87,10 @@ namespace base {
   };
 
   SessionFactory::SessionFactory(SessionFactory &&rhs) :
-    factory_method_(std::move(rhs.factory_method_)),
     loop_(rhs.loop_),
     resolver_(rhs.resolver_),
     alarm_processor_(rhs.alarm_processor_),
+    factory_method_(std::move(rhs.factory_method_)),
     alarm_id_(AlarmProcessor::INVALID_ID),
     certpair_(rhs.certpair_),
     session_timeout_(rhs.session_timeout_),
@@ -179,6 +179,9 @@ namespace base {
 
   int UdpSessionFactory::UdpSession::Flush() {
     auto size = write_vecs_.size();
+    if (size == 0) {
+      return QRPC_OK; // nothing to flush
+    }
   #if defined(__QRPC_USE_RECVMMSG__)
     mmsghdr mmsg[size];
     for (size_t idx = 0; idx < size; idx++) {
@@ -195,7 +198,7 @@ namespace base {
     int r;
     if ((r = Syscall::SendTo(fd_, mmsg, size)) < 0) {
       if (Syscall::IOMayBlocked(r, false)) {
-        return count; // nothing should be sent
+        return size; // nothing should be sent
       }
       ASSERT(false);
       QRPC_LOGJ(error, {{"ev", "Syscall::SendTo fails"}, {"errno", Syscall::Errno()}});
@@ -238,7 +241,7 @@ namespace base {
   #if defined(__QRPC_USE_RECVMMSG__)
     mmsghdr mmsg[n_writebuf];
     auto n_sessions = sessions_.size();
-    int sends[n_sessions];
+    size_t sends[n_sessions];
     UdpSession *sessions[n_sessions];
     size_t count = 0, session_idx = 0;
     for (auto kv : sessions_) {
@@ -259,7 +262,7 @@ namespace base {
         mmsg[count - 1].msg_len = 0;
       }
     }
-    int r;
+    size_t r;
     if ((r = Syscall::SendTo(fd_, mmsg, count)) < 0) {
       if (Syscall::IOMayBlocked(r, false)) {
         return count; // nothing should be sent
@@ -271,7 +274,7 @@ namespace base {
     if (r < count) {
       auto remain = count - r;
       // partially sent. reset iovs due to sent count
-      for (size_t idx; idx < session_idx; idx++) {
+      for (size_t idx = 0; idx < session_idx; idx++) {
         auto s = sessions[idx];
         if (sends[idx] < r) {
           s->Reset(sends[idx]);
@@ -284,7 +287,7 @@ namespace base {
       return remain;
     } else {
       // all sent
-      for (size_t idx; idx < session_idx; idx++) {
+      for (size_t idx = 0; idx < session_idx; idx++) {
         auto s = sessions[idx];
         s->Reset(sends[idx]);
       }
@@ -380,7 +383,7 @@ namespace base {
       if (Syscall::IOMayBlocked(eno, false)) {
         return QRPC_EAGAIN;
       }
-      logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno});
+      logger::error({{"ev", "Syscall::RecvFrom fails"}, {"errno", eno}});
       return QRPC_ESYSCALL;
     }
     return r;

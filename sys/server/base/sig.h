@@ -16,12 +16,6 @@ typedef base::Loop::Event Signal;
 typedef struct {} Signal;
 #endif
 
-#if !defined(SIGRTMAX)
-// some OS (eg. darwin) does not seems to define SIGRTMAX
-// we set SIGRTMAX to enough big value
-#define SIGRTMAX 256
-#endif
-
 namespace base {
   class SignalHandler : public IoProcessor {
   public:
@@ -29,8 +23,8 @@ namespace base {
     typedef std::function<void (int, const Signal &)> Receiver;
     // TODO: make it singleton
     // fd_ should be -1 so that signalfd(fd, ...) will create fd for first call of Register()
-    SignalHandler() : fd_(-1), receivers_() {
-      for (int i = 0; i < SIGRTMAX; i++) { receivers_[i] = Nop(); }
+    SignalHandler() {
+      for (int i = 0; i < NSIG; i++) { receivers_[i] = Nop(); }
       sigemptyset(&mask_);
     }
     virtual ~SignalHandler() { Fin(); }
@@ -67,8 +61,8 @@ namespace base {
       void operator() (int, const Signal &) {} 
     };
   protected:
-    Fd fd_;
-    Receiver receivers_[SIGRTMAX];
+    Fd fd_{-1};
+    Receiver receivers_[NSIG];
     sigset_t mask_; 
   };
 }

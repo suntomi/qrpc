@@ -15,6 +15,8 @@
 #include "RTC/SrtpSession.hpp"
 #include "RTC/RTCP/Packet.hpp"
 
+#include <mutex>
+
 namespace base {
 namespace webrtc {
   typedef base::Stream Stream;
@@ -63,9 +65,9 @@ namespace webrtc {
     class SyscallStream : public AdhocStream {
     public:
       SyscallStream(BaseConnection &c, const Config &config, ConnectHandler &&h) :
-        AdhocStream(c, config, std::move(Handler(Nop())), std::move(h), std::move(ShutdownHandler(Nop()))) {}
+        AdhocStream(c, config, Handler(Nop()), std::move(h), ShutdownHandler(Nop())) {}
       SyscallStream(BaseConnection &c, const Config &config) :
-        AdhocStream(c, config, std::move(Handler(Nop())), std::move(ConnectHandler(Nop())), std::move(ShutdownHandler(Nop()))) {}
+        AdhocStream(c, config, Handler(Nop()), ConnectHandler(Nop()), ShutdownHandler(Nop())) {}
       ~SyscallStream() {}
       int OnRead(const char *p, size_t sz) override;
       int Call(const char *fn, uint32_t msgid, const json &j, logger::level llv = logger::level::info);
@@ -120,10 +122,7 @@ namespace webrtc {
       friend class ConnectionFactory;
     public:
       Connection(ConnectionFactory &sv, RTC::DtlsTransport::Role dtls_role) :
-        factory_(sv), last_active_(qrpc_time_now()), ice_server_(nullptr), dtls_role_(dtls_role),
-        dtls_transport_(nullptr), sctp_association_(nullptr), srtp_send_(nullptr), srtp_recv_(nullptr),
-        rtp_handler_(nullptr), streams_(), syscall_(), stream_id_factory_(),
-        alarm_id_(AlarmProcessor::INVALID_ID), mid_seed_(0), sctp_connected_(false), closed_(false) {
+        factory_(sv), last_active_(qrpc_time_now()), dtls_role_(dtls_role) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case RTC::DtlsTransport::Role::CLIENT:
@@ -311,8 +310,8 @@ namespace webrtc {
       const rtp::Handler::Config &GetRtpConfig() const override { return factory().config().rtp; }
       bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) override;
     protected:
-      qrpc_time_t last_active_, start_shutdown_;
       ConnectionFactory &factory_;
+      qrpc_time_t last_active_, start_shutdown_{0};
       std::unique_ptr<IceServer> ice_server_; // ICE
       std::unique_ptr<IceProber> ice_prober_; // ICE(client)
       RTC::DtlsTransport::Role dtls_role_;
@@ -325,12 +324,12 @@ namespace webrtc {
       std::map<Stream::Id, std::shared_ptr<Stream>> streams_;
       std::shared_ptr<SyscallStream> syscall_;
       IdFactory<Stream::Id> stream_id_factory_;
-      AlarmProcessor::Id alarm_id_;
+      AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
       std::string cname_;
       std::map<rtp::Parameters::MediaKind, rtp::Capability> capabilities_;
       rtp::MediaStreamConfigs media_stream_configs_; // stream configs with keeping creation order
-      uint32_t mid_seed_;
-      bool sctp_connected_, closed_;
+      uint32_t mid_seed_{0};
+      bool sctp_connected_{false}, closed_{false};
     };
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
     struct Port {
@@ -404,13 +403,13 @@ namespace webrtc {
       c.alarm_id_ = alarm_processor().Set([this, &c]() {
         // wait for sending all buffered data to peer
         if (c.sctp_association_->GetSctpBufferedAmount() > 0) {
-          if (c.start_shutdown_ + qrpc_time_msec(config_.shutdown_timeout) > qrpc_time_now()) {
+          if (c.start_shutdown_ + config_.shutdown_timeout > qrpc_time_now()) {
             return qrpc_time_now();
           } // if 1 second passed, force close the connection
         }
         c.alarm_id_ = AlarmProcessor::INVALID_ID; // prevent AlarmProcessor::Cancel to be called
         CloseConnection(c);
-        return 0ULL; // because this return value stops the alarm
+        return qrpc_alarm_stop_rv(); // because this return value stops the alarm
       }, qrpc_time_now());
     }
     void ScheduleClose(const IceUFrag &ufrag) {
@@ -422,23 +421,18 @@ namespace webrtc {
   protected:
     void RegisterCname(const std::string &cname, std::shared_ptr<Connection> &c);
     std::shared_ptr<Connection> Create(
-      RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd, bool do_entry = false);
+      RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd);
     void CloseConnection(Connection &c);
-    void CloseConnection(const IceUFrag &ufrag) {
-      auto it = connections_.find(ufrag);
-      if (it != connections_.end()) {
-        CloseConnection(*it->second);
-      }
-    }
     qrpc_time_t CheckTimeout() {
         qrpc_time_t now = qrpc_time_now();
         qrpc_time_t nearest_check = now + config_.connection_timeout;
         for (auto s = connections_.begin(); s != connections_.end();) {
             qrpc_time_t next_check;
             auto cur = s++;
+            if (cur->second->closed_) { continue; } // wait for scheduleclose done
             if (cur->second->Timeout(now, config_.connection_timeout, next_check)) {
                 // inside CloseConnection, the entry will be erased
-                CloseConnection(*cur->second);
+                ScheduleClose(*cur->second);
             } else {
                 nearest_check = std::min(nearest_check, next_check);
             }
@@ -518,11 +512,10 @@ namespace webrtc {
     };
   public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(sf)), http_client_(l, config.resolver, config.certpair),
-      tcp_clients_(), udp_clients_() {}
+      ConnectionFactory(l, std::move(config), std::move(sf)),http_client_(l, config.resolver, config.certpair) {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
-      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)), http_client_(l, config.resolver, config.certpair),
-      tcp_clients_(), udp_clients_() {}
+      ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)),
+      http_client_(l, config.resolver, config.certpair) {}
     ~Client() override { Fin(); }
   public:
     std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
@@ -531,7 +524,7 @@ namespace webrtc {
       const std::string &host, int port,
       const std::string &path = "/qrpc", Port::Protocol proto = Port::Protocol::UDP
     );
-    void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
+    void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c)); }
     void Fin();
     // implement ConnectionFactory
     virtual bool is_client() const override { return true; }
@@ -616,23 +609,23 @@ namespace webrtc {
   public:
     Listener(Loop &l, Config &&config, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(sf)),
-      http_listener_(l, http_listener_config()), router_(), tcp_ports_(), udp_ports_() {}
+      http_listener_(l, http_listener_config()) {}
     Listener(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)),
-      http_listener_(l, http_listener_config()), router_(), tcp_ports_(), udp_ports_() {}
+      http_listener_(l, http_listener_config()) {}
     ~Listener() override { Fin(); }
   public:
     uint16_t udp_port() const { return udp_ports_.empty() ? 0 : udp_ports_[0].port(); }
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
   public:
     int Accept(const std::string &client_sdp, json &response);
-    void Close(BaseConnection &c) { CloseConnection(dynamic_cast<Connection &>(c)); }
+    void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c)); }
     void Fin();
     bool Listen(
       int signaling_port, int port,
       const std::string &listen_ip = "", const std::string &path = "/qrpc"
     );
-    HttpRouter &RestRouter() { return router_; }
+    HttpRouter &http_router() { return router_; }
     // implement ConnectionFactory
     virtual bool is_client() const override { return false; }
     virtual int Setup(const std::vector<Port> &ports) override;

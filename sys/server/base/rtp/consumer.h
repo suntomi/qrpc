@@ -12,7 +12,7 @@ namespace base {
 namespace rtp {
   class Handler;
   class Producer;
-  class MediaStreamConfig;
+  struct MediaStreamConfig;
   typedef RTC::Consumer Consumer;
   struct ConsumerStatus {
     bool paused{ false };

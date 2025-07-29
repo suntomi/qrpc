@@ -70,7 +70,7 @@ namespace base {
         };
     public:
         TcpSessionFactory(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
-            SessionFactory(l, std::move(m), c), sessions_() {}
+            SessionFactory(l, std::move(m), c) {}
         TcpSessionFactory(TcpSessionFactory &&rhs) :
             SessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {
             tls_ctx_ = rhs.tls_ctx_;
@@ -126,7 +126,7 @@ namespace base {
         TcpClient(
             Loop &l, Resolver &r, qrpc_time_t timeout = qrpc_time_sec(120),
             const MaybeCertPair &p = std::nullopt
-        ) : TcpSessionFactory(l, [this](Fd fd, const Address &a) -> Session* {
+        ) : TcpSessionFactory(l, [](Fd fd, const Address &a) -> Session* {
             DIE("client should not call this, provide factory via SessionFactory::Connect");
             return (Session *)nullptr;
         }, Config(r, timeout, p)) {}
@@ -145,7 +145,7 @@ namespace base {
         };
     public:
         TcpListener(Loop &l, FactoryMethod &&m, Config c = Config::Default()) : 
-            TcpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0) {}
+            TcpSessionFactory(l, std::move(m), c) {}
         TcpListener(TcpListener &&rhs) : TcpSessionFactory(std::move(rhs)), 
             fd_(rhs.fd_), port_(rhs.port_) { rhs.fd_ = INVALID_FD; }
         ~TcpListener() override { Fin(); }
@@ -217,8 +217,8 @@ namespace base {
             }
         }
     protected:
-        Fd fd_;
-        int port_;
+        Fd fd_{INVALID_FD};
+        int port_{0};
     };
     template <class S>
     class TcpListenerOf : public TcpListener {
@@ -243,7 +243,7 @@ namespace base {
             Config(Resolver &r, qrpc_time_t st, int mbs, bool sw, bool is_listener) :
                 SessionFactory::Config(r, st, is_listener), max_batch_size(
                 #if defined(__QRPC_USE_RECVMMSG__)
-                    mbs
+                    mbs > 0 ? mbs : BATCH_SIZE
                 #else
                     1
                 #endif
@@ -254,7 +254,7 @@ namespace base {
                 return Config(BATCH_SIZE, false, false);
             }
         public:
-            int max_batch_size;
+            int max_batch_size{BATCH_SIZE};
             bool stream_write{false};
         };
         #if !defined(__QRPC_USE_RECVMMSG__)
@@ -264,7 +264,6 @@ namespace base {
         };
         #endif
         struct ReadPacketBuffer {
-            struct cmsghdr chdr;
             struct iovec iov;
             char buf[Syscall::kMaxIncomingPacketSize];
             char cbuf[Syscall::kDefaultUdpPacketControlBufferSize];
@@ -284,8 +283,27 @@ namespace base {
             const UdpSessionFactory &udp_session_factory() const { return factory().to<UdpSessionFactory>(); }
             std::vector<struct iovec> &write_vecs() { return write_vecs_; }
             int Flush(); 
+            void Reset(size_t size) {
+                ASSERT(size > 0);
+                if (size >= write_vecs_.size()) {
+                    for (int i = 0; i < ((int)size) - 1; i++) {
+                        struct iovec &iov = write_vecs_.back();
+                        FreeIovec(iov);
+                        write_vecs_.pop_back();
+                    }
+                    // remain first buffer for next write
+                    auto &iov = write_vecs_[0];
+                    iov.iov_len = 0;
+                } else if (size > 0) {
+                    for (size_t i = 0; i < size; i++) {
+                        struct iovec &iov = write_vecs_[i];
+                        FreeIovec(iov);
+                    }
+                    write_vecs_.erase(write_vecs_.begin(), write_vecs_.begin() + size);
+                }
+            }            
             // implements Session
-            const char *proto() const { return "UDP"; }
+            const char *proto() const override { return "UDP"; }
             // Send is implemented in subclass
         protected:
             bool AllocIovec(size_t sz) {
@@ -312,29 +330,11 @@ namespace base {
                 }
             }
             void FreeIovecs() {
-                for (int i = 0; i < write_vecs_.size(); i++) {
+                for (size_t i = 0; i < write_vecs_.size(); i++) {
                     struct iovec &iov = write_vecs_[i];
                     FreeIovec(iov);
                 }
                 write_vecs_.clear();
-            }
-            void Reset(size_t size) {
-                if (size >= write_vecs_.size()) {
-                    for (int i = 0; i < size - 1; i++) {
-                        struct iovec &iov = write_vecs_.back();
-                        FreeIovec(iov);
-                        write_vecs_.pop_back();
-                    }
-                    // remain first buffer for next write
-                    auto &iov = write_vecs_[0];
-                    iov.iov_len = 0;
-                } else if (size > 0) {
-                    for (int i = 0; i < size; i++) {
-                        struct iovec &iov = write_vecs_[i];
-                        FreeIovec(iov);
-                    }
-                    write_vecs_.erase(write_vecs_.begin(), write_vecs_.begin() + size);
-                }
             }
             int Write(const char *p, size_t sz) {
                 if (!AllocIovec(sz)) {
@@ -368,7 +368,7 @@ namespace base {
                         return qrpc_time_now() + qrpc_time_usec(100);
                     } else {
                         c.alarm_id_ = AlarmProcessor::INVALID_ID;
-                        return 0ULL;
+                        return qrpc_alarm_stop_rv();
                     }
                 }, qrpc_time_now() + qrpc_time_usec(100));
             }
@@ -446,7 +446,7 @@ namespace base {
                         if (sz == 0 || (sz = OnRead(buffer, sz)) < 0) {
                             TryFlush();
                             Close(sz == 0 ? QRPC_CLOSE_REASON_REMOTE : QRPC_CLOSE_REASON_LOCAL, sz);
-                            break;
+                            return;
                         }
                     }
                     TryFlush();
@@ -462,7 +462,7 @@ namespace base {
         UdpClient(
             Loop &l, Resolver &r, qrpc_time_t session_timeout = qrpc_time_sec(120),
             int batch_size = Config::BATCH_SIZE, bool stream_write = false
-        ) : UdpSessionFactory(l, [this](Fd fd, const Address &ap) {
+        ) : UdpSessionFactory(l, [](Fd fd, const Address &ap) {
             DIE("client should not call this, provide factory with SessionFactory::Connect");
             return (Session *)nullptr;
         }, Config(r, session_timeout, batch_size, stream_write, false)) {}
@@ -535,8 +535,7 @@ namespace base {
         };
     public:
         UdpListener(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
-            UdpSessionFactory(l, std::move(m), c), fd_(INVALID_FD), port_(0),
-            overflow_supported_(false), sessions_(),
+            UdpSessionFactory(l, std::move(m), c),
             read_packets_(batch_size_), read_buffers_(batch_size_) { Init(); }
         UdpListener(UdpListener &&rhs);
         ~UdpListener() override { Fin(); }
@@ -643,9 +642,9 @@ namespace base {
             }
         }
     protected:
-        Fd fd_;
-        int port_;
-        bool overflow_supported_;
+        Fd fd_{INVALID_FD};
+        int port_{0};
+        bool overflow_supported_{false};
         AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
         std::map<Address, Session*> sessions_;
         std::vector<mmsghdr> read_packets_;
@@ -668,7 +667,7 @@ namespace base {
             UdpListener(l, [this](Fd fd, const Address &a) {
                 return new AdhocUdpSession(*this, fd, a);
             }, config), handler_(h) {}
-        AdhocUdpListener(AdhocUdpListener &&rhs) : UdpListener(std::move(rhs)), handler_(std::move(handler_)) {}
+        AdhocUdpListener(AdhocUdpListener &&rhs) : UdpListener(std::move(rhs)), handler_(std::move(rhs.handler_)) {}
         DISALLOW_COPY_AND_ASSIGN(AdhocUdpListener);
         inline Handler &handler() { return handler_; }
     private:

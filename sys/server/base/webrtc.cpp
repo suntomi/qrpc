@@ -57,6 +57,7 @@ int ConnectionFactory::Init() {
 }
 void ConnectionFactory::Fin() {
   connections_.clear();
+  cnmap_.clear();
   if (alarm_id_ != AlarmProcessor::INVALID_ID) {
     alarm_processor().Cancel(alarm_id_);
     alarm_id_ = AlarmProcessor::INVALID_ID;
@@ -159,6 +160,13 @@ ConnectionFactory::FindHandler(const std::string &cname) {
     //   - so maybe this function acts like async function because it needs to query remote controller which knows where `cname` is
     // 2. create handler with that proxy connection
     QRPC_LOGJ(info, {{"ev","peer not found"},{"cname",cname}});
+    // debug logs
+    for (auto &kv : cnmap_) {
+      QRPC_LOGJ(info, {{"ev","cnmap entry"},{"cname",kv.first},{"ufrag",kv.second->ufrag()}});
+    }
+    for (auto &kv : connections_) {
+      QRPC_LOGJ(info, {{"ev","connection entry"},{"ufrag",kv.first},{"cname",kv.second->cname()}});
+    }
     return nullptr;
   }
   return it->second->rtp_handler_;
@@ -191,7 +199,7 @@ int ConnectionFactory::ThreadInit(AlarmProcessor &a) {
       return a.Set([hh = h]() {
         auto intv = hh();
         if (intv <= 0) {
-          return 0ULL;
+          return qrpc_alarm_stop_rv(); // stop alarm
         }
         return qrpc_time_now() + qrpc_time_msec(intv);
       }, qrpc_time_now() + qrpc_time_msec(start_at));
@@ -298,8 +306,7 @@ void ConnectionFactory::GlobalFin() {
 	}
 }
 std::shared_ptr<Connection> ConnectionFactory::Create(
-  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd,
-  bool do_entry
+  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd
 ) {
   auto c = std::shared_ptr<Connection>(factory_method_(*this, dtls_role));
   if (c == nullptr) {
@@ -310,9 +317,6 @@ std::shared_ptr<Connection> ConnectionFactory::Create(
   if ((r = c->Init(ufrag, pwd)) < 0) {
     logger::error({{"ev","fail to init connection"},{"rc",r}});
     return nullptr;
-  }
-  if (do_entry) {
-    connections_[ufrag] = c;
   }
   return c;
 }
@@ -1366,7 +1370,7 @@ int ConnectionFactory::Connection::Open(Stream &s) {
   if ((r = sctp_association_->SendSctpMessage(
       s.config().params, req.ToPaylod(buff, sizeof(buff)), req.PayloadSize(), PPID::WEBRTC_DCEP
   )) < 0) {
-    logger::error({{"proto","sctp"},{"ev","fail to send DCEP OPEN"},{"stream_id",s.id()}});
+    logger::error({{"proto","sctp"},{"ev","fail to send DCEP OPEN"},{"stream_id",s.id()},{"rv",r}});
     return QRPC_EALLOC;
   }
   return QRPC_OK;
@@ -1836,12 +1840,14 @@ namespace client {
         return QRPC_ESYSCALL;
       }
       SetUFrag(std::move(ufrag));
-      std::string sdplen = std::to_string(sdp.length());
+      json sdp_json = {{"sdp", sdp}};
+      std::string sdp_json_str = sdp_json.dump(), 
+        sdp_json_len_str = std::to_string(sdp_json_str.length());
       HttpHeader h[] = {
           {.key = "Content-Type", .val = "application/sdp"},
-          {.key = "Content-Length", .val = sdplen.c_str()}
+          {.key = "Content-Length", .val = sdp_json_len_str.c_str()}
       };
-      return s.Request("POST", ep_.path.c_str(), h, 2, sdp.c_str(), sdp.length());
+      return s.Request("POST", ep_.path.c_str(), h, 2, sdp_json_str.c_str(), sdp_json_str.length());
     }
     void HandleClose(HttpSession &, const CloseReason &r) override {
       // in here, session that related with webrtc connection should not be actively callbacked, 
@@ -1890,7 +1896,7 @@ namespace client {
       BASE::OnShutdown();
       if (BASE::close_reason().code == QRPC_CLOSE_REASON_TIMEOUT) {
         on_ice_failure_(QRPC_CLOSE_REASON_TIMEOUT);
-        return 0ULL; // stop reconnection;
+        return qrpc_alarm_stop_rv(); // stop reconnection;
       }
       rctc_.Shutdown();
       return rctc_.Timeout();
@@ -1898,7 +1904,7 @@ namespace client {
     qrpc_time_t operator()() {
       ASSERT(prober_ != nullptr);
       auto next = prober_->OnTimer(this);
-      if (next == 0ULL) {
+      if (next == qrpc_alarm_stop_rv()) {
         // prevent OnShutdown from canceling alarm
         alarm_id_ = AlarmProcessor::INVALID_ID;
         BASE::Close(QRPC_CLOSE_REASON_TIMEOUT, 0, "wait ice prober connected");
@@ -1948,7 +1954,7 @@ bool Client::Open(
       // if all connect attempt for UDP fails, should fallback to TCP as last resort.
       // this means, entire handshake process restarts ()
       if (http_client_.Connect(ep.host, ep.port, new client::WhipHttpProcessor(*this, {
-        .host = ep.host, .port = ep.port, .path = ep.path, .protocol = Port::Protocol::TCP
+        .host = ep.host, .path = ep.path, .port = ep.port, .protocol = Port::Protocol::TCP
       }))) {
         logger::info({{"ev","fallback to TCP connection"},{"host",ep.host},
           {"port",ep.port},{"path",ep.path}});
@@ -1966,7 +1972,7 @@ bool Client::Open(
   auto on_failure = [this, endpoint = ep, candidates, idx, c, ufrag](int status) mutable {
     // try next candidate
     if (!this->Open(endpoint, candidates, idx + 1, c)) {
-      this->CloseConnection(ufrag);
+      this->ScheduleClose(ufrag);
     }
   };
   // set remote finger print
@@ -2036,7 +2042,7 @@ bool Client::Connect(
     {"ep",(host + ":" + std::to_string(port) + path)}});
   
   return http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, {
-    .host = host, .port = port, .path = path, .protocol = proto,
+    .host = host, .path = path, .port = port, .protocol = proto,
   }));
 }
 int Client::Setup(const std::vector<Port> &ports) {
@@ -2159,6 +2165,7 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
     connections_[std::move(ufrag)] = c;
     c->RegisterCname();
     // generate response
+    logger::info({{"ev","generate answer sdp"},{"sdp",answer},{"ufrag",ufrag}});
     response.emplace("sdp", std::move(answer));
     if (c->rtp_enabled()) {
       response.emplace("mid_media_path_map",c->rtp_handler().mid_media_path_map());

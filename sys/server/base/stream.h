@@ -11,7 +11,7 @@ namespace base {
   class Connection;
   class Stream {
   public:
-    static constexpr char *SYSCALL_NAME = "$syscall";
+    static std::string SYSCALL_NAME;
     typedef struct {
       // TODO: use general stream parameter struct, instead of borrow from WebRTC
       RTC::SctpStreamParameters params;
@@ -23,8 +23,7 @@ namespace base {
     typedef std::function<int (Stream &, const char *, size_t)> Handler;
   public:
     Stream(Connection &c, const Config &config, bool binary_payload = true) :
-      conn_(c), config_(config), context_(nullptr), close_reason_(nullptr),
-      binary_payload_(binary_payload ? 1 : 0), reset_(0), published_(0) {}
+      conn_(c), config_(config), binary_payload_(binary_payload ? 1 : 0) {}
     virtual ~Stream() {}
     const Config &config() const { return config_; }
     bool closed() const { return close_reason_ != nullptr; }
@@ -59,9 +58,9 @@ namespace base {
   protected:
     Connection &conn_;
     Config config_;
-    void *context_;
+    void *context_{nullptr};
     std::unique_ptr<CloseReason> close_reason_;
-    uint8_t binary_payload_, reset_, published_;
+    uint8_t binary_payload_, reset_{0}, published_{0};
   };
   typedef std::function<std::shared_ptr<Stream> (const Stream::Config &, Connection &)> StreamFactory;
   class AdhocStream : public Stream {

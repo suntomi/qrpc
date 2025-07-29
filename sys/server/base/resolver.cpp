@@ -3,7 +3,7 @@
 
 namespace base {
 // optmask, server_list, flags, timeout, lookups are member of the class
-AsyncResolver::Config::Config() : optmask(0), granularity(qrpc_time_msec(10)), server_list(nullptr) {
+AsyncResolver::Config::Config() {
   flags = 0;
 }
 AsyncResolver::Config::~Config() {
@@ -25,7 +25,7 @@ bool AsyncResolver::Config::SetServerHostPort(const std::string &host, int port)
     tmp->family = af;
     tmp->udp_port = tmp->tcp_port = port;
   } else {
-    Syscall::MemFree(tmp);
+    delete tmp;
     return false;
   }
   tmp->next = server_list;

@@ -33,6 +33,7 @@
 
 namespace base {
 namespace rtp {
+	#if !defined(NDEBUG) && defined(USE_FLATBUFFERS_DUMP)
 	thread_local std::map<std::string, std::string> schemas_;
 	static const std::string &InitSchema(const std::string &type) {
 		auto it = schemas_.find(type);
@@ -62,6 +63,7 @@ namespace rtp {
 		ASSERT(!r); // non null means failure
 		return ret;
 	}
+	#endif
   thread_local Shared Handler::shared_;
 	thread_local Handler::RouterListener router_listener_;
 	thread_local Router Handler::router_(&shared_.get(), &router_listener_);
@@ -529,7 +531,7 @@ namespace rtp {
 			FBS::Transport::CreateCloseProducerRequestDirect(fbb, p->id.c_str()));
 	}
 	void Handler::DumpChildren() {
-#if !defined(NDEBUG)
+#if !defined(NDEBUG) && defined(USE_FLATBUFFERS_DUMP)
 		puts(str::Format("================ dump children of %s ================", rtp_id().c_str()).c_str());
 		for (auto &kv : consumers()) {
 			auto &fbb = GetFBB();

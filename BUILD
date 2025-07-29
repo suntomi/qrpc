@@ -15,6 +15,12 @@ config_setting(
     visibility = ["//visibility:public"],
 )
 
+config_setting(
+    name = "asan",
+    define_values= {"SAN": "address"},
+)
+
+
 # this cannot work on OSX because wrapped version of libtool 
 # in bazel sandbox does not support --version option, which is necessary for meson.
 # I had to build mediasoup separately in makefile and use it as cc_import.
@@ -41,4 +47,9 @@ alias(
 alias(
   name = "client", 
   actual = "//sys/tests/e2e/client:e2e_client_native",
+)
+
+alias(
+  name = "lib",
+  actual = "//sys/server:qrpc_lib",
 )

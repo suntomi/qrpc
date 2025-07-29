@@ -91,7 +91,8 @@
     "filesystem": "cpp",
     "span": "cpp",
     "__memory": "cpp",
-    "__availability": "cpp"
+    "__availability": "cpp",
+    "md5.h": "c"
   },
   "dotnet.defaultSolution": "disable"
 }

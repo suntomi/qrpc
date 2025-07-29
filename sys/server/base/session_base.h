@@ -13,8 +13,10 @@
 #include <openssl/err.h>
 
 #include <functional>
+#include <optional>
 
 namespace base {
+    DISABLE_MAYBE_UNINITIALIZED_WARNING_PUSH    
     class CertificatePair {
     public:
         std::string cert, privkey;
@@ -28,18 +30,19 @@ namespace base {
         static inline CertificatePair Default() { return CertificatePair(); }
     };
     typedef std::optional<CertificatePair> MaybeCertPair;
+    DISABLE_MAYBE_UNINITIALIZED_WARNING_POP
     class SessionFactory {
     public:
         struct Config {
             Config(Resolver &r, qrpc_time_t st, bool is_listener, const MaybeCertPair p = std::nullopt) :
-              resolver(r), session_timeout(st), is_listener(is_listener), certpair(p) {}
+              resolver(r), certpair(p), session_timeout(st), is_listener(is_listener) {}
             static inline Config Default() { 
                 // default no timeout
                 return Config(NopResolver::Instance(), qrpc_time_sec(0), false);
             }
         public:
             Resolver &resolver;
-						MaybeCertPair certpair;
+			MaybeCertPair certpair;
             qrpc_time_t session_timeout;
             bool is_listener;
         };
@@ -99,7 +102,7 @@ namespace base {
                 int64_t detail_code = 0, const std::string &msg = "") {
                 // set close reason first so that cancel the alarm when session is deleted before alarm raised
                 SetCloseReason({ .code = code, .detail_code = detail_code, .msg = msg });
-                this->close_reason_->alarm_id = factory().alarm_processor().Set(
+                return (this->close_reason_->alarm_id = factory().alarm_processor().Set(
                     [this]() {
                         std::unique_ptr<CloseReason> cr = std::move(this->close_reason_);
                         ASSERT(close_reason_ == nullptr);
@@ -112,7 +115,7 @@ namespace base {
                         }
                         return 0; // stop alarm
                     }, qrpc_time_now()
-                );
+                )) != AlarmProcessor::INVALID_ID;
             }
             inline void Touch(qrpc_time_t at) { last_active_ = at; }
             // virtual functions to override
@@ -193,7 +196,7 @@ namespace base {
     public:
         SessionFactory(Loop &l, FactoryMethod &&m) :
             loop_(l), resolver_(NopResolver::Instance()), alarm_processor_(l.alarm_processor()),
-            factory_method_(m), certpair_(std::nullopt), session_timeout_(0ULL), is_listener_(false) { Init(); }
+            factory_method_(m), certpair_(std::nullopt) { Init(); }
         SessionFactory(Loop &l, FactoryMethod &&m, Config c) :
             loop_(l), resolver_(c.resolver), alarm_processor_(l.alarm_processor()),
             factory_method_(m), certpair_(c.certpair), session_timeout_(c.session_timeout), 
@@ -255,14 +258,14 @@ namespace base {
         virtual void Close(Session &s) = 0;
         virtual qrpc_time_t CheckTimeout() = 0;
     protected:
-        FactoryMethod factory_method_;
         Loop &loop_;
         Resolver &resolver_;
         AlarmProcessor &alarm_processor_;
+        FactoryMethod factory_method_;
         AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
-				MaybeCertPair certpair_;
-				SSL_CTX *tls_ctx_{nullptr};
-        qrpc_time_t session_timeout_;
-        bool is_listener_;
+        MaybeCertPair certpair_;
+        SSL_CTX *tls_ctx_{nullptr};
+        qrpc_time_t session_timeout_{0ULL};
+        bool is_listener_{false};
     };
   } // namespace base

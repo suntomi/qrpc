@@ -1,0 +1,49 @@
+# git
+.git
+.gitignore
+.gitmodules
+
+# bazel
+.build/*
+
+# docs
+docs/
+*.md
+
+# mediasoup
+**/pip_invoke
+**/out
+**/generated_config/
+**/packagecache/
+**/benchmarks/
+
+# Bazel
+bazel-*
+.bazel
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# development
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+
+# nodejs
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# C++
+*.o
+*.so
+*.a
+*.dylib
+*.dSYM/

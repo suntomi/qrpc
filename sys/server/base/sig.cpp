@@ -13,12 +13,14 @@ namespace base {
     }
     // ignore signals that handled by signalfd
     if (sigprocmask(SIG_BLOCK, &mask_, NULL) != 0) {
-      logger::error({{"ev","sigprocmask(BLOCK) fails"},{"mask",mask_},{"errno",Syscall::Errno()}});
+      logger::error({{"ev","sigprocmask(BLOCK) fails"},
+        {"mask",str::HexDump(reinterpret_cast<const uint8_t *>(&mask_), sizeof(mask_))},
+        {"errno",Syscall::Errno()}});
       return QRPC_ESYSCALL;
     }
   #if defined(__ENABLE_EPOLL__)
     if ((fd_ =  signalfd(fd_, &mask_, SFD_NONBLOCK)) < 0) {
-      logger::error({{"ev","signalfd() fails"},{"errno",Syscall::Errno()}})
+      logger::error({{"ev","signalfd() fails"},{"errno",Syscall::Errno()}});
       return QRPC_ESYSCALL;
     }
   #elif defined(__ENABLE_KQUEUE__)
@@ -44,6 +46,7 @@ namespace base {
       while (true) {
   #if defined(__ENABLE_EPOLL__)
         // read signalfd
+        int r;
         Signal s;
         if ((r = Syscall::Read(fd_, &s, sizeof(s))) < 0) {
           if (Syscall::IOMayBlocked(Syscall::Errno(), false)) {
@@ -62,11 +65,11 @@ namespace base {
         receivers_[s.ssi_signo](s.ssi_signo, s);
   #elif defined(__ENABLE_KQUEUE__)
         // poll kqueue fd
-        Event ev[SIGRTMAX];
+        Event ev[NSIG];
         int r;
         Loop::Timeout to;
         Loop::ToTimeout(1000, to);
-        if ((r = ::kevent(fd_, nullptr, 0, ev, SIGRTMAX, &to)) <= 0) {
+        if ((r = ::kevent(fd_, nullptr, 0, ev, NSIG, &to)) <= 0) {
           if (r == 0) {
             break;
           }
@@ -85,7 +88,9 @@ namespace base {
   void SignalHandler::Fin() {
     // un-ignore signals that handled by signalfd
     if (sigprocmask(SIG_UNBLOCK, &mask_, NULL) != 0) {
-      logger::error({{"ev","sigprocmask(UNBLOCK) fails"},{"mask",mask_},{"errno",Syscall::Errno()}});
+      logger::error({{"ev","sigprocmask(UNBLOCK) fails"},
+        {"mask",str::HexDump(reinterpret_cast<const uint8_t *>(&mask_), sizeof(mask_))},
+        {"errno",Syscall::Errno()}});
     }
     if (fd_ != -1) {
       Syscall::Close(fd_);

@@ -1,23 +1,59 @@
 .PHONY: build
 # debug/release
-MODE=debug
+MODE ?= debug
+# architecture
+PLATFORM ?= darwin_arm64
 # sanitize
-SAN=address
-
-# Set config based on MODE and SAN
-CONFIG=--config=$(MODE)
-ifneq ($(SAN),)
-	CONFIG += --define=SAN=$(SAN)
+ifeq ($(MODE),debug)
+	ifeq ($(PLATFORM),darwin_arm64)
+		SAN ?= address
+	else
+# for non-darwin platform, sanitizer is off by default
+# even if it is set to debug mode
+# because asan seems to be too slow on linux platform
+# should use valgrind instead
+		SAN ?= none
+	endif
+	GDB ?= gdb
+else
+	SAN ?= none
+	GDB ?= 
 endif
+# build options
+BUILD_OPT = --config=$(MODE) 
+ifneq ($(SAN),none)
+	BUILD_OPT += --define=SAN=$(SAN)
+endif
+ifeq ($(PLATFORM),linux_arm64)
+	BUILD_OPT += --cpu=aarch64
+else ifeq ($(PLATFORM),linux_amd64)
+	BUILD_OPT += --cpu=x86_64
+else
+	BUILD_OPT += --cpu=$(PLATFORM)
+endif
+# build target
+TARGET ?= e2e
 
-all:
-	bazel build :server :client $(CONFIG)
+.PHONY: sys
 
-setup:
+sys:
+	bazel build :server :client :lib $(BUILD_OPT)
+
+ext:
 	make -C $(CURDIR)/sys/server/ext setup MODE=$(MODE) SAN=$(SAN)
 
-build: setup all
+all: ext sys
 
 clean:
-	make -C $(CURDIR)/sys/server/ext clean
 	bazel clean --expunge
+
+erase: clean
+	make -C $(CURDIR)/sys/server/ext clean
+
+rundev:
+	docker run --rm -ti -p 8888:8888/tcp -p 11111:11111/udp \
+		-e QRPC_E2E_SFU_IP=192.168.64.1 -e QRPC_E2E_SECURE=1 \
+		--name e2e suntomi/qrpc:e2e $(GDB) ./e2e_server
+
+build:
+	MODE=$(MODE) SAN=$(SAN) bash $(CURDIR)/deploy/scripts/image/build.sh $(TARGET)

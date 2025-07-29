@@ -6,7 +6,7 @@
 #include "base/webrtc.h"
 #include "base/string.h"
 #include "base/webrtc/sdp.h"
-#include "nlohmann/json.hpp"
+#include "json.hpp"
 
 using json = nlohmann::json;
 using namespace base;
@@ -22,23 +22,25 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
     TestStreamContext testctx = { .texts = {"aaaa", "bbbb", "cccc"} };
     Test3StreamContext test3ctx;
     int closed = 0;
+    bool secure = false;
     const int MAX_RECONNECT = 2;
     base::webrtc::AdhocClient w(l, base::webrtc::ConnectionFactory::Config {
-        .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .rtp = {
             .initial_outgoing_bitrate = 10000000,
-            .max_incoming_bitrate = 10000000,
             .max_outgoing_bitrate = 0,
+            .max_incoming_bitrate = 10000000,
             .min_outgoing_bitrate = 0,
         },
+        .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .send_buffer_size = 256 * 1024,
-        .http_timeout = qrpc_time_sec(5),
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
-        .connection_timeout = qrpc_time_sec(60),
+        .http_timeout = qrpc_time_sec(5),
         .shutdown_timeout = qrpc_time_sec(3),
+        .connection_timeout = qrpc_time_sec(60),
         .consent_check_interval = qrpc_time_sec(10),
         .fingerprint_algorithm = "sha-256",
         .resolver = r,
+        .certpair = secure ? std::optional(CertificatePair::Default()) : std::nullopt,
     }, [](base::webrtc::ConnectionFactory::Connection &c) {
         logger::info({{"ev","webrtc connected"}});
         c.OpenStream({.label = "test"});
@@ -51,7 +53,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
             return qrpc_time_sec(2);
         } else {
             error_msg = "success";
-            return 0ULL;
+            return qrpc_alarm_stop_rv();
         }
     }, [&error_msg](Stream &s, const char *p, size_t sz) -> int {
         auto pl = std::string(p, sz);
@@ -65,7 +67,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
             const auto &ctx = s.context<TestStreamContext>();
             auto &text = ctx.texts[count];
             if (hello != ("test:" + text)) {
-                error_msg = ("stream message hello wrong: [" + hello + "] should be [", text + "]");
+                error_msg = ("stream message hello wrong: [" + hello + "] should be [" + text + "]");
                 return QRPC_EINVAL;
             }
             if (count < 2) {
@@ -194,11 +196,12 @@ public:
         }
     }
 };
-class TestUdpSession : public UdpSession {
+template<class P>
+class TestUdpSession : public P {
 public:
     Handler &handler_;
 public:
-    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a, Handler &h) : UdpSession(f, fd, a), handler_(h) {}
+    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a, Handler &h) : P(f, fd, a), handler_(h) {}
     int OnConnect() override { return handler_.Connect(*this, "udp"); }
     int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "udp", p, sz); }
     qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "udp"); }
@@ -286,10 +289,10 @@ bool test_udp_session(Loop &l, Resolver &r, bool listen) {
             DIE("fail to bind");
             return false;
         }
-        return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
+        return test_session<UdpSessionFactory, TestUdpSession<UdpListener::UdpSession>>(l, uc, 10000);
     } else {
         auto uc = UdpClient(l, r, qrpc_time_sec(1));
-        return test_session<UdpSessionFactory, TestUdpSession>(l, uc, 10000);
+        return test_session<UdpSessionFactory, TestUdpSession<UdpClient::UdpSession>>(l, uc, 10000);
     }
 }
 
@@ -299,13 +302,18 @@ bool test_http_client(Loop &l, Resolver &r) {
     hc.Connect("localhost", 8888, [](HttpSession &s) {
         return s.Request("GET", "/test");
     }, [&error_msg](HttpSession &s) {
-        auto b = std::string(s.fsm().body(), s.fsm().bodylen());
-        auto j = json::parse(b);
-        if (j["sdp"].get<std::string>() != "hoge") {
-            logger::error({{"ev","wrong response"},{"body",b}});
-            error_msg = "wrong response";
-        } else {
-            error_msg = "success";
+        auto b = s.fsm().body();
+        try {
+            auto j = json::parse(b);
+            if (j["sdp"].get<std::string>() != "hoge") {
+                logger::error({{"ev","wrong response"},{"body",b}});
+                error_msg = "wrong response";
+            } else {
+                error_msg = "success";
+            }
+        } catch (const json::parse_error &e) {
+            logger::error({{"ev","json parse error"},{"msg",e.what()},{"body",b}});
+            error_msg = "json parse error";
         }
         return nullptr;
     });
@@ -646,6 +654,8 @@ a=max-message-size:262144
 )sdp";
     auto s = base::webrtc::SDP(ffsdp);
     QRPC_LOGJ(info, s);
+    auto s2 = base::webrtc::SDP(sdp);
+    QRPC_LOGJ(info, s2);
     // ASSERT(false);
     return true;
 }

@@ -8,7 +8,7 @@ namespace base {
 namespace rtp {
   class Capability {
   public:
-    Capability() : codecs(), headerExtensions() {}
+    Capability() {}
     RTC::RtpCodecParameters *CodecByPayloadType(uint64_t pt);
   public:
     std::vector<RTC::RtpCodecParameters> codecs;

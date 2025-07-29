@@ -178,11 +178,11 @@ namespace webrtc {
 		void SendBindingRequest(Session *s);
   private:
 		std::string ufrag_, pwd_;
-		uint64_t priority_;
+		uint64_t priority_{0ULL};
     State state_{NEW};
     qrpc_time_t last_success_{0ULL};
-    qrpc_time_t disconnect_timeout_;
-    qrpc_time_t failed_timeout_;
+    qrpc_time_t disconnect_timeout_{0ULL};
+    qrpc_time_t failed_timeout_{0ULL};
   };
 } // namespace webrtc
 } // namespace base

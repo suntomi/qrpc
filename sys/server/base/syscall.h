@@ -2,15 +2,11 @@
 
 #include <unistd.h>
 #include <errno.h>
-#ifdef OS_LINUX
-#include <linux/net_tstamp.h>
-#endif
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <string.h>
 #include <stdint.h>
 #include <sys/socket.h>
-#include <sys/types.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -19,11 +15,22 @@
 
 #include <filesystem>
 
-#include "base/address.h"
+#include "json.hpp"
+
 #include "base/defs.h"
 #include "base/endian.h"
 
+#ifdef OS_MACOSX || OS_IOS
+#include <mach-o/dyld.h>
+#elif OS_LINUX
+#include <linux/net_tstamp.h>
+#elif OS_WINDOWS
+#include <windows.h>
+#endif
+
 namespace base {
+
+class Address;
 
 #if defined(__ENABLE_EPOLL__) || defined(__ENABLE_KQUEUE__)
 typedef int Fd;
@@ -88,37 +95,30 @@ public:
       return false;
     }
   }
-  static int SetListenerAddress(
+  static socklen_t SetListenerAddress(
     struct sockaddr_storage &addr, uint16_t port, bool in6
   ) {
     if (in6) {
       auto tmp = (struct sockaddr_in6 *)&addr;
+      #if !OS_LINUX
       tmp->sin6_len = GetSockAddrLen(AF_INET6);
+      #endif
       tmp->sin6_family = AF_INET6;
       tmp->sin6_addr = IN6ADDR_ANY_INIT;
       tmp->sin6_port = Endian::HostToNet(port);
-      return tmp->sin6_len;
+      return GetSockAddrLen(AF_INET6);
     } else {
       auto tmp = (struct sockaddr_in *)&addr;
+      #if !OS_LINUX
       tmp->sin_len = GetSockAddrLen(AF_INET);
+      #endif
       tmp->sin_family = AF_INET;
       tmp->sin_addr.s_addr = htonl(INADDR_ANY);
       tmp->sin_port = Endian::HostToNet(port);
-      return tmp->sin_len;
+      return GetSockAddrLen(AF_INET);
     }
-    return true;
   }
-  static int GetSockAddrFromFd(Fd fd, Address &a) {
-    sockaddr_storage sa;
-    socklen_t salen = sizeof(sa);
-    if (getsockname(fd, reinterpret_cast<sockaddr *>(&sa), &salen) != 0) {
-      logger::error({{"ev","Failed to get sockaddr from fd"},
-        {"fd",fd},{"errno",Errno()}});
-      return QRPC_ESYSCALL;
-    }
-    a = Address(sa, salen);
-    return QRPC_OK;
-  }
+  static int GetSockAddrFromFd(Fd fd, Address &a);
   static const void *GetSockAddrPtr(const struct sockaddr_storage &addr) {
     if (addr.ss_family == AF_INET) {
       auto tmp = (struct sockaddr_in *)&addr;
@@ -154,7 +154,7 @@ public:
       return sizeof(struct sockaddr_in6);
       break;
     default:
-      logger::fatal({
+      logger::die({
         {"ev", "unsupported address family"},
         {"address_family", address_family}
       });
@@ -171,7 +171,7 @@ public:
       return sizeof(struct in6_addr);
       break;
     default:
-      logger::fatal({
+      logger::die({
         {"ev", "unsupported address family"},
         {"address_family", address_family}
       });
@@ -289,26 +289,11 @@ public:
   static Fd Accept(Fd listener_fd, struct sockaddr_storage &sa, socklen_t &salen, bool in6 = false) {
     return accept(listener_fd, reinterpret_cast<struct sockaddr *>(&sa), &salen);
   }
-  static Fd Accept(Fd listener_fd, Address &a, bool in6 = false) {
-    struct sockaddr_storage sa;
-    socklen_t salen = sizeof(sa);
-    Fd afd = Accept(listener_fd, sa, salen, in6);
-    if (afd < 0) {
-      return INVALID_FD;
-    }
-    a.Reset(sa, salen);
-    return afd;
-  }
-
+  static Fd Accept(Fd listener_fd, Address &a, bool in6 = false);
   // if caller omit port, OS will allocate available port number
   static int Bind(Fd fd, int port = 0, bool in6 = false) {
     struct sockaddr_storage sas;
-    socklen_t salen = sizeof(sas);
-    if ((salen = SetListenerAddress(sas, port, in6)) < 0) {
-      logger::error({{"ev", "fail to create listner address"},{"errno", Errno()},
-        {"port", port},{"in6", in6}});
-      return QRPC_EINVAL;
-    }
+    socklen_t salen = SetListenerAddress(sas, port, in6);
     if (bind(fd, reinterpret_cast<struct sockaddr *>(&sas), salen) < 0) {
       logger::error({{"ev", "bind() fails"},{"errno", Errno()},{"port", port}});
       return QRPC_ESYSCALL;
@@ -354,9 +339,7 @@ public:
     const Address &a, bool in6 = false,
     int send_buffer_size = kDefaultSocketSendBuffer,
     int recv_buffer_size = kDefaultSocketReceiveBuffer
-  ) {
-    return Connect(a.sa(), a.salen(), in6, send_buffer_size, recv_buffer_size);
-  }
+  );
 
   static Fd Listen(
     int port, bool in6 = false,
@@ -498,8 +481,8 @@ public:
   static inline int RecvFrom(int fd, struct mmsghdr *msgvec, unsigned int vlen, int flags = 0) {
     return recvmmsg(fd, msgvec, vlen, flags, nullptr);
   }
-  static inline int SendTo(int fd, struct mmsghdr *msg, unsigned int vlen, int flags = 0) {
-    return sendmsg(fd, msg, flags);
+  static inline int SendTo(int fd, struct mmsghdr *msgvec, unsigned int vlen, int flags = 0) {
+    return sendmmsg(fd, msgvec, vlen, flags);
   }
 #else
   static inline int SendTo(int fd, struct msghdr *msg, int flags = 0) {
@@ -520,9 +503,9 @@ public:
     }
     return writev(fd, iov, sz);
   }
-  static std::unique_ptr<char> ReadFile(const std::string &path, qrpc_size_t *p_size) {
+  static std::unique_ptr<char[]> ReadFile(const std::string &path, qrpc_size_t *p_size) {
     STATIC_ASSERT(sizeof(long) == sizeof(qrpc_size_t));
-    std::unique_ptr<char> ptr = std::unique_ptr<char>();
+    std::unique_ptr<char[]> ptr;
     long *sz; FILE *fp;
     
     fp = fopen(path.c_str(), "r");
@@ -532,8 +515,8 @@ public:
     if ((*sz = ftell(fp)) == -1) { goto fail; }
     rewind(fp);
 
-    ptr = std::unique_ptr<char>(new char[*sz]);
-    if (ptr == nullptr || fread(ptr.get(), *sz, 1, fp) <= 0) { goto fail; } 
+    ptr = std::make_unique<char[]>(*sz);
+    if (ptr == nullptr || fread(ptr.get(), *sz, 1, fp) <= 0) { goto fail; }
   fail:
     if (fp != nullptr) { fclose(fp); }
     return ptr;
@@ -547,26 +530,7 @@ public:
     if (fp != nullptr) { fclose(fp); }
     return result;
   }
-  static std::vector<Address> &GetIfAddrs() {
-    thread_local static std::vector<Address> addrs;
-    if (addrs.size() == 0) {
-      struct ifaddrs *ifaddrs;
-      if (getifaddrs(&ifaddrs) != 0) {
-        logger::die({{"ev","getifaddrs() fails"},{"errno",Errno()}});
-        return addrs;
-      }
-      for (auto p = ifaddrs; p != nullptr; p = p->ifa_next) {
-        if (p->ifa_addr == nullptr) { continue; }
-        if (p->ifa_flags & IFF_LOOPBACK) { continue; }
-        if ((p->ifa_flags & (IFF_UP|IFF_RUNNING)) != (IFF_UP|IFF_RUNNING)) { continue; }
-        auto a = Address(*p->ifa_addr);
-        if (!a.inet_family()) { continue; }
-        logger::info({{"ev","found interface"},{"ifname",p->ifa_name},{"address",a.hostip()}});
-        addrs.push_back(a);
-      }
-    }
-    return addrs;
-  }
+  static std::vector<Address> &GetIfAddrs();
   static std::string MakeTempFile(const std::string &pattern = "") {
     char buf[256];
     if (pattern.empty()) {
@@ -595,5 +559,30 @@ public:
   static bool RemoveFile(const std::string &path) {
     return std::filesystem::remove(path);
   }
+  static std::string GetExecutablePath() {
+    std::string path;
+#ifdef OS_MACOSX || OS_IOS
+    // macOS implementation
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    path.resize(size);
+    _NSGetExecutablePath(&path[0], &size);
+    path.resize(size - 1); // Remove null terminator
+#elif OS_LINUX
+    // Linux implementation
+    char buffer[1024];
+    ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len != -1) {
+        buffer[len] = '\0';
+        path = buffer;
+    }
+#elif _WIN32
+    // Windows implementation
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(nullptr, buffer, MAX_PATH);
+    path = buffer;
+#endif   
+    return path;
+}  
 };
 }

@@ -13,13 +13,11 @@ namespace base {
     static inline constexpr qrpc_time_t STOP = 0LL;
     struct Entry {
       Entry(uint64_t id, const Handler &h) : id(id), handler(h) {}
-      Handler handler;
       Id id;
+      Handler handler;
     };
   public:
-    TimerScheduler() : fd_(INVALID_FD), granularity_(0),
-      handlers_(), schedule_times_(), id_factory_(),
-      processed_now_(0) {}
+    TimerScheduler() : id_factory_() {}
     virtual ~TimerScheduler() { Fin(); }
     int Init(Loop &l, qrpc_time_t granularity);
     void Fin();
@@ -35,11 +33,11 @@ namespace base {
     }
     bool Cancel(Id id) override { return Stop(id); }
   private:
-    Fd fd_;
-    qrpc_time_t granularity_;
+    Fd fd_{INVALID_FD};
+    qrpc_time_t granularity_{0ULL};
     std::multimap<qrpc_time_t, Entry> handlers_;
     std::map<uint64_t, qrpc_time_t> schedule_times_;
     IdFactory<Id> id_factory_;
-    bool processed_now_;
+    bool processed_now_{false};
   };
 }

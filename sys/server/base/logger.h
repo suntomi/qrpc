@@ -1,8 +1,9 @@
 #pragma once
 
 #include "base/assert.h"
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 #include "base/timespec.h"
+#include "base/macros.h"
 #include <stdlib.h>
 
 namespace base {
@@ -105,10 +106,12 @@ namespace logger {
   template<class... Args>
   inline void tracef(
     level lv, const std::string &file, int line, const std::string &func, uint64_t trace_id,
-    const std::string &fmt, const Args... args
+    const char *fmt, const Args... args
   ) {
       char buffer[4096];
-      snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
+      DISABLE_FORMAT_SECURITY_WARNING_PUSH
+      snprintf(buffer, sizeof(buffer), fmt, args...);
+      DISABLE_FORMAT_SECURITY_WARNING_POP
       log(lv, file, line, func, trace_id, buffer);
   }
 
@@ -121,10 +124,12 @@ namespace logger {
 
   template<class... Args>
   inline void logf(
-    level lv, const std::string &fmt, const Args... args
+    level lv, const char *fmt, const Args... args
   ) {
       char buffer[4096];
-      snprintf(buffer, sizeof(buffer), fmt.c_str(), args...);
+      DISABLE_FORMAT_SECURITY_WARNING_PUSH
+      snprintf(buffer, sizeof(buffer), fmt, args...);
+      DISABLE_FORMAT_SECURITY_WARNING_POP
       log(lv, buffer);
   }
 

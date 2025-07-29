@@ -2,6 +2,7 @@
 #include "base/conn.h"
 
 namespace base {
+  std::string Stream::SYSCALL_NAME = "$syscall";
   int Stream::Open() {
     return conn_.Open(*this);
   }

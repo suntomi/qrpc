@@ -107,6 +107,7 @@ typedef struct qrpc_alarm_tag {
 typedef enum {
   QRPC_WIRE_PROTO_WEBRTC,
   QRPC_WIRE_PROTO_WEBTRANSPORT, // for future
+  QRPC_WIRE_PROTO_DEFAULT = QRPC_WIRE_PROTO_WEBRTC
 } qrpc_wire_proto_t;
 
 struct qrpc_webrtc_config_tag {
@@ -218,7 +219,7 @@ typedef struct {
   qrpc_size_t msglen;            //message length
 } qrpc_close_reason_t;
 
-QRPC_THREADSAFE const char *nq_error_detail_code2str(qrpc_error_t code, int detail_code);
+QRPC_THREADSAFE const char *qrpc_error_str(qrpc_error_t code, int detail_code);
 
 typedef struct {
   const char *host, *cert, *key, *ca;
@@ -261,7 +262,11 @@ QRPC_DECL_CLOSURE(int, qrpc_on_client_conn_open_t, void *, qrpc_conn_t, void **)
 //last boolean indicates connection is closed from local(false) or remote(true).
 //if this function returns positive value,
 //connection automatically reconnect with back off which equals to returned value.
+//because the closure usually called multiple times, not suitable for freeing resource.
+//use qrpc_on_client_conn_finalize_t for such purpose
 QRPC_DECL_CLOSURE(qrpc_time_t, qrpc_on_client_conn_close_t, void *, qrpc_conn_t, const qrpc_close_reason_t*, bool);
+//client connection discarded, never happen reconnection after the closure called.
+QRPC_DECL_CLOSURE(void, qrpc_on_client_conn_finalize_t, void *, qrpc_conn_t);
 
 
 /* server */
@@ -385,13 +390,10 @@ typedef struct {
   //connection open/close/finalize watcher
   qrpc_on_client_conn_open_t on_open;
   qrpc_on_client_conn_close_t on_close;
+  qrpc_on_client_conn_finalize_t on_finalize;
 
   //transport config
   qrpc_transport_config_t transport;
-
-  //track reachability to the provide hostname and recreate socket if changed.
-  //useful for mobile connection. currently iOS only. use qrpc_conn_reachability_change for android.
-  bool track_reachability;
 } qrpc_clconf_t;
 
 // get default qrpc_clconf_t
@@ -734,6 +736,8 @@ QRPC_THREADSAFE void qrpc_alarm_set(qrpc_alarm_t a, qrpc_time_t first, qrpc_on_a
 QRPC_THREADSAFE void qrpc_alarm_destroy(qrpc_alarm_t a);
 //check if alarm is valid
 QRPC_THREADSAFE bool qrpc_alarm_is_valid(qrpc_alarm_t a);
+//return special qrpc_time_t value to stop invoking alarm.
+QRPC_INLINE qrpc_time_t qrpc_alarm_stop_rv() { return 0ULL; }
 
 
 

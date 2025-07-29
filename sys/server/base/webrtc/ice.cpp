@@ -46,6 +46,7 @@ namespace webrtc {
 				return IceServer::IceState::DISCONNECTED;
 			}
 		}
+		logger::die({{"ev","unknown IceServer::IceState value"},{"state",state}});
 	}
 
 	FBS::WebRtcTransport::IceState IceServer::IceStateToFbs(IceServer::IceState state)
@@ -72,6 +73,7 @@ namespace webrtc {
 				return FBS::WebRtcTransport::IceState::DISCONNECTED;
 			}
 		}
+		logger::die({{"ev","unknown IceServer::IceState value"},{"state",state}});
 	}
 
 	/* Instance methods. */
@@ -1062,10 +1064,10 @@ namespace webrtc {
 		case STOPPED:
       state_ = NEW;
 			last_success_ = 0;
-      return 0ULL; // alarm stops
+      return qrpc_alarm_stop_rv(); // alarm stops
     default:
       ASSERT(false);
-      return 0ULL;
+      return qrpc_alarm_stop_rv();
     }
   }
 } // namespace webrtc

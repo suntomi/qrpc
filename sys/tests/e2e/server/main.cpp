@@ -6,7 +6,7 @@
 #include "base/webrtc.h"
 #include "base/string.h"
 #include "base/webrtc/sdp.h"
-#include "nlohmann/json.hpp"
+#include "json.hpp"
 
 using json = nlohmann::json;
 using namespace base;
@@ -46,7 +46,7 @@ public:
     }
 };
 int Handler::count_ = 0;
-class TestUdpSession : public UdpSession {
+class TestUdpSession : public UdpListener::UdpSession {
     Handler handler_;
 public:
     TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
@@ -68,7 +68,10 @@ public:
 };
 
 int main(int argc, char *argv[]) {
-    bool secure = (argc > 1) && !std::string(argv[1]).empty();
+    bool secure = (
+        ((argc > 1) && !std::string(argv[1]).empty()) ||
+        (std::getenv("QRPC_E2E_SECURE") != nullptr)
+    );
     bool alive = true;
     Loop l; {
     if (l.Open(1024) < 0) {
@@ -98,19 +101,21 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
+    auto rtc_ip = std::getenv("QRPC_E2E_SFU_IP");
     base::webrtc::AdhocListener w(l, base::webrtc::AdhocListener::Config {
-        .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
+        .ip = (rtc_ip != nullptr) ? rtc_ip : "",
         .rtp = {
             .initial_outgoing_bitrate = 10000000,
-            .max_incoming_bitrate = 10000000,
             .max_outgoing_bitrate = 100000000,
+            .max_incoming_bitrate = 10000000,
             .min_outgoing_bitrate = 0,
         },
+        .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
         .send_buffer_size = 256 * 1024,
-        .http_timeout = qrpc_time_sec(5),
         .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
-        .connection_timeout = qrpc_time_sec(60),
+        .http_timeout = qrpc_time_sec(5),
         .shutdown_timeout = qrpc_time_sec(3),
+        .connection_timeout = qrpc_time_sec(60),
         .consent_check_interval = qrpc_time_sec(10),
         .fingerprint_algorithm = "sha-256",
         .certpair = secure ? std::optional(CertificatePair::Default()) : std::nullopt,
@@ -162,10 +167,12 @@ int main(int argc, char *argv[]) {
         logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
     });
     // signaling: 8888(http), webrtc: 11111(udp/tcp)
-    std::filesystem::path p(__FILE__);
-    auto rootpath = p.parent_path().string();
+    auto rsc_root_env = std::getenv("RSC_ROOT");
+    auto rootpath = ((rsc_root_env != nullptr) ?
+        std::filesystem::path(rsc_root_env) :
+        std::filesystem::path(__FILE__).parent_path()).string();
     auto htmlpath = rootpath + "/resources/client.html";
-    w.RestRouter().
+    w.http_router().
     Route(std::regex("/"), [&htmlpath](HttpSession &s, std::cmatch &) {
         size_t htmlsz;
         auto html = Syscall::ReadFile(htmlpath, &htmlsz);
@@ -185,8 +192,8 @@ int main(int argc, char *argv[]) {
         auto path = rootpath + "/resources/" + m[1].str() + "." + m[2].str();
         auto file = Syscall::ReadFile(path, &filesz);
         if (file == nullptr) {
-            QRPC_LOG(warn, "fail to read html at " + path);
-            s.NotFound("fail to read file at " + path);
+            QRPC_LOG(warn, "fail to read html at %s", path.c_str());
+            s.NotFound("fail to read file at %s", path.c_str());
             return nullptr;
         }
         auto flen = std::to_string(filesz);
