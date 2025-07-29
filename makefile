@@ -29,6 +29,8 @@ else ifeq ($(PLATFORM),linux_amd64)
 else
 	BUILD_OPT += --cpu=$(PLATFORM)
 endif
+# build target
+TARGET ?= e2e
 
 .PHONY: sys
 
@@ -45,3 +47,11 @@ clean:
 
 erase: clean
 	make -C $(CURDIR)/sys/server/ext clean
+
+rundev:
+	docker run --rm -ti -p 8888:8888/tcp -p 11111:11111/udp \
+		-e SFU_IP=192.168.64.1 \
+		--name e2e suntomi/qrpc:e2e gdb e2e_server
+
+build:
+	bash $(CURDIR)/deploy/scripts/image/build.sh $(TARGET)

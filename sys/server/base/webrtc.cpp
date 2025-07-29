@@ -1369,7 +1369,7 @@ int ConnectionFactory::Connection::Open(Stream &s) {
   if ((r = sctp_association_->SendSctpMessage(
       s.config().params, req.ToPaylod(buff, sizeof(buff)), req.PayloadSize(), PPID::WEBRTC_DCEP
   )) < 0) {
-    logger::error({{"proto","sctp"},{"ev","fail to send DCEP OPEN"},{"stream_id",s.id()}});
+    logger::error({{"proto","sctp"},{"ev","fail to send DCEP OPEN"},{"stream_id",s.id()},{"rv",r}});
     return QRPC_EALLOC;
   }
   return QRPC_OK;
