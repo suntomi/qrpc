@@ -13,3 +13,6 @@
 [submodule "sys/server/ext/json"]
 	path = sys/server/ext/json
 	url = https://github.com/nlohmann/json.git
+[submodule "sys/server/ext/hedley"]
+	path = sys/server/ext/hedley
+	url = https://github.com/nemequ/hedley
