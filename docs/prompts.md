@@ -1,13 +1,13 @@
 ============================
 at 2021b8ec62f5f09fe212a6d434e11916da078cbb
 現在bazelを使ってビルドされるのは
-sys/server, sys/tests/e2e/client/native, sys/tests/e2e/server のファイルです。
-現在のルートディレクトリのBUILDを見るとわかるように、後ろの２つのファイルはsys/serverのビルドに依存しています。
+lib, sys/tests/e2e/client/native, sys/tests/e2e/server のファイルです。
+現在のルートディレクトリのBUILDを見るとわかるように、後ろの２つのファイルはlibのビルドに依存しています。
 この事実を元にあなたの新しい提案のような形でBUILDファイルを分散して配置して、今までのようにトップレベルのmakefileからビルドを行えるように変更を行なってください。
 
 you completely remove mediasoup target, should you put it root BUILD file again?
 
-build system works as expect but have some compile error. I think error happens because -D option that sys/server/BUILD provides are missing for e2e_server and e2e_client_native targets. can you fix this?
+build system works as expect but have some compile error. I think error happens because -D option that lib/BUILD provides are missing for e2e_server and e2e_client_native targets. can you fix this?
 
 results -> c2d066e6dda4f231b29815fc2b1f9560eec86b7f
 
@@ -91,9 +91,9 @@ step2
 
 ============================
 <functional> header included from nlohmann/json.hpp causes similar warning ```#10 36.93 In file included from /usr/include/c++/13/functional:59,
-#10 36.93                  from sys/server/ext/libsdptransform/include/json.hpp:23,
-#10 36.93                  from sys/server/ext/libsdptransform/include/sdptransform.hpp:4,
-#10 36.93                  from sys/server/ext/libsdptransform/src/parser.cpp:1:
+#10 36.93                  from lib/ext/libsdptransform/include/json.hpp:23,
+#10 36.93                  from lib/ext/libsdptransform/include/sdptransform.hpp:4,
+#10 36.93                  from lib/ext/libsdptransform/src/parser.cpp:1:
 #10 36.93 In constructor 'std::function<_Res(_ArgTypes ...)>::function(std::function<_Res(_ArgTypes ...)>&&) [with _Res = bool; _ArgTypes = {char}]',
 #10 36.93     inlined from 'std::__detail::_State<_Char_type>::_State(std::__detail::_State<_Char_type>&&) [with _Char_type = char]' at /usr/include/c++/13/bits/regex_automaton.h:149:4,
 #10 36.93     inlined from 'std::__detail::_State<_Char_type>::_State(std::__detail::_State<_Char_type>&&) [with _Char_type = char]' at /usr/include/c++/13/bits/regex_automaton.h:146:7,
@@ -102,7 +102,7 @@ step2
 
 fix it by following storategy:
 
-1. create wrapper header of json.hpp at sys/server/base/wrapped/json.hpp
+1. create wrapper header of json.hpp at lib/base/wrapped/json.hpp
 2. wrapped nlohmann/json.hpp with DISABLE_MAYBE_UNINITIALIZED_WARNING_PUSH/POP
 3. replace #include <nlohmann/json.hpp> to #include "base/wrapped/json.hpp"
 

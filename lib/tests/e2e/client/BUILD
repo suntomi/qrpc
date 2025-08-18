@@ -2,8 +2,8 @@ load("//tools/bazel/libs:selects.bzl", "selects")
 load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
 
 cc_binary(
-  name = "e2e_server",
-  srcs = ["main.cpp"],
+  name = "e2e_client_native",
+  srcs = ["native/main.cpp"],
   copts = [
     "-std=c++17",
   ] 
@@ -33,7 +33,7 @@ cc_binary(
     "//:asan": ["-fsanitize=address"],
     "//conditions:default": [],
   }),
-  deps = ["//sys/server:qrpc_server_lib"],
+  deps = ["//lib:qrpc_server_lib"],
   linkstatic = True,
   visibility = ["//visibility:public"],
 )

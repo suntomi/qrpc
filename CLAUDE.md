@@ -72,7 +72,7 @@ Always try to use address sanitizer even if you directly use bazel command to bu
 ## Code Architecture
 
 ### Directory Structure
-- `sys/server/` - Core C++ server implementation
+- `lib/` - Core C++ server implementation
   - `base/` - Base utilities (webrtc, loop, resolver, logger)
   - `ext/` - External dependencies (mediasoup)
   - `qrpc/` - QRPC-specific implementation
@@ -85,19 +85,19 @@ Always try to use address sanitizer even if you directly use bazel command to bu
 ### Key Components
 
 1. **Transport Layer**
-   - WebRTC data channel implementation and SDP signaling at `sys/server/base/webrtc/`
-   - WebRTC RTP implementation powered by mediasoup at `sys/server/base/webrtc/rtp`
-   - Main WebRTC transport implementation at `sys/server/qrpc/base/webrtc.h`
+   - WebRTC data channel implementation and SDP signaling at `lib/base/webrtc/`
+   - WebRTC RTP implementation powered by mediasoup at `lib/base/webrtc/rtp`
+   - Main WebRTC transport implementation at `lib/qrpc/base/webrtc.h`
 
 2. **Session Management**
-   - Session lifecycle in `sys/server/base/session.h`
-   - Stream management for data transfer at `sys/server/base/session.h`, `sys/server/qrpc/stream.h`
-   - RPC call handling with request/reply pattern `sys/server/qrpc/stream.h`
+   - Session lifecycle in `lib/base/session.h`
+   - Stream management for data transfer at `lib/base/session.h`, `lib/qrpc/stream.h`
+   - RPC call handling with request/reply pattern `lib/qrpc/stream.h`
 
 3. **Thread Safety**
-   - Serial-based object validation system (`sys/server/qrpc/serial.h`)
+   - Serial-based object validation system (`lib/qrpc/serial.h`)
    - Thread-safe operations throughout the codebase using moodycamel (`sys/ext/moodycamel`)
-   - Event loop integration (`sys/server/base/loop.h`)
+   - Event loop integration (`lib/base/loop.h`)
 
 ### External Dependencies
 - MediaSoup - Built separately via Meson due to Bazel limitations on macOS
@@ -106,7 +106,7 @@ Always try to use address sanitizer even if you directly use bazel command to bu
 - nlohmann/json - JSON handling
 
 ### Important Implementation Notes
-- The project uses a custom build setup for MediaSoup in `sys/server/ext/`
+- The project uses a custom build setup for MediaSoup in `lib/ext/`
 - WebRTC transport is the primary focus; WebTransport support is planned
-- All public APIs are exposed through `sys/server/qrpc.h`
+- All public APIs are exposed through `lib/qrpc.h`
 - The TypeScript client at `sys/client/ts/client.js` is vanilla JavaScript without build tooling

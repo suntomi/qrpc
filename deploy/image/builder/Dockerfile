@@ -40,7 +40,7 @@ RUN --mount=type=bind,source=.bazeliskrc,target=/work/.bazeliskrc \
     bazel version
 
 # make ext will be automatically detect cpu architecture
-RUN --mount=type=bind,rw,source=sys/server/ext,target=/work/src/sys/server/ext \
+RUN --mount=type=bind,rw,source=lib/ext,target=/work/src/lib/ext \
     --mount=type=bind,source=makefile,target=/work/src/makefile \
     --mount=type=bind,source=deploy/scripts,target=/work/src/deploy/scripts \
     --mount=type=bind,rw,source=tools,target=/work/src/tools \
