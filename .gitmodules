@@ -1,15 +1,18 @@
 [submodule "src/ext/mediasoup"]
-	path = sys/server/ext/mediasoup
+	path = lib/ext/mediasoup
 	url = https://github.com/suntomi/mediasoup
 [submodule "src/ext/cares/cares"]
-	path = sys/server/ext/cares/cares
+	path = lib/ext/cares/cares
 	url = https://github.com/c-ares/c-ares.git
 [submodule "src/ext/moodycamel"]
-	path = sys/server/ext/moodycamel
+	path = lib/ext/moodycamel
 	url = https://github.com/cameron314/concurrentqueue.git
 [submodule "src/ext/libsdptransform"]
-	path = sys/server/ext/libsdptransform
+	path = lib/ext/libsdptransform
 	url = https://github.com/ibc/libsdptransform.git
-[submodule "sys/server/ext/json"]
-	path = sys/server/ext/json
+[submodule "lib/ext/json"]
+	path = lib/ext/json
 	url = https://github.com/nlohmann/json.git
+[submodule "lib/ext/hedley"]
+	path = lib/ext/hedley
+	url = https://github.com/nemequ/hedley

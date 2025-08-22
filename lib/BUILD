@@ -78,7 +78,7 @@ cc_library(
   }) + [
     "ext/mediasoup/worker/subprojects/openssl-3.0.8/include",
   ],
-  deps = ["//sys/server/ext/cares:ares"],
+  deps = ["//lib/ext/cares:ares"],
   visibility = ["//visibility:public"],
 )
 

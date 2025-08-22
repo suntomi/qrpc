@@ -27,7 +27,7 @@ setup:
 	(rm -rf $(CURDIR)/mediasoup/worker/include/FBS || true) && \
 		cp -r $(CURDIR)/mediasoup/worker/out/$(MS_PROFILE)/build/fbs/FBS $(CURDIR)/mediasoup/worker/include/FBS
 	echo "export mediasoup cpparg info"
-	bash $(CURDIR)/../../../tools/scripts/gen_mscppargs.sh $(CURDIR)
+	bash $(CURDIR)/../../tools/scripts/gen_mscppargs.sh $(CURDIR)
 	echo "$(MESON_ARGS)" > $(CURDIR)/mediasoup/worker/out/$(MS_PROFILE)/MESON_ARGS
 
 clean:

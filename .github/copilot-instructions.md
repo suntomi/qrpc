@@ -6,10 +6,10 @@
 - do not try to invoke another command if long running command still does not finish. 
 
 ## File Structure
-- `sys/server/qrpc.h` - definition of C interface
-- `sys/server/base/` - Core server components
-- `sys/server/qrpc/` - bridge to C interface
-- `sys/server/ext/` - External dependencies
+- `lib/qrpc.h` - definition of C interface
+- `lib/base/` - Core server components
+- `lib/qrpc/` - bridge to C interface
+- `lib/ext/` - External dependencies
 - `tools/bazel/` - Bazel configuration helpers
 
 ## Build Commands
