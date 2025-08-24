@@ -34,15 +34,15 @@ endif
 # build target
 TARGET ?= e2e
 
-.PHONY: sys
+.PHONY: lib
 
-sys:
+lib:
 	bazel build :server :client :lib $(BUILD_OPT)
 
 ext:
 	make -C $(CURDIR)/lib/ext setup MODE=$(MODE) SAN=$(SAN)
 
-all: ext sys
+all: ext lib
 
 clean:
 	bazel clean --expunge
