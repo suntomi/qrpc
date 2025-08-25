@@ -4,6 +4,7 @@ def _cc_static_library_impl(ctx):
     for link_input in cc.linking_context.linker_inputs.to_list():
         for library in link_input.libraries:
             libraries += library.objects
+            libraries += library.pic_objects
     args = ["r", ctx.outputs.out.path] + [f.path for f in libraries]
     ctx.actions.run(
         inputs = libraries,

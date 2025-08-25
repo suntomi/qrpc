@@ -14,11 +14,13 @@ cc_library(
   ]) + selects.with_or({
     "//:is_debug_build": glob(
       ["ext/mediasoup/worker/out/Debug/build/**/*.o"],
-      exclude = MS_EXCLUDED_OBJECTS
+      exclude = MS_EXCLUDED_OBJECTS,
+      allow_empty = True
     ),
     "//conditions:default": glob(
       ["ext/mediasoup/worker/out/Release/build/**/*.o"],
-      exclude = MS_EXCLUDED_OBJECTS
+      exclude = MS_EXCLUDED_OBJECTS,
+      allow_empty = True
     ),
   }),
   hdrs = glob([

@@ -5,6 +5,8 @@ ifeq ($(MODE),debug)
 	ifneq ($(SAN),)
 		# please do make clean if you change the options
 		# MESON_ARGS="-Db_sanitize=$(SAN) -Dms_rtc_logger_rtp=true"
+		# if you need PIC objects of mediasoup:
+		# -Db_pie=true -Db_staticpic=true
 		MESON_ARGS="-Db_sanitize=$(SAN)"
 	else
 		MESON_ARGS=
