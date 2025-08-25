@@ -51,5 +51,5 @@ RUN --mount=type=bind,rw,source=lib/ext,target=/work/src/lib/ext \
 RUN --mount=type=bind,rw,source=.,target=/work/src \
     --mount=type=cache,target=/root/.cache \
     CACHEDIR=/root/.cache TARGETARCH=${TARGETARCH} bash /work/src/deploy/scripts/image/with-cache.sh \
-        make -C src sys MODE=${MODE} SAN=${SAN} PLATFORM=linux_${TARGETARCH} && \
+        make -C src lib MODE=${MODE} SAN=${SAN} PLATFORM=linux_${TARGETARCH} && \
         rsync -a --delete /work/src/.build/bazel-bin/ /build/

@@ -25,9 +25,9 @@ ifneq ($(SAN),none)
 	BUILD_OPT += --define=SAN=$(SAN)
 endif
 ifeq ($(PLATFORM),linux_arm64)
-	BUILD_OPT += --cpu=aarch64
+	BUILD_OPT += --cpu=aarch64 --nostart_end_lib
 else ifeq ($(PLATFORM),linux_amd64)
-	BUILD_OPT += --cpu=x86_64
+	BUILD_OPT += --cpu=x86_64 --nostart_end_lib
 else
 	BUILD_OPT += --cpu=$(PLATFORM)
 endif
