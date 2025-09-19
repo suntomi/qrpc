@@ -118,7 +118,10 @@ namespace rtp {
 	const FBS::Transport::Options* Handler::TransportOptions(const Config &c) {
 		auto &fbb = GetFBB();
 		fbb.Finish(FBS::Transport::CreateOptions(
-			fbb, false, std::nullopt, c.initial_outgoing_bitrate, false)
+			fbb, false, std::nullopt,
+			c.initial_outgoing_bitrate > 0 ?
+				std::optional<qrpc_size_t>(c.initial_outgoing_bitrate) : std::nullopt,
+			false)
 		);
 		return ::flatbuffers::GetRoot<FBS::Transport::Options>(fbb.GetBufferPointer());
 	}

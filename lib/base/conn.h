@@ -13,5 +13,6 @@ namespace base {
     virtual void Close(Stream &) = 0;
     virtual int Send(Stream &, const char *, size_t, bool) = 0;
     virtual std::shared_ptr<Stream> OpenStream(const Stream::Config &) = 0;
+    virtual AlarmProcessor &alarm_processor() = 0;
   };
-} // namespace qrpc
+} // namespace base

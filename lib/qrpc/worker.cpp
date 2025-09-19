@@ -23,8 +23,8 @@ std::vector<std::unique_ptr<Listener>> Worker::Listen() {
   int port_index = 0;
   auto sv = server_.ToHandle();
   for (auto &kv : server_.port_configs()) {
-    auto l = std::make_unique<Listener>(sv);
-    if (!l->Listen(*this, port_index++, kv.second.addr, kv.second)) {
+    auto l = Listener::Listen(*this, port_index, kv.second.addr, kv.second);
+    if (!l) {
       QRPC_LOGJ(fatal, {{"ev", "Listener::Listen() failed"},{"port", kv.second.addr.port}});
       continue;
     }

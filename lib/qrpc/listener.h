@@ -10,7 +10,7 @@ namespace qrpc {
   class Listener {
   public:
     static std::unique_ptr<Listener> Listen(
-      const Worker &w, int port_index, const qrpc_addr_t &addr, const qrpc_svconf_t &config
+      Worker &w, int port_index, const qrpc_addr_t &addr, const qrpc_svconf_t &config
     );
     virtual ~Listener() = default;
   public:

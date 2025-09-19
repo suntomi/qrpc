@@ -149,3 +149,7 @@ template <typename T, size_t N> char (&ArraySizeHelper(T (&array)[N]))[N];
 #if !defined(htonll)
 #define htonll(x) ntohll(x)
 #endif
+
+#if !defined(bulkof)
+#define bulkof(arr) (sizeof(arr) / sizeof((arr)[0]))
+#endif

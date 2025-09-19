@@ -54,8 +54,8 @@ namespace qrpc {
   class RPCStream : public Stream {
     class Request {
     public:
-      Request(RPCStream &s, qrpc_msgid_t msgid, qrpc_on_rpc_reply_t on_reply, qrpc_time_t limit_ts) : 
-              stream_(s), on_reply_(on_reply), msgid_(msgid), limit_ts_(limit_ts) {}
+      Request(RPCStream *s, qrpc_msgid_t msgid, qrpc_on_rpc_reply_t on_reply, qrpc_time_t limit_ts) : 
+              stream_(*s), on_reply_(on_reply), msgid_(msgid), limit_ts_(limit_ts) {}
       ~Request() {}
       inline void GoAway() {
         qrpc_closure_call(on_reply_, stream_.ToHandle(), QRPC_EGOAWAY, "", 0);

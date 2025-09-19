@@ -5,6 +5,7 @@
 #include "base/loop.h"
 #include "base/timer.h"
 #include "base/alarm.h"
+#include "base/resolver.h"
 
 namespace qrpc {
   template <typename T>
@@ -13,4 +14,5 @@ namespace qrpc {
   namespace logger = base::logger;
   using Timer = base::TimerScheduler;
   using AlarmProcessor = base::AlarmProcessor;
+  using AsyncResolver = base::AsyncResolver;
 }

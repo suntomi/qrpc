@@ -12,6 +12,7 @@ using json = nlohmann::json;
 
 #include "qrpc/base.h"
 #include "qrpc/serial.h"
+#include "qrpc/transport.h"
 
 #if defined(QRPC_THREADSAFE)
 #undef QRPC_THREADSAFE
@@ -109,21 +110,36 @@ static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_wire_proto_t p
     return {
       .proto = p,
       .webrtc = {
-        // max outgoing stream of SCTP
-        .max_outgoing_stream_size = 32,
-        // initial incoming stream of SCTP
-        .initial_incoming_stream_size = 32,
-        // send buffer size of underlying session (TCP/UDP)
-        .send_buffer_size = 256 * 1024,
-        // timeout of underlying session
-        .session_timeout = qrpc_time_sec(15),
-        // webrtc's SCTP session timeout
-        .connection_timeout = qrpc_time_sec(60),
-        // fingerprint algorithm of DTLS
-        // any of "sha-1", "sha-224", "sha-256", "sha-384", "sha-512"
-        .fingerprint_algorithm = "sha-256",
-        // WHIP signaling server path
-        .whip_path = "qrpc",
+        .params = {
+          // send buffer size of underlying session (TCP/UDP)
+          .send_buffer_size = 256 * 1024,
+          // timeout of underlying session
+          .session_timeout = qrpc_time_sec(15),
+          // webrtc's SCTP session timeout
+          .connection_timeout = qrpc_time_sec(60),
+          // http timeout, shutdown timeout
+          .http_timeout = qrpc_time_sec(5), .shutdown_timeout = qrpc_time_sec(3),
+          // consent check interval
+          .consent_check_interval = qrpc_time_sec(10),
+          // fingerprint algorithm of DTLS
+          // any of "sha-1", "sha-224", "sha-256", "sha-384", "sha-512"
+          .fingerprint_algorithm = "sha-256",
+        },
+        // rtp config
+        .rtp = {
+          .initial_outgoing_bitrate = 600000,
+          .max_incoming_bitrate = 0,
+          .max_outgoing_bitrate = 0,
+          .min_outgoing_bitrate = 0,
+        },
+        .whip = {
+          // WHIP propagate ip address
+          .ip = nullptr,
+          // WHIP signaling server path
+          .path = "qrpc",
+          // use ipv6
+          .in6 = false
+        }
       }
     };
   default:
@@ -163,6 +179,9 @@ QRPC_THREADSAFE const char *qrpc_error_str(qrpc_error_t code, int /* detail_code
     "not enough size",
     "callback returns error"
   };
+  if (code > 0 || -code >= bulkof(errstr)) {
+    return "invalid code";
+  }
   return errstr[-code];
 }
 
@@ -175,50 +194,50 @@ QRPC_THREADSAFE const char *qrpc_error_str(qrpc_error_t code, int /* detail_code
 QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
   qrpc_clconf_t conf = {
     //transport config
-    .transport = DefaultTransportConfig(QRPC_WIRE_PROTO_DEFAULT)
+    .transport = DefaultTransportConfig(QRPC_WIRE_PROTO_DEFAULT),
+    //dns config
+    .dns = {
+      .query_timeout = qrpc_time_sec(5),
+      .poll_interval = qrpc_time_sec(10),
+      .dns_hosts = nullptr,
+      .n_dns_hosts = 0,
+      .use_dns = true, .use_hosts = true,
+      .use_round_robin = false,
+    },
+    .max_nfd = 1024,
+    .max_stream_hint = 32,
+    .poll_timeout_ns = 1000000
   };
-  qrpc_closure_init_noop(conf.on_open, qrpc_on_client_conn_open_t);
-  qrpc_closure_init_noop(conf.on_close, qrpc_on_client_conn_close_t);
-  qrpc_closure_init_noop(conf.on_finalize, qrpc_on_client_conn_finalize_t);
   return conf;
 }
-// QRPC_THREADSAFE qrpc_client_t qrpc_client_create(int max_nfd, int max_stream_hint, const qrpc_dns_conf_t *dns_conf) {
-//   lib_init(); //anchor
-//   auto l = new ClientLoop(max_nfd, max_stream_hint);
-//   if (l->Open(max_nfd, dns_conf) < 0) {
-//     return nullptr;
-//   }
-//   return l->ToHandle();
-// }
-// QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
-//   auto c = ClientLoop::FromHandle(cl);
-//   c->Close();
-//   delete c;
-// }
-// QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl) {
-//   ClientLoop::FromHandle(cl)->Poll();
-// }
+QRPC_BOOTSTRAP qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf) {
+  lib_init(); //anchor
+  auto l = qrpc::Client::New(*conf);
+  return l->ToHandle();
+}
+QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
+  auto c = qrpc::Client::FromHandle(cl);
+  c->Close();
+  delete c;
+}
+QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl) {
+  qrpc::Client::FromHandle(cl)->Poll();
+}
 // QRPC_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_addr_t *addr, const qrpc_clconf_t *conf) {
-//   auto loop = ClientLoop::FromHandle(cl);
-//   //we are not smart aleck and wanna use ipv4 if possible 
-//   return loop->Resolve(AF_INET, addr->host, addr->port, conf);
-// }
-// QRPC_BOOTSTRAP qrpc_hdmap_t qrpc_client_hdmap(qrpc_client_t cl) {
-//   return ClientLoop::FromHandle(cl)->mutable_handler_map()->ToHandle();
-// }
-// QRPC_BOOTSTRAP void qrpc_client_set_thread(qrpc_client_t cl) {
-//   ClientLoop::FromHandle(cl)->set_main_thread();
+//   auto c = qrpc::Client::FromHandle(cl);
+//   //we are not smart aleck and wanna use ipv4 if possible
+//   return c->Connect(*addr, *conf);
 // }
 // QRPC_BOOTSTRAP bool qrpc_client_resolve_host(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb) {
-//   return ClientLoop::FromHandle(cl)->Resolve(family_pref, hostname, cb);
+//   return qrpc::Client::FromHandle(cl)->Resolve(family_pref, hostname, cb);
 // }
-// QRPC_THREADSAFE const char *nq_ntop(const char *src, qrpc_size_t srclen, char *dst, qrpc_size_t dstlen) {
-//   if (AsyncResolver::NtoP(src, srclen, dst, dstlen) < 0) {
-//     return nullptr;
-//   } else {
-//     return dst;
-//   }
-// }
+QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srclen, char *dst, qrpc_size_t dstlen) {
+  if (AsyncResolver::NtoP(src, srclen, dst, dstlen) < 0) {
+    return nullptr;
+  } else {
+    return dst;
+  }
+}
 
 
 

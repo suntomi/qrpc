@@ -15,6 +15,7 @@ namespace qrpc {
       //broken payload. should resolve payload length
       this->Close(QRPC_CLOSE_REASON_PROTOCOL, 0, "broken payload");
     }
+    return QRPC_OK;
   }
 
   // RawByteStream
@@ -25,7 +26,10 @@ namespace qrpc {
   // RPCStream
   void RPCStream::EntryRequest(qrpc_msgid_t msgid, qrpc_on_rpc_reply_t cb, qrpc_time_t timeout_duration_ts) {
     auto limit_ts = timeout_duration_ts + qrpc_time_now();
-    auto pair = req_map_.emplace(msgid, *this, msgid, cb, limit_ts);
+    auto pair = req_map_.emplace(
+      std::piecewise_construct, 
+      std::make_tuple(msgid), std::make_tuple(this, msgid, cb, limit_ts)
+    );
     if (!pair.second) {
       logger::die({{"ev","rpc msgid collision"},{"msgid",msgid}});
       return;
@@ -124,6 +128,7 @@ namespace qrpc {
       pstr = parse_buffer_.c_str();
       plen = parse_buffer_.length();
     } while (parse_buffer_.length() > 0);
+    return QRPC_OK;
   }
   int RPCStream::OnConnect() {
     return qrpc_closure_call(rpc_.on_rpc_open,  ToHandle(), &ctx_);

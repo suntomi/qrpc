@@ -34,10 +34,10 @@ int ConnectionFactory::Start(const std::vector<Port> &ports) {
   if ((r = Setup(ports))) {
     return r;
   }
-  if (config_.connection_timeout > 0) {
+  if (config_.params.connection_timeout > 0) {
     alarm_processor().Set(
       [this]() { return this->CheckTimeout(); },
-      qrpc_time_now() + config_.connection_timeout
+      qrpc_time_now() + config_.params.connection_timeout
     );
   }
   return QRPC_OK;
@@ -325,9 +325,9 @@ std::shared_ptr<Connection> ConnectionFactory::Create(
 int ConnectionFactory::Config::Derive() {
   // derive auto configured values
   for (auto fp : RTC::DtlsTransport::GetLocalFingerprints()) {
-    auto fpit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(fingerprint_algorithm);
+    auto fpit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(params.fingerprint_algorithm);
     if (fpit == RTC::DtlsTransport::GetString2FingerprintAlgorithm().end()) {
-      logger::die({{"ev","invalid fingerprint algorithm name"},{"algo", fingerprint_algorithm}});
+      logger::die({{"ev","invalid fingerprint algorithm name"},{"algo", params.fingerprint_algorithm}});
     }
     // TODO: SHA256 is enough?
     if (fp.algorithm == fpit->second) {
@@ -335,7 +335,7 @@ int ConnectionFactory::Config::Derive() {
     }
   }
   if (fingerprint.length() <= 0) {
-    logger::die({{"ev","no fingerprint for algorithm"},{"algo", fingerprint_algorithm}});
+    logger::die({{"ev","no fingerprint for algorithm"},{"algo", params.fingerprint_algorithm}});
   }
   if (ip.length() <= 0) {
     for (auto &a : Syscall::GetIfAddrs()) {
@@ -441,7 +441,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
     try {
       if (fn == "close") {
         QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
-        c.factory().ScheduleClose(c);
+        c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
         Call("close_ack",msgid,{});
       } else {
         const auto ait = data.find("args");
@@ -841,7 +841,7 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   ufrag = random::word(32);
   pwd = random::word(32);
   // create ICE server
-  ice_server_.reset(new IceServer(this, ufrag, pwd, factory().config().consent_check_interval));
+  ice_server_.reset(new IceServer(this, ufrag, pwd, factory().webrtc_params().consent_check_interval));
   if (ice_server_ == nullptr) {
     logger::die({{"ev","fail to create ICE server"}});
     return QRPC_EALLOC;
@@ -857,10 +857,10 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   sctp_association_.reset(
     new RTC::SctpAssociation(
       this, 
-      factory().config().max_outgoing_stream_size,
-      factory().config().initial_incoming_stream_size,
-      factory().config().send_buffer_size,
-      factory().config().send_buffer_size,
+      factory().webrtc_params().max_outgoing_stream_size,
+      factory().webrtc_params().initial_incoming_stream_size,
+      factory().webrtc_params().send_buffer_size,
+      factory().webrtc_params().send_buffer_size,
       true)
   );
   if (sctp_association_ == nullptr) {
@@ -1043,7 +1043,7 @@ void ConnectionFactory::Connection::OnFinalize() {
           QRPC_LOGJ(warn, {{"ev","reconnection cancel"},{"r","endpoint not found"},{"uf",uf}});
           ASSERT(false);
         }
-        return 0;
+        return qrpc_alarm_stop_rv();
       }, qrpc_time_now() + reconnect_wait);
     } else {
       QRPC_LOGJ(info, {{"ev","stop reconnection"},{"ufrag",uf}})
@@ -1152,7 +1152,7 @@ void ConnectionFactory::Connection::OnDtlsEstablished() {
   int r;
   if ((r = OnConnect()) < 0) {
     logger::error({{"ev","application reject connection"},{"rc",r}});
-    factory().ScheduleClose(*this);
+    factory().ScheduleClose(*this, QRPC_CLOSE_REASON_LOCAL, r, "application reject connection");
   }
 }
 void ConnectionFactory::Connection::OnTcpSessionShutdown(Session *s) {
@@ -1395,7 +1395,7 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentAdded(
 void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
   logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"c",str::dptr(this)},{"ufrag",usernameFragment}});
-  factory_.ScheduleClose(usernameFragment);
+  factory_.ScheduleClose(usernameFragment, QRPC_CLOSE_REASON_SHUTDOWN, 0, "ICE ufrag removed");
 }
 void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
@@ -1419,7 +1419,7 @@ void ConnectionFactory::Connection::OnIceServerConnected(const IceServer *iceSer
   // If ready, run the DTLS handler.
   if (RunDtlsTransport() < 0) {
     logger::error({{"ev","fail to run DTLS transport"}});
-    factory().ScheduleClose(*this);
+    factory().ScheduleClose(*this, QRPC_CLOSE_REASON_PROTOCOL);
     return;
   }
 
@@ -1503,7 +1503,8 @@ void ConnectionFactory::Connection::OnDtlsTransportClosed(const RTC::DtlsTranspo
   // RTC::Transport::Disconnected();
   // above notifies TransportCongestionControlClient and TransportCongestionControlServer
   // may need to implement equivalent for performance
-  factory().ScheduleClose(*this); // this might be freed here, so don't touch after the line
+  // * this might be freed here, so don't touch after the line
+  factory().ScheduleClose(*this, QRPC_CLOSE_REASON_SHUTDOWN);
 }
 // Need to send DTLS data to the peer.
 void ConnectionFactory::Connection::OnDtlsTransportSendData(
@@ -1809,7 +1810,7 @@ namespace client {
       if (s.fsm().rc() != HRC_OK) {
         logger::error({{"ev","signaling server returns error response"},
           {"status",s.fsm().rc()},{"ufrag",uf}});
-        client_.ScheduleClose(uf);
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, s.fsm().rc(), "signaling server error");
         return nullptr;
       }
       SDP sdp(s.fsm().body());
@@ -1817,18 +1818,18 @@ namespace client {
       if (c == nullptr) {
         // may timeout
         logger::error({{"ev","connection not found"},{"ufrag",uf}});
-        client_.ScheduleClose(uf);
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "connection not found");
         return nullptr;
       }
       auto candidates = sdp.Candidates();
       if (candidates.size() <= 0) {
         logger::error({{"ev","signaling server returns no candidates"},
           {"sdp",sdp},{"ufrag",uf}});
-        client_.ScheduleClose(uf);
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "no candidates found");
         return nullptr;
       }
       if (!client_.Open(ep_, candidates, 0, c)) {
-        client_.ScheduleClose(uf);
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "failed to open connection");
       }
       return nullptr;
     }
@@ -1854,7 +1855,7 @@ namespace client {
       // so we can call CloseConnection
       if (r.code != QRPC_CLOSE_REASON_LOCAL || r.detail_code != QRPC_EGOAWAY) {
         QRPC_LOGJ(info, {{"ev","close webrtc connection by whip failure"},{"rc",r.code},{"dc",r.detail_code}});
-        client_.ScheduleClose(ufrag_);
+        client_.ScheduleClose(ufrag_, QRPC_CLOSE_REASON_PROTOCOL, r.detail_code, "whip http failure");
       }
     }
   private:
@@ -1972,7 +1973,7 @@ bool Client::Open(
   auto on_failure = [this, endpoint = ep, candidates, idx, c, ufrag](int status) mutable {
     // try next candidate
     if (!this->Open(endpoint, candidates, idx + 1, c)) {
-      this->ScheduleClose(ufrag);
+      this->ScheduleClose(ufrag, QRPC_CLOSE_REASON_LOCAL, 0, "failed to open connection");
     }
   };
   // set remote finger print

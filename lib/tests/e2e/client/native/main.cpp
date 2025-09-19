@@ -31,14 +31,17 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
             .max_incoming_bitrate = 10000000,
             .min_outgoing_bitrate = 0,
         },
-        .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
-        .send_buffer_size = 256 * 1024,
-        .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
-        .http_timeout = qrpc_time_sec(5),
-        .shutdown_timeout = qrpc_time_sec(3),
-        .connection_timeout = qrpc_time_sec(60),
-        .consent_check_interval = qrpc_time_sec(10),
-        .fingerprint_algorithm = "sha-256",
+        .params = {
+            .max_outgoing_stream_size = 32,
+            .initial_incoming_stream_size = 32,
+            .send_buffer_size = 256 * 1024,
+            .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
+            .http_timeout = qrpc_time_sec(5),
+            .shutdown_timeout = qrpc_time_sec(3),
+            .connection_timeout = qrpc_time_sec(60),
+            .consent_check_interval = qrpc_time_sec(10),
+            .fingerprint_algorithm = "sha-256",
+        },
         .resolver = r,
         .certpair = secure ? std::optional(CertificatePair::Default()) : std::nullopt,
     }, [](base::webrtc::ConnectionFactory::Connection &c) {

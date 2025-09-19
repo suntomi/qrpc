@@ -36,7 +36,7 @@ a=max-message-size:%u
       proto == TransportProtocol::UDP ? "UDP" : "TCP",
       ufrag.c_str(), pwd.c_str(),
       c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      c.factory().config().send_buffer_size
+      c.factory().webrtc_params().send_buffer_size
     );
     return QRPC_OK;
   }
@@ -159,7 +159,7 @@ a=max-message-size:%u
     sdplines += str::Format(R"cands(a=end-of-candidates
 a=sctp-port:5000
 a=max-message-size:%u)cands",
-      c.factory().config().send_buffer_size
+      c.factory().webrtc_params().send_buffer_size
     );
     return sdplines;
   }

@@ -10,6 +10,7 @@ cc_library(
   srcs = glob([
     "qrpc.cpp",
     "base/**/*.cpp",
+    "qrpc/**/*.cpp",
     "ext/libsdptransform/src/*.cpp",
   ]) + selects.with_or({
     "//:is_debug_build": glob(

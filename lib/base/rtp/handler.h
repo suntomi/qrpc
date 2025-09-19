@@ -139,11 +139,7 @@ namespace rtp {
   public:
     typedef RTC::RtpHeaderExtensionIds ExtensionIds;
     typedef ::flatbuffers::FlatBufferBuilder FBB;
-    struct Config {
-      size_t initial_outgoing_bitrate;
-      size_t max_outgoing_bitrate, max_incoming_bitrate;
-      size_t min_outgoing_bitrate;
-    };
+    typedef qrpc_rtp_config_t Config;
     struct RouterListener : RTC::Router::Listener {
       RTC::WebRtcServer* OnRouterNeedWebRtcServer(
 			  RTC::Router* router, std::string& webRtcServerId) override { return nullptr; }

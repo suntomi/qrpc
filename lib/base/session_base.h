@@ -91,14 +91,14 @@ namespace base {
                 return CheckTimeout(last_active_, qrpc_time_now(), timeout, next_check);
             }
             // Close should not be called inside OnXXXX callbacks of session.
-            // Instead, return negative value from them to close, or call Shutdown()
+            // Instead, return negative value from them to close, or call Shutdown(...)
             inline bool Close(qrpc_close_reason_code_t code,
                 int64_t detail_code = 0, const std::string &msg = "") {
                 return Close({ .code = code, .detail_code = detail_code, .msg = msg });
             }
             // this closes session and safely callable from OnRead(), OnConnect()
             // but recommended to return negative value from them to close. use this only when there is no other way.
-            inline bool ScheduleClose(qrpc_close_reason_code_t code,
+            inline bool Shutdown(qrpc_close_reason_code_t code,
                 int64_t detail_code = 0, const std::string &msg = "") {
                 // set close reason first so that cancel the alarm when session is deleted before alarm raised
                 SetCloseReason({ .code = code, .detail_code = detail_code, .msg = msg });
@@ -114,7 +114,7 @@ namespace base {
                             this->Close(QRPC_CLOSE_REASON_SHUTDOWN, 0, "invalid shutdown: no close reason");
                         }
                         return 0; // stop alarm
-                    }, qrpc_time_now()
+                    }, qrpc_time_now() // call alarm handler asap
                 )) != AlarmProcessor::INVALID_ID;
             }
             inline void Touch(qrpc_time_t at) { last_active_ = at; }

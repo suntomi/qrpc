@@ -30,6 +30,19 @@ namespace webrtc {
   public:
     typedef std::string IceUFrag;
     typedef rtp::MediaStreamConfig::ControlOptions ControlOptions;
+    struct CloseReason {
+      qrpc_close_reason_code_t code;
+      int64_t detail_code;
+      std::string msg;
+      qrpc_close_reason_t To() {
+        return {
+          .code = code,
+          .detail_code = detail_code,
+          .msg = msg.c_str(),
+          .msglen = msg.length()
+        };
+      }
+    };
   public: // connection
     class Connection;
     template <class PS>
@@ -151,6 +164,7 @@ namespace webrtc {
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override {
         return OpenStream(c, factory().stream_factory());
       }
+      AlarmProcessor &alarm_processor() override { return factory().alarm_processor(); }
     public: // callbacks
       virtual int OnConnect() { return QRPC_OK; }
       virtual qrpc_time_t OnShutdown() { return 0; }
@@ -330,6 +344,7 @@ namespace webrtc {
       rtp::MediaStreamConfigs media_stream_configs_; // stream configs with keeping creation order
       uint32_t mid_seed_{0};
       bool sctp_connected_{false}, closed_{false};
+      std::unique_ptr<CloseReason> close_reason_;
     };
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
     struct Port {
@@ -341,15 +356,11 @@ namespace webrtc {
       Protocol protocol;
       int port;
     };
-    struct Config {
+    struct Config  {
       std::string ip;
-      rtp::Handler::Config rtp;
-      size_t max_outgoing_stream_size, initial_incoming_stream_size;
-      size_t send_buffer_size, udp_batch_size;
-      qrpc_time_t session_timeout, http_timeout, shutdown_timeout;
-      qrpc_time_t connection_timeout, consent_check_interval;
-      std::string fingerprint_algorithm;
       bool in6{false};
+      rtp::Handler::Config rtp;
+      qrpc_webrtc_params_config_t params;
       Resolver &resolver{NopResolver::Instance()};
       
       // might be derived from above config values
@@ -358,6 +369,20 @@ namespace webrtc {
       // derived from above config values
       std::string fingerprint;
       std::vector<std::string> ifaddrs;
+    public:
+      static Config &From(const qrpc_transport_config_t &conf, Resolver &resolver) {
+        Config c;
+        if (conf.proto != QRPC_WIRE_PROTO_WEBTRANSPORT) {
+          logger::die({{"ev","need webrtc config"},{"proto", conf.proto}});
+        }
+        auto &webrtc = conf.webrtc;
+        c.params = webrtc.params;
+        c.rtp = webrtc.rtp;
+        c.resolver = resolver;
+        c.ip = webrtc.whip.ip != nullptr ? webrtc.whip.ip : "";
+        c.in6 = webrtc.whip.in6;
+        return c;
+      }
     protected:
       friend class ConnectionFactory;
       int Derive();
@@ -378,13 +403,14 @@ namespace webrtc {
     Resolver &resolver() { return config_.resolver; }
     template <class F> inline F& to() { return reinterpret_cast<F &>(*this); }
     template <class F> inline const F& to() const { return reinterpret_cast<const F &>(*this); }
+    const qrpc_webrtc_params_config_t &webrtc_params() const { return config_.params; }
     const std::string &fingerprint() const { return config_.fingerprint; }
-    const std::string &fingerprint_algorithm() const { return config_.fingerprint_algorithm; }
+    const std::string &fingerprint_algorithm() const { return webrtc_params().fingerprint_algorithm; }
     const UdpListener::Config udp_listener_config() const {
-      return UdpListener::Config(config_.resolver, config_.session_timeout, config_.udp_batch_size, false);
+      return UdpListener::Config(config_.resolver, webrtc_params().session_timeout, webrtc_params().udp_batch_size, false);
     }
     const TcpListener::Config http_listener_config() const {
-      return TcpListener::Config(config_.resolver, config_.http_timeout, config_.certpair);
+      return TcpListener::Config(config_.resolver, webrtc_params().http_timeout, config_.certpair);
     }
   public:
     virtual bool is_client() const = 0;
@@ -396,14 +422,19 @@ namespace webrtc {
     std::shared_ptr<rtp::Handler> FindHandler(const std::string &cname);
     std::shared_ptr<Connection> FindFromUfrag(const IceUFrag &ufrag);
     std::shared_ptr<Connection> FindFromStunRequest(const uint8_t *p, size_t sz);
-    void ScheduleClose(Connection &c) {
+    inline void ScheduleClose(Connection &c, qrpc_close_reason_code_t code,
+      int64_t detail_code = 0, const std::string &msg = "") {
+      ScheduleClose(c, CloseReason{ .code = code, .detail_code = detail_code, .msg = msg });
+    }
+    void ScheduleClose(Connection &c, const CloseReason &cr) {
       if (c.closed_) { return; }
       c.closed_ = true;
+      c.close_reason_ = std::make_unique<CloseReason>(cr);
       c.start_shutdown_ = qrpc_time_now();
       c.alarm_id_ = alarm_processor().Set([this, &c]() {
         // wait for sending all buffered data to peer
         if (c.sctp_association_->GetSctpBufferedAmount() > 0) {
-          if (c.start_shutdown_ + config_.shutdown_timeout > qrpc_time_now()) {
+          if (c.start_shutdown_ + webrtc_params().shutdown_timeout > qrpc_time_now()) {
             return qrpc_time_now();
           } // if 1 second passed, force close the connection
         }
@@ -412,10 +443,11 @@ namespace webrtc {
         return qrpc_alarm_stop_rv(); // because this return value stops the alarm
       }, qrpc_time_now());
     }
-    void ScheduleClose(const IceUFrag &ufrag) {
+    void ScheduleClose(const IceUFrag &ufrag, qrpc_close_reason_code_t code,
+      int64_t detail_code = 0, const std::string &msg = "") {
       auto it = connections_.find(ufrag);
       if (it != connections_.end()) {
-        ScheduleClose(*it->second);
+        ScheduleClose(*it->second, code, detail_code, msg);
       }
     }
   protected:
@@ -425,14 +457,14 @@ namespace webrtc {
     void CloseConnection(Connection &c);
     qrpc_time_t CheckTimeout() {
         qrpc_time_t now = qrpc_time_now();
-        qrpc_time_t nearest_check = now + config_.connection_timeout;
+        qrpc_time_t nearest_check = now + webrtc_params().connection_timeout;
         for (auto s = connections_.begin(); s != connections_.end();) {
             qrpc_time_t next_check;
             auto cur = s++;
             if (cur->second->closed_) { continue; } // wait for scheduleclose done
-            if (cur->second->Timeout(now, config_.connection_timeout, next_check)) {
+            if (cur->second->Timeout(now, webrtc_params().connection_timeout, next_check)) {
                 // inside CloseConnection, the entry will be erased
-                ScheduleClose(*cur->second);
+                ScheduleClose(*cur->second, QRPC_CLOSE_REASON_TIMEOUT);
             } else {
                 nearest_check = std::min(nearest_check, next_check);
             }
@@ -483,7 +515,7 @@ namespace webrtc {
     class TcpClient : public base::TcpClient {
     public:
       TcpClient(ConnectionFactory &cf) :
-        base::TcpClient(cf.loop(), cf.resolver(), cf.config().session_timeout), cf_(cf) {}
+        base::TcpClient(cf.loop(), cf.resolver(), cf.webrtc_params().session_timeout), cf_(cf) {}
       ConnectionFactory &connection_factory() { return cf_; }
     private:
       ConnectionFactory &cf_;
@@ -498,7 +530,7 @@ namespace webrtc {
     class UdpClient : public base::UdpClient {
     public:
       UdpClient(ConnectionFactory &cf) :
-        base::UdpClient(cf.loop(), cf.resolver(), cf.config().session_timeout), cf_(cf) {}
+        base::UdpClient(cf.loop(), cf.resolver(), cf.webrtc_params().session_timeout), cf_(cf) {}
       ConnectionFactory &connection_factory() { return cf_; }
     private:
       ConnectionFactory &cf_;
@@ -513,6 +545,8 @@ namespace webrtc {
   public:
     Client(Loop &l, Config &&config, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(sf)),http_client_(l, config.resolver, config.certpair) {}
+    Client(Loop &l, Config &config, FactoryMethod &&fm, StreamFactory &&sf) :
+      Client(l, std::move(config), std::move(fm), std::move(sf)) {}
     Client(Loop &l, Config &&config, FactoryMethod &&fm, StreamFactory &&sf) :
       ConnectionFactory(l, std::move(config), std::move(fm), std::move(sf)),
       http_client_(l, config.resolver, config.certpair) {}
@@ -524,7 +558,7 @@ namespace webrtc {
       const std::string &host, int port,
       const std::string &path = "/qrpc", Port::Protocol proto = Port::Protocol::UDP
     );
-    void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c)); }
+    void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c), QRPC_CLOSE_REASON_LOCAL); }
     void Fin();
     // implement ConnectionFactory
     virtual bool is_client() const override { return true; }
@@ -619,7 +653,7 @@ namespace webrtc {
     uint16_t tcp_port() const { return tcp_ports_.empty() ? 0 : tcp_ports_[0].port(); }
   public:
     int Accept(const std::string &client_sdp, json &response);
-    void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c)); }
+    void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c), QRPC_CLOSE_REASON_LOCAL); }
     void Fin();
     bool Listen(
       int signaling_port, int port,

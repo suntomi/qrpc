@@ -1,7 +1,9 @@
 #include "qrpc/client.h"
+#include "qrpc/transport.h"
 
 namespace qrpc {
-  Client *Client::New(int max_nfd, int max_stream_hint, const qrpc_dns_conf_t &dns_conf) {
-    return nullptr;
+  Client *Client::New(const qrpc_clconf_t &conf) {
+    auto c = new transport::Client(conf);
+    return dynamic_cast<Client *>(c);
   }
 }

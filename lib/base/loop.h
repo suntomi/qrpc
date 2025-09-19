@@ -40,6 +40,13 @@ public:
     memset(processors_, 0, sizeof(IoProcessor*) * max_nfd_);
     return LoopImpl::Open(max_nfd_);
   }
+  inline Loop &OpenOrDie(int max_nfd, uint64_t timeout_ns = 1000 * 1000) {
+    int r;
+    if ((r = Open(max_nfd, timeout_ns)) < 0) {
+      logger::die({{"ev","Loop::Open() fails"}, {"err", r}});
+    }
+    return *this;
+  }
   inline void Close() {
     if (processors_ != nullptr) {
       delete []processors_;
