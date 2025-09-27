@@ -105,10 +105,10 @@ typedef struct qrpc_alarm_tag {
 } qrpc_alarm_t;
 
 typedef enum {
-  QRPC_WIRE_PROTO_WEBRTC,
-  QRPC_WIRE_PROTO_WEBTRANSPORT, // for future
-  QRPC_WIRE_PROTO_DEFAULT = QRPC_WIRE_PROTO_WEBRTC
-} qrpc_wire_proto_t;
+  QRPC_TRANSPORT_WEBRTC,
+  QRPC_TRANSPORT_WEBTRANSPORT, // for future
+  QRPC_TRANSPORT_DEFAULT = QRPC_TRANSPORT_WEBRTC
+} qrpc_transport_type_t;
 
 struct qrpc_rtp_config_tag {
   // initial outgoing bitrate of RTP stream
@@ -122,19 +122,6 @@ struct qrpc_rtp_config_tag {
   qrpc_size_t min_outgoing_bitrate;
 };
 typedef qrpc_rtp_config_tag qrpc_rtp_config_t;
-
-struct qrpc_webrtc_whip_config_tag {
-  // WHIP propagate ip address
-  // default nullptr (to auto decided from IF addresses)
-  const char *ip;
-  // whip endpoint to access
-  // default /qrpc
-  const char *path;
-  // whether to use ipv6
-  // default false
-  bool in6;
-};
-typedef qrpc_webrtc_whip_config_tag qrpc_webrtc_whip_config_t;
 
 struct qrpc_webrtc_params_config_tag {
   // max outgoing stream of SCTP
@@ -177,8 +164,6 @@ struct qrpc_webrtc_config_tag {
   qrpc_webrtc_params_config_t params;
   // rtp config
   qrpc_rtp_config_t rtp;
-  // whip config
-  qrpc_webrtc_whip_config_t whip;
 };
 typedef qrpc_webrtc_config_tag qrpc_webrtc_config_t;
 
@@ -223,12 +208,32 @@ struct qrpc_webtx_config_tag {
 typedef qrpc_webtx_config_tag qrpc_webtx_config_t;
 
 typedef struct {
-  qrpc_wire_proto_t proto;
+  qrpc_transport_type_t proto;
   union {
     qrpc_webrtc_config_t webrtc;
     qrpc_webtx_config_t webtx;
   };
 } qrpc_transport_config_t;
+
+// extra endpoint info for webrtc transport
+struct qrpc_webrtc_endpoint_tag {
+  // WHIP propagate ip address
+  // default nullptr (to auto decided from IF addresses)
+  const char *ip;
+  // whip endpoint to access
+  // default /qrpc
+  const char *path;
+  // whether to use ipv6
+  // default false
+  bool in6;
+  // whether to use tcp
+  // default false
+  bool tcp;
+};
+typedef qrpc_webrtc_endpoint_tag qrpc_webrtc_endpoint_t;
+// extra endpoint info for webtransport transport (if any)
+struct qrpc_webtx_endpoint_tag {};
+typedef qrpc_webtx_endpoint_tag qrpc_webtx_endpoint_t;
 
 typedef enum {
   QRPC_OK = 0,
@@ -268,9 +273,13 @@ typedef struct {
 QRPC_THREADSAFE const char *qrpc_error_str(qrpc_error_t code, int detail_code);
 
 typedef struct {
-  const char *host, *cert, *key, *ca;
+  const char *host;
   int port;
-} qrpc_addr_t;
+  union {
+    qrpc_webrtc_endpoint_t webrtc;
+    qrpc_webtx_endpoint_t webtx;
+  };
+} qrpc_endpoint_t;
 
 typedef enum {
   QRPC_NOT_REACHABLE = 0,
@@ -391,6 +400,12 @@ QRPC_DECL_CLOSURE(void, qrpc_on_reachability_change_t, void *, qrpc_reachability
 /* resolver */
 QRPC_DECL_CLOSURE(void, qrpc_on_resolve_host_t, void *, qrpc_error_t, const qrpc_close_reason_t *, const char *, qrpc_size_t);
 
+/* hdmap */
+//decide handler for each incoming stream on demand
+QRPC_DECL_CLOSURE(qrpc_handler_entry_t *, qrpc_stream_router_t, void *, const char *, qrpc_conn_t);
+//decide handler for each incoming maeia on demand
+QRPC_DECL_CLOSURE(qrpc_media_handler_t *, qrpc_media_router_t, void *, const char *, qrpc_conn_t);
+
 
 /* macro */
 #define qrpc_closure_is_empty(clsr) ((clsr).proc == nullptr)
@@ -445,7 +460,6 @@ struct qrpc_handler_entry_tag{
   union {
     qrpc_stream_handler_t stream;
     qrpc_rpc_handler_t rpc;
-    qrpc_media_handler_t media;
   };
 };
 typedef qrpc_handler_entry_tag qrpc_handler_entry_t;
@@ -475,13 +489,24 @@ typedef struct {
   int n_dns_hosts;
   bool use_round_robin;
 } qrpc_dns_conf_t;
-typedef struct {  //transport config
-  qrpc_transport_config_t transport;
+typedef struct {
+  //dns setting which is shared among client connections
   qrpc_dns_conf_t dns;
-  int max_nfd, max_stream_hint, poll_timeout_ns;
+
+  //event loop configuration
+  int max_nfd, poll_timeout_ns;
 } qrpc_clconf_t;
 
 typedef struct {
+  //endpoint to connect
+  qrpc_endpoint_t ep;
+
+  //transport config
+  qrpc_transport_config_t transport;
+  
+  //assign stream handlers based on label name
+  qrpc_stream_router_t stream_router;
+
   //connection open/close/finalize watcher
   qrpc_on_client_conn_open_t on_open;
   qrpc_on_client_conn_close_t on_close;
@@ -490,6 +515,8 @@ typedef struct {
 
 // get default qrpc_clconf_t
 QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf();
+// get default qrpc_connect_conf_t
+QRPC_THREADSAFE qrpc_connect_conf_t qrpc_connect_conf(qrpc_client_t c, const char *host, int port);
 // create client object which have max_nfd of connection. 
 QRPC_BOOTSTRAP qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf);
 // do actual network IO. need to call periodically
@@ -497,12 +524,12 @@ QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl);
 // close connections and destroy client object. after call this, do not call qrpc_client_* API.
 QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl);
 // create conn from client. can get qrpc_conn_t via argument of qrpc_clconf_t::on_open
-// return false on error. TODO(iyatomi): make it QRPC_THREADSAFE
-QRPC_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_addr_t *addr, const qrpc_connect_conf_t *conf);
+// return false on error.
+QRPC_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_conf_t *conf);
 // resolve host. qrpc_client_t need to be polled by qrpc_client_poll to work correctly
 // family_pref can be AF_INET or AF_INET6, and control which address family searched first. 
-QRPC_BOOTSTRAP bool qrpc_client_resolve_host(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb);
-// for subsequent use of qrpc_client_resolve_host. passing 3rd and 4th argument of qrpc_on_resolve_host_t to this function,
+QRPC_BOOTSTRAP bool qrpc_client_resolve(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb);
+// for subsequent use of qrpc_client_resolve. passing 3rd and 4th argument of qrpc_on_resolve_host_t to this function,
 // as src and srcsz. and passing buffer for dst and dstsz, to store string converted result of src/srcsz.
 // return dst if succeed otherwise nullptr returned.
 QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srcsz, char *dst, qrpc_size_t dstsz);
@@ -515,9 +542,15 @@ QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srcsz, char *
 //
 // --------------------------
 typedef struct {
+  int n_worker; //number of worker threads
+} qrpc_svconf_t;
+typedef struct {
   //connection open/close watcher
   qrpc_on_server_conn_open_t on_open;
   qrpc_on_server_conn_close_t on_close;
+
+  //stream router
+  qrpc_stream_router_t stream_router;
 
   //transport config
   qrpc_transport_config_t transport;
@@ -525,19 +558,27 @@ typedef struct {
   //how meny sessions accepted per loop. default 1024
   int accept_per_loop;
 
-  //allocation hint about max sessoin and max stream
-  int max_session_hint, max_stream_hint;
+  //allocation hint about max session
+  int max_session_hint;
 
   //if set to true, max_session_hint will be hard limit
   bool hint_as_limit;
-} qrpc_svconf_t;
 
-// get default qrpc_svconf_t
+  //endpoint that listener creates
+  qrpc_endpoint_t ep;
+
+  //cert/key/ca to use for tls
+  const char *cert, *key, *ca;
+} qrpc_listen_conf_t;
+
+// get default qrpc_server_conf_t
 QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf();
+// get default qrpc_listen_conf_t
+QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv);
 //create server which has n_worker of workers
-QRPC_BOOTSTRAP qrpc_server_t qrpc_server_create(int n_worker);
+QRPC_BOOTSTRAP qrpc_server_t qrpc_server_create(const qrpc_svconf_t *conf);
 //listen and returns handler map associated with it. 
-QRPC_BOOTSTRAP qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_addr_t *addr, const qrpc_svconf_t *config);
+QRPC_BOOTSTRAP qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *config);
 //if block is true, qrpc_server_start blocks until some other thread calls qrpc_server_join. 
 QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block);
 //request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API anymore
@@ -550,10 +591,6 @@ QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv);
 // hdmap API
 //
 // --------------------------
-//decide handler for each incoming stream on demand
-QRPC_DECL_CLOSURE(qrpc_handler_entry_t *, qrpc_stream_router_t, void *, const char *, qrpc_conn_t);
-//decide handler for each incoming maeia on demand
-QRPC_DECL_CLOSURE(qrpc_media_handler_t *, qrpc_media_router_t, void *, const char *, qrpc_conn_t);
 //setup original stream protocol (client) based on its label, with 3 pattern.
 QRPC_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *label, qrpc_stream_handler_t handler);
 

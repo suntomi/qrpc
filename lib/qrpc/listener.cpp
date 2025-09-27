@@ -5,7 +5,7 @@
 
 namespace qrpc {
   std::unique_ptr<Listener> Listener::Listen(
-      Worker &w, int port_index, const qrpc_addr_t &addr, const qrpc_svconf_t &config
+      Worker &w, int port_index, const qrpc_endpoint_t &addr, const qrpc_listen_conf_t &config
   ) {
     return std::make_unique<webrtc::Listener>(w, port_index, addr, config);
   }

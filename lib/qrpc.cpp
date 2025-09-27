@@ -84,9 +84,9 @@ const char *INVALID_REASON(const H &h) {
 static inline bool IsOutgoing(bool is_client, qrpc_sid_t stream_id) {
   return is_client ? ((stream_id % 2) != 0) : ((stream_id % 2) == 0);
 }
-static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_wire_proto_t p) {
+static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_transport_type_t p) {
   switch (p) {
-  case QRPC_WIRE_PROTO_WEBTRANSPORT:
+  case QRPC_TRANSPORT_WEBTRANSPORT:
     return {
       .proto = p,
       .webtx = {
@@ -106,7 +106,7 @@ static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_wire_proto_t p
         .source_connection_id_length = 8
       }
     };
-  case QRPC_WIRE_PROTO_WEBRTC:
+  case QRPC_TRANSPORT_WEBRTC:
     return {
       .proto = p,
       .webrtc = {
@@ -131,14 +131,6 @@ static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_wire_proto_t p
           .max_incoming_bitrate = 0,
           .max_outgoing_bitrate = 0,
           .min_outgoing_bitrate = 0,
-        },
-        .whip = {
-          // WHIP propagate ip address
-          .ip = nullptr,
-          // WHIP signaling server path
-          .path = "qrpc",
-          // use ipv6
-          .in6 = false
         }
       }
     };
@@ -194,7 +186,7 @@ QRPC_THREADSAFE const char *qrpc_error_str(qrpc_error_t code, int /* detail_code
 QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
   qrpc_clconf_t conf = {
     //transport config
-    .transport = DefaultTransportConfig(QRPC_WIRE_PROTO_DEFAULT),
+    .transport = DefaultTransportConfig(QRPC_TRANSPORT_DEFAULT),
     //dns config
     .dns = {
       .query_timeout = qrpc_time_sec(5),
@@ -210,6 +202,29 @@ QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
   };
   return conf;
 }
+QRPC_THREADSAFE qrpc_connect_conf_t qrpc_connect_conf(qrpc_client_t cl, const char *host, int port) {
+  auto c = qrpc::Client::FromHandle(cl);
+  qrpc_connect_conf_t conf = {
+    .ep = {
+      .host = host,
+      .port = port,
+    },
+  };
+  switch (c->transport_type()) {
+    case QRPC_TRANSPORT_WEBRTC:
+      conf.ep.webrtc = {
+        .ip = nullptr, // auto detected
+        .path = "qrpc",
+        .in6 = false,
+        .tcp = false
+      };
+      break;
+  }
+  qrpc_closure_init_noop(conf.on_open, qrpc_on_client_conn_open_t);
+  qrpc_closure_init_noop(conf.on_close, qrpc_on_client_conn_close_t);
+  qrpc_closure_init_noop(conf.on_finalize, qrpc_on_client_conn_finalize_t);
+  return conf;
+}
 QRPC_BOOTSTRAP qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf) {
   lib_init(); //anchor
   auto l = qrpc::Client::New(*conf);
@@ -223,11 +238,11 @@ QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
 QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl) {
   qrpc::Client::FromHandle(cl)->Poll();
 }
-// QRPC_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_addr_t *addr, const qrpc_clconf_t *conf) {
-//   auto c = qrpc::Client::FromHandle(cl);
-//   //we are not smart aleck and wanna use ipv4 if possible
-//   return c->Connect(*addr, *conf);
-// }
+QRPC_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_conf_t *conf) {
+  auto c = qrpc::Client::FromHandle(cl);
+  //we are not smart aleck and wanna use ipv4 if possible
+  return c->Connect(*conf);
+}
 // QRPC_BOOTSTRAP bool qrpc_client_resolve_host(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb) {
 //   return qrpc::Client::FromHandle(cl)->Resolve(family_pref, hostname, cb);
 // }
@@ -270,7 +285,7 @@ QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srclen, char 
 //   auto sv = new Server(n_worker);
 //   return sv->ToHandle();
 // }
-// qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_addr_t *addr, const qrpc_svconf_t *conf) {
+// qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_endpoint_t *addr, const qrpc_svconf_t *conf) {
 //   auto psv = Server::FromHandle(sv);
 //   return psv->Open(addr, conf)->ToHandle();
 // }

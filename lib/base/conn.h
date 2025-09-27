@@ -14,5 +14,6 @@ namespace base {
     virtual int Send(Stream &, const char *, size_t, bool) = 0;
     virtual std::shared_ptr<Stream> OpenStream(const Stream::Config &) = 0;
     virtual AlarmProcessor &alarm_processor() = 0;
+    virtual StreamFactory &stream_factory() = 0;
   };
 } // namespace base

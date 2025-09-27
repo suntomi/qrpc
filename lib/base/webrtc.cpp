@@ -34,10 +34,10 @@ int ConnectionFactory::Start(const std::vector<Port> &ports) {
   if ((r = Setup(ports))) {
     return r;
   }
-  if (config_.params.connection_timeout > 0) {
+  if (webrtc_params().connection_timeout > 0) {
     alarm_processor().Set(
       [this]() { return this->CheckTimeout(); },
-      qrpc_time_now() + config_.params.connection_timeout
+      qrpc_time_now() + webrtc_params().connection_timeout
     );
   }
   return QRPC_OK;
@@ -306,9 +306,10 @@ void ConnectionFactory::GlobalFin() {
 	}
 }
 std::shared_ptr<Connection> ConnectionFactory::Create(
-  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd
+  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd,
+  FactoryMethod &fm
 ) {
-  auto c = std::shared_ptr<Connection>(factory_method_(*this, dtls_role));
+  auto c = std::shared_ptr<Connection>(fm(*this, dtls_role));
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return nullptr;
@@ -941,7 +942,7 @@ StreamFactory ConnectionFactory::Connection::DefaultStreamFactory() {
         return nullptr;
       }
     } else {
-      return this->factory().stream_factory()(config, conn);
+      return this->stream_factory()(config, conn);
     }
   };
 }
@@ -1793,10 +1794,11 @@ bool ConnectionFactory::Connection::GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp:
 // client::WhipHttpProcessor, client::TcpSession, client::UdpSession
 namespace client {
   typedef ConnectionFactory::IceUFrag IceUFrag;
+  typedef ConnectionFactory::FactoryMethod FactoryMethod;
   class WhipHttpProcessor : public HttpClient::Processor {
   public:
-    WhipHttpProcessor(Client &c, const Client::Endpoint &ep) :
-      client_(c), ufrag_(), ep_(ep) {}
+    WhipHttpProcessor(Client &c, const Client::Endpoint &ep, FactoryMethod &fm) :
+      client_(c), ufrag_(), ep_(ep), fm_(fm) {}
     ~WhipHttpProcessor() {}
   public:
     const IceUFrag &ufrag() const { return ufrag_; }
@@ -1836,7 +1838,7 @@ namespace client {
     int SendRequest(HttpSession &s) override {
       int r;
       std::string sdp, ufrag;
-      if ((r = client_.Offer(ep_, sdp, ufrag)) < 0) {
+      if ((r = client_.Offer(ep_, sdp, ufrag, fm_)) < 0) {
         QRPC_LOGJ(error, {{"ev","fail to generate offer"},{"rc",r}});
         return QRPC_ESYSCALL;
       }
@@ -1862,8 +1864,10 @@ namespace client {
     Client &client_;
     IceUFrag ufrag_;
     Client::Endpoint ep_;
+    FactoryMethod &fm_;
   };
   typedef std::function<void (int)> OnIceFailure;
+  // TODO: use concept
   template <class BASE>
   class BaseSessionTmpl : public BASE {
   public:
@@ -1943,7 +1947,7 @@ bool Client::Open(
   const Endpoint &ep,
   const std::vector<Candidate> &candidates,
   size_t idx,
-  std::shared_ptr<Connection> &c
+  std::shared_ptr<ConnectionFactory::Connection> &c
 ) {
   if (candidates.size() <= idx) {
     logger::info({
@@ -2003,12 +2007,12 @@ bool Client::Open(
   }
   return true;
 }
-int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
+int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag, FactoryMethod &fm) {
   logger::info({{"ev","new client connection"}});
   // client connection's dtls role is server, workaround fo osx safari (16.4) does not initiate DTLS handshake
   // even if sdp anwser ask to do it.
   std::string pwd;
-  auto c = Create(RTC::DtlsTransport::Role::SERVER, ufrag, pwd);
+  auto c = Create(RTC::DtlsTransport::Role::SERVER, ufrag, pwd, fm);
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return QRPC_EALLOC;
@@ -2023,8 +2027,8 @@ int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
   return QRPC_OK;
 }
 bool Client::Connect(
-  const std::string &host, int port, const std::string &path,
-  Port::Protocol proto
+  const std::string &host, int port, FactoryMethod &&fm,
+  const std::string &path, Port::Protocol proto
 ) {
   if (udp_clients_.size() <= 0 && tcp_clients_.size() <= 0) {
     // init client
@@ -2044,7 +2048,7 @@ bool Client::Connect(
   
   return http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, {
     .host = host, .path = path, .port = port, .protocol = proto,
-  }));
+  }, fm));
 }
 int Client::Setup(const std::vector<Port> &ports) {
   // setup TCP/UDP ports
@@ -2086,7 +2090,8 @@ ConnectionFactory &Listener::UdpSession::connection_factory() {
 // Listener
 bool Listener::Listen(
   int signaling_port, int port,
-  const std::string &listen_ip, const std::string &path
+  const std::string &listen_ip, const std::string &path,
+  FactoryMethod &&fm
 ) {
   int r;
   if (signaling_port <= 0) {
@@ -2099,10 +2104,12 @@ bool Listener::Listen(
     logger::error({{"ev","fail to start server"},{"rc",r}});
     return false;
   }
-  router_.Route(std::regex(path), [this](HttpSession &s, std::cmatch &) {
+  router_.Route(std::regex(path), [
+    this, factory_method = std::move(fm)
+  ](HttpSession &s, std::cmatch &) mutable {
     int r;
     json response_json;
-    if ((r = Accept(s.fsm().body(), response_json)) < 0) {
+    if ((r = Accept(s.fsm().body(), response_json, factory_method)) < 0) {
         logger::error("fail to create connection");
         s.ServerError("server error %d", r);
         return nullptr;
@@ -2145,7 +2152,7 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
     // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
     // even if sdp anwser ask to do it.
     std::string ufrag, pwd;
-    auto c = Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd);
+    auto c = Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd, fm);
     if (c == nullptr) {
       logger::error({{"ev","fail to allocate connection"}});
       return QRPC_EALLOC;

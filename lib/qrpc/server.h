@@ -21,9 +21,9 @@ class Server {
 	typedef Worker::TaskQueue TaskQueue;
   struct PortConfig : public qrpc_svconf_t {
     HandlerMap handler_map;
-    qrpc_addr_t addr;
+    qrpc_endpoint_t addr;
 
-    PortConfig(const qrpc_addr_t &a, const qrpc_svconf_t &config) : 
+    PortConfig(const qrpc_endpoint_t &a, const qrpc_svconf_t &config) : 
      qrpc_svconf_t(config), handler_map(), addr(a) {}
   }; 
   enum Status {
@@ -48,7 +48,7 @@ class Server {
     status_(RUNNING), n_worker_(n_worker), worker_queue_(nullptr), 
     stream_index_factory_(0x7FFFFFFF) {}
   ~Server() {}
-  HandlerMap *Open(const qrpc_addr_t &addr, const qrpc_svconf_t &conf) {
+  HandlerMap *Open(const qrpc_endpoint_t &addr, const qrpc_svconf_t &conf) {
     if (port_configs_.find(addr.port) != port_configs_.end()) {
       return nullptr; //already port used
     } 
