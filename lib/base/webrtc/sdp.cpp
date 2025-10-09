@@ -37,8 +37,8 @@ a=max-message-size:%u
       now, now,
       proto_name,
       ufrag.c_str(), pwd.c_str(),
-      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      c.factory().webrtc_params().send_buffer_size,
+      c.fingerprint_algorithm().c_str(), c.fingerprint().c_str(),
+      c.webrtc_params().send_buffer_size,
       SDP::CandidatesSDP(proto_name, const_cast<ConnectionFactory::Connection&>(c)).c_str()
     );
     return QRPC_OK;
@@ -152,7 +152,7 @@ a=max-message-size:%u
     ASSERT(proto == "UDP" || proto == "TCP");
     auto nwport = proto == "UDP" ? l.udp_port() : l.tcp_port();
     size_t idx = 0;
-    for (auto &a : c.factory().config().ifaddrs) {
+    for (auto &a : c.ice_candidate_addrs()) {
       sdplines += str::Format(
         "a=candidate:0 %u %s %u %s %u typ host\n",
         idx + 1, proto.c_str(), AssignPriority(idx), a.c_str(), nwport
@@ -162,7 +162,7 @@ a=max-message-size:%u
     sdplines += str::Format(R"cands(a=end-of-candidates
 a=sctp-port:5000
 a=max-message-size:%u)cands",
-      c.factory().webrtc_params().send_buffer_size
+      c.webrtc_params().send_buffer_size
     );
     return sdplines;
   }
@@ -227,7 +227,7 @@ a=setup:active
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       p.receiver() ? "trickle" : "renomination",
-      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
+      c.fingerprint_algorithm().c_str(), c.fingerprint().c_str(),
       p.Answer(cname).c_str(),
       CandidatesSDP(proto, c).c_str()
     );

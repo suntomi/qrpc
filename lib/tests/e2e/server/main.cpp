@@ -103,7 +103,9 @@ int main(int argc, char *argv[]) {
     }
     auto rtc_ip = std::getenv("QRPC_E2E_SFU_IP");
     base::webrtc::AdhocListener w(l, base::webrtc::AdhocListener::Config {
-        .ip = (rtc_ip != nullptr) ? rtc_ip : "",
+        .session_timeout = qrpc_time_sec(120),
+        .connection_timeout = qrpc_time_sec(60),
+    }, base::webrtc::Listener::TransportConfig {
         .rtp = {
             .initial_outgoing_bitrate = 10000000,
             .max_outgoing_bitrate = 100000000,
@@ -245,7 +247,7 @@ int main(int argc, char *argv[]) {
             return ws.Send(p, sz);
         });
     });
-    if (!w.Listen(8888, 11111)) {
+    if (!w.Listen(8888, 11111, "/qrpc")) {
         DIE("fail to listen webrtc");
     }
     AdhocUdpListener us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {

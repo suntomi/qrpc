@@ -19,13 +19,11 @@ void Worker::Run(TaskQueue &q) {
 }
 std::vector<std::unique_ptr<Listener>> Worker::Listen() {
   std::vector<std::unique_ptr<Listener>> ls;
-  int n_listener = server_.port_configs().size();
   int port_index = 0;
-  auto sv = server_.ToHandle();
   for (auto &kv : server_.port_configs()) {
-    auto l = Listener::Listen(*this, port_index, kv.second.addr, kv.second);
+    auto l = Listener::Create(*this, port_index++, kv.second);
     if (!l) {
-      QRPC_LOGJ(fatal, {{"ev", "Listener::Listen() failed"},{"port", kv.second.addr.port}});
+      QRPC_LOGJ(fatal, {{"ev", "Listener::Listen() failed"},{"port", kv.second.ep.port}});
       continue;
     }
     ls.push_back(std::move(l));

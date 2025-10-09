@@ -400,31 +400,6 @@ QRPC_DECL_CLOSURE(void, qrpc_on_reachability_change_t, void *, qrpc_reachability
 /* resolver */
 QRPC_DECL_CLOSURE(void, qrpc_on_resolve_host_t, void *, qrpc_error_t, const qrpc_close_reason_t *, const char *, qrpc_size_t);
 
-/* hdmap */
-//decide handler for each incoming stream on demand
-QRPC_DECL_CLOSURE(qrpc_handler_entry_t *, qrpc_stream_router_t, void *, const char *, qrpc_conn_t);
-//decide handler for each incoming maeia on demand
-QRPC_DECL_CLOSURE(qrpc_media_handler_t *, qrpc_media_router_t, void *, const char *, qrpc_conn_t);
-
-
-/* macro */
-#define qrpc_closure_is_empty(clsr) ((clsr).proc == nullptr)
-
-#define qrpc_closure_empty() {nullptr, nullptr}
-
-#define qrpc_closure_init(__pclsr, __cb, __arg) { \
-  (__pclsr).arg = (void *)(__arg); \
-  (__pclsr).proc = (__cb); \
-}
-
-QRPC_INLINE void *qrpc_closure_proc_generic_noop(...) { return nullptr; }
-#define qrpc_closure_init_noop(__pclsr, __typename) { \
-  (__pclsr).arg = nullptr; \
-  (__pclsr).proc = (__typename##_proc)(qrpc_closure_proc_generic_noop); \
-}
-
-#define qrpc_closure_call(__pclsr, ...) ((__pclsr).proc((__pclsr).arg, __VA_ARGS__))
-
 /* handlers */
 typedef struct {
   qrpc_on_stream_record_t on_stream_record;
@@ -464,6 +439,31 @@ struct qrpc_handler_entry_tag{
 };
 typedef qrpc_handler_entry_tag qrpc_handler_entry_t;
 
+/* hdmap */
+//decide handler for each incoming stream on demand
+QRPC_DECL_CLOSURE(qrpc_handler_entry_t *, qrpc_stream_router_t, void *, const char *, qrpc_conn_t);
+//decide handler for each incoming media on demand
+QRPC_DECL_CLOSURE(qrpc_media_handler_t *, qrpc_media_router_t, void *, const char *, qrpc_conn_t);
+
+
+/* macro */
+#define qrpc_closure_is_empty(clsr) ((clsr).proc == nullptr)
+
+#define qrpc_closure_empty() {nullptr, nullptr}
+
+#define qrpc_closure_init(__pclsr, __cb, __arg) { \
+  (__pclsr).arg = (void *)(__arg); \
+  (__pclsr).proc = (__cb); \
+}
+
+QRPC_INLINE void *qrpc_closure_proc_generic_noop(...) { return nullptr; }
+#define qrpc_closure_init_noop(__pclsr, __typename) { \
+  (__pclsr).arg = nullptr; \
+  (__pclsr).proc = (__typename##_proc)(qrpc_closure_proc_generic_noop); \
+}
+
+#define qrpc_closure_call(__pclsr, ...) ((__pclsr).proc((__pclsr).arg, __VA_ARGS__))
+
 // --------------------------
 //
 // client API
@@ -495,6 +495,9 @@ typedef struct {
 
   //event loop configuration
   int max_nfd, poll_timeout_ns;
+
+  //session and connect timeout. TODO: timeout per connection
+  qrpc_time_t session_timeout, connect_timeout;
 } qrpc_clconf_t;
 
 typedef struct {

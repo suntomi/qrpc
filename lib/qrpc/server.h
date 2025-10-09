@@ -19,12 +19,11 @@ namespace qrpc {
 class Server {
  public:
 	typedef Worker::TaskQueue TaskQueue;
-  struct PortConfig : public qrpc_svconf_t {
+  struct PortConfig : public qrpc_listen_conf_t {
     HandlerMap handler_map;
-    qrpc_endpoint_t addr;
 
-    PortConfig(const qrpc_endpoint_t &a, const qrpc_svconf_t &config) : 
-     qrpc_svconf_t(config), handler_map(), addr(a) {}
+    PortConfig(const qrpc_listen_conf_t &config) : 
+     qrpc_listen_conf_t(config), handler_map() {}
   }; 
   enum Status {
     RUNNING,
@@ -48,14 +47,14 @@ class Server {
     status_(RUNNING), n_worker_(n_worker), worker_queue_(nullptr), 
     stream_index_factory_(0x7FFFFFFF) {}
   ~Server() {}
-  HandlerMap *Open(const qrpc_endpoint_t &addr, const qrpc_svconf_t &conf) {
-    if (port_configs_.find(addr.port) != port_configs_.end()) {
+  HandlerMap *Open(const qrpc_listen_conf_t &conf) {
+    if (port_configs_.find(conf.ep.port) != port_configs_.end()) {
       return nullptr; //already port used
     } 
     auto pc = port_configs_.emplace(std::piecewise_construct, 
-                std::forward_as_tuple(addr.port), std::forward_as_tuple(addr, conf));
+                std::forward_as_tuple(conf.ep.port), std::forward_as_tuple(conf));
     if (!pc.second) {
-      QRPC_LOGJ(error, {{"ev","port dup"},{"port",addr.port}});
+      QRPC_LOGJ(error, {{"ev","port dup"},{"port",conf.ep.port}});
       ASSERT(false);
       return nullptr;
     }

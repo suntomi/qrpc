@@ -76,7 +76,7 @@ namespace base {
     int OnRead(const char *p, size_t sz) override { return read_handler_(*this, p, sz); }
     int OnConnect() override { return connect_handler_(*this); }
     void OnShutdown() override { return shutdown_handler_(*this, *close_reason_); }
-  protected:
+  public:
     struct Nop {
       int operator()(Stream &) { return QRPC_OK; }
       void operator()(Stream &, const CloseReason &) {}

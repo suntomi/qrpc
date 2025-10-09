@@ -185,8 +185,6 @@ QRPC_THREADSAFE const char *qrpc_error_str(qrpc_error_t code, int /* detail_code
 // --------------------------
 QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
   qrpc_clconf_t conf = {
-    //transport config
-    .transport = DefaultTransportConfig(QRPC_TRANSPORT_DEFAULT),
     //dns config
     .dns = {
       .query_timeout = qrpc_time_sec(5),
@@ -197,7 +195,6 @@ QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
       .use_round_robin = false,
     },
     .max_nfd = 1024,
-    .max_stream_hint = 32,
     .poll_timeout_ns = 1000000
   };
   return conf;

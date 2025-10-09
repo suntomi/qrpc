@@ -4,9 +4,14 @@
 #include "qrpc/transport.h"
 
 namespace qrpc {
-  std::unique_ptr<Listener> Listener::Listen(
-      Worker &w, int port_index, const qrpc_endpoint_t &addr, const qrpc_listen_conf_t &config
+  std::unique_ptr<Listener> Listener::Create(
+      Worker &w, int port_index, const qrpc_listen_conf_t &config
   ) {
-    return std::make_unique<webrtc::Listener>(w, port_index, addr, config);
+    auto l = std::make_unique<webrtc::Listener>(w, port_index, config);
+    if (!l) {
+      return nullptr;
+    }
+    l->Listen(config.ep.port, config.ep.webrtc.tcp, config.ep.webrtc.path);
+    return l;
   }
 } // namespace qrpc

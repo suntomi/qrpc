@@ -24,32 +24,19 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
     int closed = 0;
     bool secure = false;
     const int MAX_RECONNECT = 2;
-    base::webrtc::AdhocClient w(l, base::webrtc::ConnectionFactory::Config {
-        .rtp = {
-            .initial_outgoing_bitrate = 10000000,
-            .max_outgoing_bitrate = 0,
-            .max_incoming_bitrate = 10000000,
-            .min_outgoing_bitrate = 0,
-        },
-        .params = {
-            .max_outgoing_stream_size = 32,
-            .initial_incoming_stream_size = 32,
-            .send_buffer_size = 256 * 1024,
-            .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
-            .http_timeout = qrpc_time_sec(5),
-            .shutdown_timeout = qrpc_time_sec(3),
-            .connection_timeout = qrpc_time_sec(60),
-            .consent_check_interval = qrpc_time_sec(10),
-            .fingerprint_algorithm = "sha-256",
-        },
+    base::webrtc::AdhocClient w(l, base::webrtc::Client::Config {
         .resolver = r,
-        .certpair = secure ? std::optional(CertificatePair::Default()) : std::nullopt,
-    }, [](base::webrtc::ConnectionFactory::Connection &c) {
+        .connection_timeout = qrpc_time_sec(10),
+        .session_timeout = qrpc_time_sec(30),
+    }, [](base::webrtc::Client::Connection &c) -> int {
         logger::info({{"ev","webrtc connected"}});
         c.OpenStream({.label = "test"});
         c.OpenStream({.label = "test3"});
         return QRPC_OK;
-    }, [&closed, &error_msg](base::webrtc::ConnectionFactory::Connection &) {
+    }, [&closed, &error_msg](
+        base::webrtc::Client::Connection &,
+        const base::webrtc::ConnectionFactory::CloseReason &reason
+    ) -> qrpc_time_t {
         logger::info({{"ev","webrtc closed"}});
         if (closed < MAX_RECONNECT) {
             closed++;
@@ -79,6 +66,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
             } else {
                 s.Close(QRPC_CLOSE_REASON_LOCAL);
             }
+            return QRPC_OK;
         } else if (s.label() == "test2") {
             error_msg = ("test2.onread should not be called");
         } else if (s.label() == "test3") {
@@ -121,9 +109,27 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
             }
         } else if (s.label() == "recv") {
         }
-        return QRPC_OK;
     });
-    if (!w.Connect("localhost", 8888)) {
+    if (!w.Connect("localhost", 8888, {
+        .rtp = {
+            .initial_outgoing_bitrate = 10000000,
+            .max_outgoing_bitrate = 0,
+            .max_incoming_bitrate = 10000000,
+            .min_outgoing_bitrate = 0,
+        },
+        .params = {
+            .max_outgoing_stream_size = 32,
+            .initial_incoming_stream_size = 32,
+            .send_buffer_size = 256 * 1024,
+            .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
+            .http_timeout = qrpc_time_sec(5),
+            .shutdown_timeout = qrpc_time_sec(3),
+            .connection_timeout = qrpc_time_sec(60),
+            .consent_check_interval = qrpc_time_sec(10),
+            .fingerprint_algorithm = "sha-256",
+        },
+        .certpair = secure ? std::optional(CertificatePair::Default()) : std::nullopt
+    })) {
         DIE("fail to start webrtc client as connect");
     }
     while (error_msg.length() <= 0) {

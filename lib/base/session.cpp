@@ -113,10 +113,12 @@ namespace base {
           );
       }
       if (!need_tls()) { return; }
-      auto cp = certpair_.value();
-      auto r = cp.TryAutoGen();
-      if (!r.empty()) {
-        logger::die({{"ev", "Failed to auto generate cert"}, {"err", r}});
+      auto &cp = certpair_.value();
+      if (is_listener()) {
+        auto r = cp.TryAutoGen();
+        if (!r.empty()) {
+          logger::die({{"ev", "Failed to auto generate cert"}, {"err", r}});
+        }
       }
       char err_buf[256];
       tls_ctx_ = SSL_CTX_new(TLS_method());
@@ -124,20 +126,22 @@ namespace base {
           ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
           logger::die({{"ev", "Failed to create SSL context"}, {"err", err_buf}});
       }
-      // サーバー証明書のロード
-      if (SSL_CTX_use_certificate_file(tls_ctx_, cp.cert.c_str(), SSL_FILETYPE_PEM) <= 0) {
-          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-          logger::die({{"ev", "Failed to load certificate"}, {"err", err_buf}});
-      }
-      // 秘密鍵のロード
-      if (SSL_CTX_use_PrivateKey_file(tls_ctx_, cp.privkey.c_str(), SSL_FILETYPE_PEM) <= 0) {
-          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-          logger::die({{"ev", "Failed to load private key"}, {"err", err_buf}});
-      }
-      // 秘密鍵と証明書の整合性確認
-      if (SSL_CTX_check_private_key(tls_ctx_) != 1) {
-          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-          logger::die({{"ev", "Private key does not match the certificate"}, {"err", err_buf}});
+      if (!cp.cert.empty() && !cp.privkey.empty()) {
+        // 証明書のロード
+        if (SSL_CTX_use_certificate_file(tls_ctx_, cp.cert.c_str(), SSL_FILETYPE_PEM) <= 0) {
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            logger::die({{"ev", "Failed to load certificate"}, {"err", err_buf}});
+        }
+        // 秘密鍵のロード
+        if (SSL_CTX_use_PrivateKey_file(tls_ctx_, cp.privkey.c_str(), SSL_FILETYPE_PEM) <= 0) {
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            logger::die({{"ev", "Failed to load private key"}, {"err", err_buf}});
+        }
+        // 秘密鍵と証明書の整合性確認
+        if (SSL_CTX_check_private_key(tls_ctx_) != 1) {
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            logger::die({{"ev", "Private key does not match the certificate"}, {"err", err_buf}});
+        }
       }
       // 適切なTLSバージョンサポートを設定
       SSL_CTX_set_options(tls_ctx_, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | 

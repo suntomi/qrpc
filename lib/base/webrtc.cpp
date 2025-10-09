@@ -34,10 +34,10 @@ int ConnectionFactory::Start(const std::vector<Port> &ports) {
   if ((r = Setup(ports))) {
     return r;
   }
-  if (webrtc_params().connection_timeout > 0) {
+  if (config().connection_timeout > 0) {
     alarm_processor().Set(
       [this]() { return this->CheckTimeout(); },
-      qrpc_time_now() + webrtc_params().connection_timeout
+      qrpc_time_now() + config().connection_timeout
     );
   }
   return QRPC_OK;
@@ -309,7 +309,9 @@ std::shared_ptr<Connection> ConnectionFactory::Create(
   RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd,
   FactoryMethod &fm
 ) {
-  auto c = std::shared_ptr<Connection>(fm(*this, dtls_role));
+  // Accept base::Connection pointer/shared_ptr and cast to derived Connection.
+  std::shared_ptr<base::Connection> base_conn(fm(*this, dtls_role));
+  auto c = std::dynamic_pointer_cast<Connection>(base_conn);
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return nullptr;
@@ -324,11 +326,20 @@ std::shared_ptr<Connection> ConnectionFactory::Create(
 
 // ConnectionFactory::Config
 int ConnectionFactory::Config::Derive() {
+  for (auto &a : Syscall::GetIfAddrs()) {
+    if (in6 == (a.family() == AF_INET6)) {
+      logger::info({{"ev","add detected ip"},{"ip",a.hostip()},{"in6",in6}});
+      ifaddrs.push_back(a.hostip());
+    }
+  }
+}
+// ConnectionFactory::TransportConfig
+int ConnectionFactory::TransportConfig::Derive(const Endpoint &ep, const ConnectionFactory::Config &conf) {
   // derive auto configured values
   for (auto fp : RTC::DtlsTransport::GetLocalFingerprints()) {
     auto fpit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(params.fingerprint_algorithm);
     if (fpit == RTC::DtlsTransport::GetString2FingerprintAlgorithm().end()) {
-      logger::die({{"ev","invalid fingerprint algorithm name"},{"algo", params.fingerprint_algorithm}});
+      logger::die({{"ev","invalid fingerprint algorithm name"},{"alggo", params.fingerprint_algorithm}});
     }
     // TODO: SHA256 is enough?
     if (fp.algorithm == fpit->second) {
@@ -338,26 +349,19 @@ int ConnectionFactory::Config::Derive() {
   if (fingerprint.length() <= 0) {
     logger::die({{"ev","no fingerprint for algorithm"},{"algo", params.fingerprint_algorithm}});
   }
-  if (ip.length() <= 0) {
-    for (auto &a : Syscall::GetIfAddrs()) {
-      if (in6 == (a.family() == AF_INET6)) {
-        logger::info({{"ev","add detected ip"},{"ip",a.hostip()},{"in6",in6}});
-        ifaddrs.push_back(a.hostip());
-      }
+  if (ep.ip.empty()) {
+    if (conf.ifaddrs.empty()) {
+      logger::die({{"ev","no ICE candidate ips"}});
     }
-    if (ifaddrs.size() <= 0) {
-      logger::die({{"ev","no if address detected"},{"in6",in6}});
-    }
+    QRPC_LOGJ(info, {{"ev","use ifaddrs as ICE candidates"},{"addrs",str::Join(conf.ifaddrs, ",")}});
+    ice_candidate_addrs = conf.ifaddrs;
   } else {
-    logger::info({{"ev","add configured ip"},{"ip",ip}});
-    ifaddrs.push_back(ip);
+    QRPC_LOGJ(info, {{"ev","use configured ip as ICE candidates"},{"ip",ep.ip}});
+    ice_candidate_addrs.push_back(ep.ip);
   }
   if (certpair.has_value() && certpair.value().empty()) {
-    QRPC_LOGJ(info, {
-      {"ev","set hostname to empty certpair for auto generation"},
-      {"hostnames",ifaddrs},{"cert",certpair.value().cert},{"privkey",certpair.value().privkey}}
-    );
-    certpair.value().hostnames = ifaddrs;
+    QRPC_LOGJ(info, {{"ev","auto generate certificate with ifaddrs"},{"addrs",str::Join(conf.ifaddrs, ",")}});
+    certpair.value().hostnames = conf.ifaddrs;
   }
   return QRPC_OK;
 }
@@ -842,7 +846,7 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   ufrag = random::word(32);
   pwd = random::word(32);
   // create ICE server
-  ice_server_.reset(new IceServer(this, ufrag, pwd, factory().webrtc_params().consent_check_interval));
+  ice_server_.reset(new IceServer(this, ufrag, pwd, webrtc_params().consent_check_interval));
   if (ice_server_ == nullptr) {
     logger::die({{"ev","fail to create ICE server"}});
     return QRPC_EALLOC;
@@ -858,10 +862,10 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   sctp_association_.reset(
     new RTC::SctpAssociation(
       this, 
-      factory().webrtc_params().max_outgoing_stream_size,
-      factory().webrtc_params().initial_incoming_stream_size,
-      factory().webrtc_params().send_buffer_size,
-      factory().webrtc_params().send_buffer_size,
+      webrtc_params().max_outgoing_stream_size,
+      webrtc_params().initial_incoming_stream_size,
+      webrtc_params().send_buffer_size,
+      webrtc_params().send_buffer_size,
       true)
   );
   if (sctp_association_ == nullptr) {
@@ -1035,10 +1039,12 @@ void ConnectionFactory::Connection::OnFinalize() {
       c.alarm_processor().Set([&c, uf = uf]() {
         auto epit = c.endpoints().find(uf);
         if (epit != c.endpoints().end()) {
+          auto cc = std::dynamic_pointer_cast<Client::Connection>(c.FindFromUfrag(uf));
           auto &ep = (*epit).second;
           QRPC_LOGJ(info, {{"ev","reconnection start"},{"uf",uf},
             {"ep",(ep.host + ":" + std::to_string(ep.port) + ep.path)}});
-          c.Connect(ep.host, ep.port, ep.path);
+          // cc's factory_methods_ will move into new connection
+          c.Connect(ep.host, ep.port, std::move(cc->factory_method()), ep.path);
           c.endpoints().erase(epit);
         } else {
           QRPC_LOGJ(warn, {{"ev","reconnection cancel"},{"r","endpoint not found"},{"uf",uf}});
@@ -1797,8 +1803,8 @@ namespace client {
   typedef ConnectionFactory::FactoryMethod FactoryMethod;
   class WhipHttpProcessor : public HttpClient::Processor {
   public:
-    WhipHttpProcessor(Client &c, const Client::Endpoint &ep, FactoryMethod &fm) :
-      client_(c), ufrag_(), ep_(ep), fm_(fm) {}
+    WhipHttpProcessor(Client &c, const Client::Endpoint &ep, const IceUFrag &uf, const std::string &pwd) :
+      client_(c), ufrag_(uf), ep_(ep), pwd_(pwd) {}
     ~WhipHttpProcessor() {}
   public:
     const IceUFrag &ufrag() const { return ufrag_; }
@@ -1837,12 +1843,12 @@ namespace client {
     }
     int SendRequest(HttpSession &s) override {
       int r;
-      std::string sdp, ufrag;
-      if ((r = client_.Offer(ep_, sdp, ufrag, fm_)) < 0) {
+      std::string sdp;
+      if ((r = client_.Offer(ep_, ufrag_, pwd_, sdp)) < 0) {
         QRPC_LOGJ(error, {{"ev","fail to generate offer"},{"rc",r}});
         return QRPC_ESYSCALL;
       }
-      SetUFrag(std::move(ufrag));
+      SetUFrag(std::move(ufrag_));
       json sdp_json = {{"sdp", sdp}};
       std::string sdp_json_str = sdp_json.dump(), 
         sdp_json_len_str = std::to_string(sdp_json_str.length());
@@ -1863,8 +1869,8 @@ namespace client {
   private:
     Client &client_;
     IceUFrag ufrag_;
+    std::string pwd_;
     Client::Endpoint ep_;
-    FactoryMethod &fm_;
   };
   typedef std::function<void (int)> OnIceFailure;
   // TODO: use concept
@@ -1960,7 +1966,7 @@ bool Client::Open(
       // this means, entire handshake process restarts ()
       if (http_client_.Connect(ep.host, ep.port, new client::WhipHttpProcessor(*this, {
         .host = ep.host, .path = ep.path, .port = ep.port, .protocol = Port::Protocol::TCP
-      }))) {
+      }, c->ufrag(), c->ice_server().GetPassword()))) {
         logger::info({{"ev","fallback to TCP connection"},{"host",ep.host},
           {"port",ep.port},{"path",ep.path}});
         return true;
@@ -2007,15 +2013,11 @@ bool Client::Open(
   }
   return true;
 }
-int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag, FactoryMethod &fm) {
-  logger::info({{"ev","new client connection"}});
-  // client connection's dtls role is server, workaround fo osx safari (16.4) does not initiate DTLS handshake
-  // even if sdp anwser ask to do it.
-  std::string pwd;
-  auto c = Create(RTC::DtlsTransport::Role::SERVER, ufrag, pwd, fm);
+int Client::Offer(const Endpoint &ep, const IceUFrag &ufrag, const std::string &pwd, std::string &sdp) {
+  auto c = FindFromUfrag(ufrag);
   if (c == nullptr) {
-    logger::error({{"ev","fail to allocate connection"}});
-    return QRPC_EALLOC;
+    logger::error({{"ev","connection not found"},{"ufrag",ufrag}});
+    return QRPC_EINVAL;
   }
   int r;
   if ((r = SDP::Offer(*c, ufrag, pwd, ep.protocol, sdp)) < 0) {
@@ -2023,7 +2025,6 @@ int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag, Fact
     return QRPC_EINVAL;
   }
   endpoints_[ufrag] = ep;
-  connections_[ufrag] = c;
   return QRPC_OK;
 }
 bool Client::Connect(
@@ -2042,13 +2043,28 @@ bool Client::Connect(
       return r;
     }
   }
-
+  logger::info({{"ev","new client connection"}});
+  // client connection's dtls role is server, workaround fo osx safari (16.4) does not initiate DTLS handshake
+  // even if sdp anwser ask to do it.
+  std::string ufrag, pwd;
+  auto c = Create(RTC::DtlsTransport::Role::SERVER, ufrag, pwd, fm);
+  if (c == nullptr) {
+    logger::error({{"ev","fail to allocate connection"}});
+    return QRPC_EALLOC;
+  }
+  // set factory method to connection, so that it can be used on reconnection
+  std::dynamic_pointer_cast<Connection>(c)->SetFactoryMethod(std::move(fm));
+  connections_[ufrag] = c;
   QRPC_LOGJ(info, {{"ev","connect start"},
     {"ep",(host + ":" + std::to_string(port) + path)}});
   
-  return http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, {
+  if (!http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, {
     .host = host, .path = path, .port = port, .protocol = proto,
-  }, fm));
+  }, ufrag, pwd))) {
+    ScheduleClose(ufrag, QRPC_CLOSE_REASON_LOCAL, 0, "fail to connect to signaling server");
+    return false;
+  }
+  return true;
 }
 int Client::Setup(const std::vector<Port> &ports) {
   // setup TCP/UDP ports
@@ -2088,11 +2104,7 @@ ConnectionFactory &Listener::UdpSession::connection_factory() {
   return factory().to<UdpPort>().connection_factory();
 }
 // Listener
-bool Listener::Listen(
-  int signaling_port, int port,
-  const std::string &listen_ip, const std::string &path,
-  FactoryMethod &&fm
-) {
+bool Listener::Listen(int signaling_port, int port, const std::string &path) {
   int r;
   if (signaling_port <= 0) {
     DIE("signaling port must be positive");
@@ -2104,12 +2116,10 @@ bool Listener::Listen(
     logger::error({{"ev","fail to start server"},{"rc",r}});
     return false;
   }
-  router_.Route(std::regex(path), [
-    this, factory_method = std::move(fm)
-  ](HttpSession &s, std::cmatch &) mutable {
+  router_.Route(std::regex(path), [this](HttpSession &s, std::cmatch &) mutable {
     int r;
     json response_json;
-    if ((r = Accept(s.fsm().body(), response_json, factory_method)) < 0) {
+    if ((r = Accept(s.fsm().body(), response_json)) < 0) {
         logger::error("fail to create connection");
         s.ServerError("server error %d", r);
         return nullptr;
@@ -2152,7 +2162,7 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
     // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
     // even if sdp anwser ask to do it.
     std::string ufrag, pwd;
-    auto c = Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd, fm);
+    auto c = Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd, factory_method_);
     if (c == nullptr) {
       logger::error({{"ev","fail to allocate connection"}});
       return QRPC_EALLOC;

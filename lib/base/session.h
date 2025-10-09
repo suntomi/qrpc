@@ -119,7 +119,7 @@ namespace base {
     class TcpClient : public TcpSessionFactory {
     public:
         struct Config : public TcpSessionFactory::Config {
-            Config(Resolver &r, qrpc_time_t st, const MaybeCertPair p) :
+            Config(Resolver &r, qrpc_time_t st, const MaybeCertPair &p) :
                 TcpSessionFactory::Config(r, st, false, p) {}
         };
     public:
@@ -225,10 +225,10 @@ namespace base {
     public:
         TcpListenerOf(Loop &l, FactoryMethod &&m, Config c = Config::Default()) :
             TcpListener(l, std::move(m), c) {}
-        TcpListenerOf(Loop &l) : TcpListener(l, [this](Fd fd, const Address &a) {
+        TcpListenerOf(Loop &l, Config c = Config::Default()) : TcpListener(l, [this](Fd fd, const Address &a) {
             static_assert(std::is_base_of<TcpSession, S>(), "S must be a descendant of TcpSession");
             return new S(*this, fd, a);
-        }) {}
+        }, c) {}
         TcpListenerOf(TcpListenerOf &&rhs) : TcpListener(std::move(rhs)) {}
         DISALLOW_COPY_AND_ASSIGN(TcpListenerOf);
     };
