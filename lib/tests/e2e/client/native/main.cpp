@@ -37,7 +37,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
         base::webrtc::Client::Connection &,
         const base::webrtc::ConnectionFactory::CloseReason &reason
     ) -> qrpc_time_t {
-        logger::info({{"ev","webrtc closed"}});
+        logger::info({{"ev","webrtc closed"},{"code",reason.code},{"detail_code",reason.detail_code},{"msg",reason.msg}});
         if (closed < MAX_RECONNECT) {
             closed++;
             return qrpc_time_sec(2);
