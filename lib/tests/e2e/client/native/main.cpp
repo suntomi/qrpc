@@ -110,7 +110,9 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
         } else if (s.label() == "recv") {
         }
     });
-    if (!w.Connect("localhost", 8888, {
+    if (!w.Connect({
+        .host = "localhost", .port = 8888
+    }, {
         .rtp = {
             .initial_outgoing_bitrate = 10000000,
             .max_outgoing_bitrate = 0,

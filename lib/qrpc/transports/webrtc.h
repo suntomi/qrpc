@@ -83,6 +83,10 @@ namespace webrtc {
         }
       ), worker_(w), config_(config), port_index_(port_index) {}
     qrpc_transport_type_t transport_type() const override { return QRPC_TRANSPORT_WEBRTC; }
+  public:
+    bool Listen(int signaling_port, const qrpc_endpoint_t &ep) {
+      return base::webrtc::Listener::Listen(signaling_port, base::webrtc::Listener::Endpoint::From(ep));
+    }
   private:
     Worker &worker_;
     qrpc_listen_conf_t config_;
@@ -124,10 +128,12 @@ namespace webrtc {
     qrpc_transport_type_t transport_type() const override { return QRPC_TRANSPORT_WEBRTC; }
     void Close(base::Connection &c) override { transport_.Close(c); }
     bool Connect(const qrpc_connect_conf_t &c) override {
-      auto proto = c.ep.webrtc.tcp ? ConnectionFactory::Port::TCP : ConnectionFactory::Port::UDP;
-      return transport_.Connect(c.ep.host, c.ep.port, [c](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
-        return new ClientConnection(cf, role, c);
-      }, c.ep.webrtc.ip, proto);
+      return transport_.Connect(
+        base::webrtc::Client::Endpoint::From(c.ep),
+        [c](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
+          return new ClientConnection(cf, role, c);
+        }
+      );
     }
     void Poll() override { Loop::Poll(); }
     void Close() override { transport_.Fin(); }

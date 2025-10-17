@@ -216,6 +216,12 @@ typedef struct {
 } qrpc_transport_config_t;
 
 // extra endpoint info for webrtc transport
+enum qrpc_webrtc_endpoint_protocol_t {
+  QRPC_EPPROTOCOL_NONE = 0,
+  QRPC_EPPROTOCOL_UDP = 1,
+  QRPC_EPPROTOCOL_TCP = 2,
+  QRPC_EPPROTOCOL_ALL = 3,
+};
 struct qrpc_webrtc_endpoint_tag {
   // WHIP propagate ip address
   // default nullptr (to auto decided from IF addresses)
@@ -226,13 +232,15 @@ struct qrpc_webrtc_endpoint_tag {
   // whether to use ipv6
   // default false
   bool in6;
-  // whether to use tcp
-  // default false
-  bool tcp;
+  // whether protocol is used.
+  // default QRPC_EPPROTOCOL_ALL
+  qrpc_webrtc_endpoint_protocol_t proto;
 };
 typedef qrpc_webrtc_endpoint_tag qrpc_webrtc_endpoint_t;
 // extra endpoint info for webtransport transport (if any)
-struct qrpc_webtx_endpoint_tag {};
+struct qrpc_webtx_endpoint_tag {
+  char dummy[0];
+};
 typedef qrpc_webtx_endpoint_tag qrpc_webtx_endpoint_t;
 
 typedef enum {
@@ -569,6 +577,9 @@ typedef struct {
 
   //endpoint that listener creates
   qrpc_endpoint_t ep;
+
+  //lisnter's listen port
+  int port;
 
   //cert/key/ca to use for tls
   const char *cert, *key, *ca;

@@ -46,23 +46,24 @@ namespace webrtc {
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
     struct Port {
       enum Protocol {
-        NONE = 0,
-        UDP = 1,
-        TCP = 2,
+        NONE = QRPC_EPPROTOCOL_NONE,
+        UDP = QRPC_EPPROTOCOL_UDP,
+        TCP = QRPC_EPPROTOCOL_TCP,
+        ALL = QRPC_EPPROTOCOL_ALL,
       };
       Protocol protocol;
       int port;
     };
     struct Endpoint {
-      std::string host, path, ip;
-      int port;
-      Port::Protocol protocol;
-      Endpoint From(qrpc_endpoint_t &ep) {
+      std::string host{""}, path{"/qrpc"}, ip{""};
+      int port{0};
+      Port::Protocol protocol{Port::Protocol::ALL};
+      static Endpoint From(const qrpc_endpoint_t &ep) {
         Endpoint e;
         e.host = ep.host ? ep.host : "";
         e.port = ep.port;
         e.path = ep.webrtc.path ? ep.webrtc.path : "/qrpc";
-        e.protocol = ep.webrtc.tcp ? Port::Protocol::TCP : Port::Protocol::UDP;
+        e.protocol = static_cast<Port::Protocol>(ep.webrtc.proto);
         e.ip = ep.webrtc.ip ? ep.webrtc.ip : "";
         return e;
       }
@@ -585,6 +586,7 @@ namespace webrtc {
       inline FactoryMethod &&factory_method() { return std::move(factory_method_); }
       StreamFactory &stream_factory() override { return stream_factory_; }
       const TransportConfig &transport_config() const override { return transport_config_; }
+      TransportConfig &transport_config() { return transport_config_; }
     protected:
       TransportConfig transport_config_;
       FactoryMethod factory_method_; // for reconnecting
@@ -600,10 +602,7 @@ namespace webrtc {
   public:
     std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
   public:
-    bool Connect(
-      const std::string &host, int port, FactoryMethod &&fm,
-      const std::string &path = "/qrpc", Port::Protocol proto = Port::Protocol::UDP
-    );
+    bool Connect(const Endpoint &ep, FactoryMethod &&fm);
     void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c), QRPC_CLOSE_REASON_LOCAL); }
     void Fin();
     // implement ConnectionFactory
@@ -640,26 +639,22 @@ namespace webrtc {
       stream_handler_(std::move(h)), stream_connect_handler_(std::move(ch)), stream_shutdown_handler_(std::move(sh)) {}
     ~AdhocClient() override {}
   public:
-    bool Connect(
-      const std::string &host, int port, const TransportConfig &&transport_config,
-      const std::string &path = "/qrpc", Port::Protocol proto = Port::Protocol::UDP
-    ) {
-      return Client::Connect(host, port, 
-        [this, tc = std::forward<const TransportConfig>(transport_config)](
-          ConnectionFactory &cf, RTC::DtlsTransport::Role dtls_role
-        ) mutable {
-          auto ch = connect_handler_;
-          auto sh = shutdown_handler_;
-          return new AdhocConnection(cf, dtls_role, std::move(ch), std::move(sh), std::move(tc), [this](
-            const Stream::Config &c, base::Connection &conn
-          ) {
-            // make copy of handlers here, all are move into the new AdhocStream
-            auto sh = stream_handler_;
-            auto sch = stream_connect_handler_;
-            auto ssh = stream_shutdown_handler_;
-            return std::shared_ptr<Stream>(new AdhocStream(conn, c, std::move(sh), std::move(sch), std::move(ssh)));
-          });
-        }, path, proto);
+    bool Connect(const Endpoint &ep, const TransportConfig &&transport_config) {
+      return Client::Connect(ep, [this, tc = std::forward<const TransportConfig>(transport_config)](
+        ConnectionFactory &cf, RTC::DtlsTransport::Role dtls_role
+      ) mutable {
+        auto ch = connect_handler_;
+        auto sh = shutdown_handler_;
+        return new AdhocConnection(cf, dtls_role, std::move(ch), std::move(sh), std::move(tc), [this](
+          const Stream::Config &c, base::Connection &conn
+        ) {
+          // make copy of handlers here, all are move into the new AdhocStream
+          auto sh = stream_handler_;
+          auto sch = stream_connect_handler_;
+          auto ssh = stream_shutdown_handler_;
+          return std::shared_ptr<Stream>(new AdhocStream(conn, c, std::move(sh), std::move(sch), std::move(ssh)));
+        });
+      });
     }
   protected:
     AdhocConnection::ConnectHandler connect_handler_;
@@ -738,9 +733,11 @@ namespace webrtc {
     int Accept(const std::string &client_req_body, json &response);
     void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c), QRPC_CLOSE_REASON_LOCAL); }
     void Fin();
-    bool Listen(int signaling_port, int port, const std::string &path);
+    bool Listen(int signaling_port, const Endpoint &ep);
     inline bool Listen(int signaling_port, int port) {
-      return Listen(signaling_port, port, "/qrpc");
+      return Listen(signaling_port, Endpoint{
+        .port = port
+      });
     }
     HttpRouter &http_router() { return router_; }
     StreamFactory &stream_factory() { return stream_factory_; }
@@ -786,10 +783,6 @@ namespace webrtc {
         return std::shared_ptr<Stream>(new AdhocStream(conn, config, std::move(hh), std::move(chh), std::move(shh)));
       }), connect_handler_(std::move(cch)), shutdown_handler_(std::move(csh)) {}
     ~AdhocListener() override {}
-  public:
-    inline bool Listen(int signaling_port, int port, const std::string &path) {
-      return Listener::Listen(signaling_port, port, path);
-    }
   protected:
     AdhocConnection::ConnectHandler connect_handler_;
     AdhocConnection::ShutdownHandler shutdown_handler_;

@@ -332,6 +332,7 @@ int ConnectionFactory::Config::Derive() {
       ifaddrs.push_back(a.hostip());
     }
   }
+  return QRPC_OK;
 }
 // ConnectionFactory::TransportConfig
 int ConnectionFactory::TransportConfig::Derive(const Endpoint &ep, const ConnectionFactory::Config &conf) {
@@ -1044,7 +1045,10 @@ void ConnectionFactory::Connection::OnFinalize() {
           QRPC_LOGJ(info, {{"ev","reconnection start"},{"uf",uf},
             {"ep",(ep.host + ":" + std::to_string(ep.port) + ep.path)}});
           // cc's factory_methods_ will move into new connection
-          c.Connect(ep.host, ep.port, std::move(cc->factory_method()), ep.path);
+          if (!c.Connect(ep, std::move(cc->factory_method()))) {
+            QRPC_LOGJ(warn, {{"ev","reconnection fails"},{"r","Connect() fails"},{"uf",uf}});
+            ASSERT(false);
+          }
           c.endpoints().erase(epit);
         } else {
           QRPC_LOGJ(warn, {{"ev","reconnection cancel"},{"r","endpoint not found"},{"uf",uf}});
@@ -1804,7 +1808,7 @@ namespace client {
   class WhipHttpProcessor : public HttpClient::Processor {
   public:
     WhipHttpProcessor(Client &c, const Client::Endpoint &ep, const IceUFrag &uf, const std::string &pwd) :
-      client_(c), ufrag_(uf), ep_(ep), pwd_(pwd) {}
+      client_(c), ufrag_(uf), pwd_(pwd), ep_(ep) {}
     ~WhipHttpProcessor() {}
   public:
     const IceUFrag &ufrag() const { return ufrag_; }
@@ -1830,6 +1834,17 @@ namespace client {
         return nullptr;
       }
       auto candidates = sdp.Candidates();
+      if (ep_.protocol != Client::Port::Protocol::ALL) {
+        for (auto it = candidates.begin(); it != candidates.end();) {
+          if (std::get<0>(*it) && ep_.protocol != Client::Port::Protocol::UDP) {
+            it = candidates.erase(it);
+          } else if (!std::get<0>(*it) && ep_.protocol != Client::Port::Protocol::TCP) {
+            it = candidates.erase(it);
+          } else {
+            ++it;
+          }
+        }
+      }
       if (candidates.size() <= 0) {
         logger::error({{"ev","signaling server returns no candidates"},
           {"sdp",sdp},{"ufrag",uf}});
@@ -2027,10 +2042,7 @@ int Client::Offer(const Endpoint &ep, const IceUFrag &ufrag, const std::string &
   endpoints_[ufrag] = ep;
   return QRPC_OK;
 }
-bool Client::Connect(
-  const std::string &host, int port, FactoryMethod &&fm,
-  const std::string &path, Port::Protocol proto
-) {
+bool Client::Connect(const Endpoint &ep, FactoryMethod &&fm) {
   if (udp_clients_.size() <= 0 && tcp_clients_.size() <= 0) {
     // init client
     int r;
@@ -2052,15 +2064,24 @@ bool Client::Connect(
     logger::error({{"ev","fail to allocate connection"}});
     return QRPC_EALLOC;
   }
+  {
+    std::shared_ptr<Connection> cc;
+    if ((cc = std::dynamic_pointer_cast<Connection>(c)) == nullptr) {
+      logger::error({{"ev","connection is not Client::Connection"}});
+      return QRPC_EINVAL;
+    }
+    if (cc->transport_config().Derive(ep, config()) < 0) {
+      logger::error({{"ev","derive transport config failed"}});
+      return QRPC_EINVAL;
+    }
+  }
   // set factory method to connection, so that it can be used on reconnection
   std::dynamic_pointer_cast<Connection>(c)->SetFactoryMethod(std::move(fm));
-  connections_[ufrag] = c;
+  connections_[ufrag] = std::move(c);
   QRPC_LOGJ(info, {{"ev","connect start"},
-    {"ep",(host + ":" + std::to_string(port) + path)}});
+    {"ep",(ep.host + ":" + std::to_string(ep.port) + ep.path)}});
   
-  if (!http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, {
-    .host = host, .path = path, .port = port, .protocol = proto,
-  }, ufrag, pwd))) {
+  if (!http_client_.Connect(ep.host, ep.port, new client::WhipHttpProcessor(*this, ep, ufrag, pwd))) {
     ScheduleClose(ufrag, QRPC_CLOSE_REASON_LOCAL, 0, "fail to connect to signaling server");
     return false;
   }
@@ -2104,19 +2125,28 @@ ConnectionFactory &Listener::UdpSession::connection_factory() {
   return factory().to<UdpPort>().connection_factory();
 }
 // Listener
-bool Listener::Listen(int signaling_port, int port, const std::string &path) {
+bool Listener::Listen(int signaling_port, const Endpoint &ep) {
   int r;
   if (signaling_port <= 0) {
     DIE("signaling port must be positive");
   }
-  if ((r = Start({
-    {.protocol = ConnectionFactory::Port::UDP, .port = port},
-    {.protocol = ConnectionFactory::Port::TCP, .port = port}
-  })) < 0) {
+  if (transport_config_.Derive(ep, config()) < 0) {
+    DIE("derive transport config failed");
+  }
+  auto ports = std::vector<Port>();
+  if (ep.protocol == Port::Protocol::ALL) {
+    ports.push_back({.protocol = Port::Protocol::UDP, .port = ep.port});
+    ports.push_back({.protocol = Port::Protocol::TCP, .port = ep.port});
+  } else if (ep.protocol != Port::Protocol::NONE) {
+    ports.push_back({.protocol = ep.protocol, .port = ep.port});
+  } else {
+    DIE("invalid protocol");
+  }
+  if ((r = Start(ports)) < 0) {
     logger::error({{"ev","fail to start server"},{"rc",r}});
     return false;
   }
-  router_.Route(std::regex(path), [this](HttpSession &s, std::cmatch &) mutable {
+  router_.Route(std::regex(ep.path), [this](HttpSession &s, std::cmatch &) mutable {
     int r;
     json response_json;
     if ((r = Accept(s.fsm().body(), response_json)) < 0) {

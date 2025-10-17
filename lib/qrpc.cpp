@@ -81,9 +81,9 @@ const char *INVALID_REASON(const H &h) {
       }
   }
 }
-static inline bool IsOutgoing(bool is_client, qrpc_sid_t stream_id) {
-  return is_client ? ((stream_id % 2) != 0) : ((stream_id % 2) == 0);
-}
+// static inline bool IsOutgoing(bool is_client, qrpc_sid_t stream_id) {
+//   return is_client ? ((stream_id % 2) != 0) : ((stream_id % 2) == 0);
+// }
 static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_transport_type_t p) {
   switch (p) {
   case QRPC_TRANSPORT_WEBTRANSPORT:
@@ -206,6 +206,7 @@ QRPC_THREADSAFE qrpc_connect_conf_t qrpc_connect_conf(qrpc_client_t cl, const ch
       .host = host,
       .port = port,
     },
+    .transport = DefaultTransportConfig(c->transport_type())
   };
   switch (c->transport_type()) {
     case QRPC_TRANSPORT_WEBRTC:
@@ -213,13 +214,17 @@ QRPC_THREADSAFE qrpc_connect_conf_t qrpc_connect_conf(qrpc_client_t cl, const ch
         .ip = nullptr, // auto detected
         .path = "qrpc",
         .in6 = false,
-        .tcp = false
+        .proto = QRPC_EPPROTOCOL_ALL
       };
+      break;
+    case QRPC_TRANSPORT_WEBTRANSPORT:
       break;
   }
   qrpc_closure_init_noop(conf.on_open, qrpc_on_client_conn_open_t);
   qrpc_closure_init_noop(conf.on_close, qrpc_on_client_conn_close_t);
   qrpc_closure_init_noop(conf.on_finalize, qrpc_on_client_conn_finalize_t);
+  // default stream router  
+  qrpc_closure_init_noop(conf.stream_router, qrpc_stream_router_t);
   return conf;
 }
 QRPC_BOOTSTRAP qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf) {

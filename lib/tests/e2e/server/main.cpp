@@ -247,7 +247,7 @@ int main(int argc, char *argv[]) {
             return ws.Send(p, sz);
         });
     });
-    if (!w.Listen(8888, 11111, "/qrpc")) {
+    if (!w.Listen(8888, { .port = 11111, .ip = rtc_ip })) {
         DIE("fail to listen webrtc");
     }
     AdhocUdpListener us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {

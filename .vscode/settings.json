@@ -92,7 +92,8 @@
     "span": "cpp",
     "__memory": "cpp",
     "__availability": "cpp",
-    "md5.h": "c"
+    "md5.h": "c",
+    "iterator": "cpp"
   },
   "dotnet.defaultSolution": "disable"
 }

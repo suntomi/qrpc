@@ -291,6 +291,7 @@ public:
   }
   static Fd Accept(Fd listener_fd, Address &a, bool in6 = false);
   // if caller omit port, OS will allocate available port number
+  // TODO: make it able to receive bind address from caller
   static int Bind(Fd fd, int port = 0, bool in6 = false) {
     struct sockaddr_storage sas;
     socklen_t salen = SetListenerAddress(sas, port, in6);
@@ -341,6 +342,8 @@ public:
     int recv_buffer_size = kDefaultSocketReceiveBuffer
   );
 
+  // TODO: make it able to receive bind addres from caller
+  // at the same time that Bind is improved
   static Fd Listen(
     int port, bool in6 = false,
     int send_buffer_size = kDefaultSocketSendBuffer,

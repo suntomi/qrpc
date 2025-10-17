@@ -14,7 +14,7 @@ AsyncResolver::Config::~Config() {
   }
   server_list = nullptr;
 }
-AsyncResolver::Config &AsyncResolver::Config::From(const qrpc_dns_conf_t &dns) {
+AsyncResolver::Config AsyncResolver::Config::From(const qrpc_dns_conf_t &dns) {
   Config r;
   r.SetTimeout(dns.query_timeout);
   if (dns.use_round_robin) {

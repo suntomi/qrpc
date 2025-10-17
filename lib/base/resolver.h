@@ -90,7 +90,7 @@ class AsyncResolver : public Resolver {
     ares_addr_port_node *server_list{nullptr};
     Config();
     ~Config();
-    static Config &From(const qrpc_dns_conf_t &dns);
+    static Config From(const qrpc_dns_conf_t &dns);
     const ares_options *options() const { 
       return static_cast<const ares_options*>(this);
     }

@@ -11,7 +11,7 @@ namespace qrpc {
     if (!l) {
       return nullptr;
     }
-    l->Listen(config.ep.port, config.ep.webrtc.tcp, config.ep.webrtc.path);
+    l->Listen(config.port, config.ep);
     return l;
   }
 } // namespace qrpc
