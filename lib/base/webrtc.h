@@ -101,7 +101,7 @@ namespace webrtc {
       MaybeCertPair certpair{std::nullopt};
       
       // derived from above config values
-      std::string fingerprint;
+      std::string fingerprint, fingerprint_algorithm;
       std::vector<std::string> ice_candidate_addrs;
     public:
       static TransportConfig From(const qrpc_transport_config_t &conf) {
@@ -233,7 +233,7 @@ namespace webrtc {
       // methods depends on transport_config()
       const qrpc_webrtc_params_config_t &webrtc_params() const { return transport_config().params; }
       const std::string &fingerprint() const { return transport_config().fingerprint; }
-      const std::string &fingerprint_algorithm() const { return webrtc_params().fingerprint_algorithm; }
+      const std::string &fingerprint_algorithm() const { return transport_config().fingerprint_algorithm; }
       const std::vector<std::string> &ice_candidate_addrs() const { return transport_config().ice_candidate_addrs; }
     public:
       // implements base::Connection

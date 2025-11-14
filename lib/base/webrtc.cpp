@@ -345,6 +345,7 @@ int ConnectionFactory::TransportConfig::Derive(const Endpoint &ep, const Connect
     // TODO: SHA256 is enough?
     if (fp.algorithm == fpit->second) {
       fingerprint = fp.value;
+      fingerprint_algorithm = params.fingerprint_algorithm;
     }
   }
   if (fingerprint.length() <= 0) {
