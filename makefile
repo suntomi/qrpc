@@ -37,7 +37,7 @@ TARGET ?= e2e
 .PHONY: lib
 
 lib:
-	bazel build :server :client :lib $(BUILD_OPT)
+	bazel build :tests :lib $(BUILD_OPT) 
 
 ext:
 	make -C $(CURDIR)/lib/ext setup MODE=$(MODE) SAN=$(SAN)
