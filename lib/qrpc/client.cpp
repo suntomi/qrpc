@@ -6,4 +6,7 @@ namespace qrpc {
     auto c = new transport::Client(conf);
     return dynamic_cast<Client *>(c);
   }
+  qrpc_transport_type_t Client::transport_type() const {
+    return transport::type();
+  }
 }

@@ -259,47 +259,47 @@ QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srclen, char 
 
 
 
-// // --------------------------
-// //
-// // server API
-// //
-// // --------------------------
-// QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf() {
-//   qrpc_svconf_t conf = {
-//     //cert cache size. default 16 and how meny sessions accepted per loop. default 1024
-//     .quic_cert_cache_size = 0, .accept_per_loop = 0,
-//     //allocation hint about max sessoin and max stream
-//     .max_session_hint = 0, .max_stream_hint = 0,
-//     //if set to true, max_session_hint will be hard limit
-//     .use_max_session_hint_as_limit = false,
-//     //total server shutdown wait/retry token timeout. default 5sec/30sec
-//     //secret to generate retry token will be rotated every retry_token_timeout*2 seconds.
-//     .shutdown_timeout = 0ULL, .retry_token_timeout = 30ULL,
-//     //transport config see DefaultTransportConfig for default configs
-//     .transport = DefaultTransportConfig()
-//   };
-//   qrpc_closure_init_noop(conf.on_open, qrpc_on_server_conn_open_t);
-//   qrpc_closure_init_noop(conf.on_close, qrpc_on_server_conn_close_t);
-//   return conf;
-// }
-// QRPC_THREADSAFE qrpc_server_t qrpc_server_create(int n_worker) {
-//   lib_init(false); //anchor
-//   auto sv = new Server(n_worker);
-//   return sv->ToHandle();
-// }
-// qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_endpoint_t *addr, const qrpc_svconf_t *conf) {
-//   auto psv = Server::FromHandle(sv);
-//   return psv->Open(addr, conf)->ToHandle();
-// }
-// QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block) {
-//   auto psv = Server::FromHandle(sv);
-//   psv->Start(block);
-// }
-// QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv) {
-//   auto psv = Server::FromHandle(sv);
-//   psv->Join();
-//   delete psv;
-// }
+// --------------------------
+//
+// server API
+//
+// --------------------------
+QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf() {
+  return qrpc_svconf_t{
+    .n_worker = 1 // TODO: get number of cpu cores
+  };
+}
+QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv) {
+  auto s = qrpc::Server::FromHandle(sv);
+  qrpc_listen_conf_t conf = {
+    //how meny sessions accepted per loop. default 1024
+    .accept_per_loop = 0,
+    //allocation hint about max session
+    .max_session_hint = 0,
+    //transport config see DefaultTransportConfig for default configss
+    .transport = DefaultTransportConfig(s->transport_type()),
+  };
+  qrpc_closure_init_noop(conf.on_open, qrpc_on_server_conn_open_t);
+  qrpc_closure_init_noop(conf.on_close, qrpc_on_server_conn_close_t);
+  return conf;
+}
+QRPC_THREADSAFE qrpc_server_t qrpc_server_create(int n_worker) {
+  auto sv = new Server(n_worker);
+  return sv->ToHandle();
+}
+qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *conf) {
+  auto psv = Server::FromHandle(sv);
+  return psv->Open(*conf)->ToHandle();
+}
+QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block) {
+  auto psv = Server::FromHandle(sv);
+  psv->Start(block);
+}
+QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv) {
+  auto psv = Server::FromHandle(sv);
+  psv->Join();
+  delete psv;
+}
 
 
 

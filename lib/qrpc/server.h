@@ -114,6 +114,7 @@ class Server {
   inline bool terminated() const { return status_ == TERMINATED; }
   inline uint32_t n_worker() const { return n_worker_; }
   inline uint32_t process_index() const { return process_index_; }
+  qrpc_transport_type_t transport_type() const;
   inline const std::unordered_map<int, PortConfig> &port_configs() const { return port_configs_; }
   inline std::unordered_map<int, PortConfig> &port_configs() { return port_configs_; }
   inline qrpc_server_t ToHandle() { return (qrpc_server_t)this; }

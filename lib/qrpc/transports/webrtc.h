@@ -16,6 +16,9 @@ using ClientInterface = Client;
 namespace webrtc {
   using ConnectionFactory = base::webrtc::ConnectionFactory;
   using DtlsTransport = RTC::DtlsTransport;
+  static inline qrpc_transport_type_t type() {
+    return QRPC_TRANSPORT_WEBRTC;
+  }
 
   // NewStream
   static inline Stream *NewStream(
@@ -125,7 +128,6 @@ namespace webrtc {
       base::webrtc::Client::Config::From(
         resolver_.InitOrDie(AsyncResolver::Config::From(config.dns)), config.session_timeout, config.connect_timeout
       )) {}
-    qrpc_transport_type_t transport_type() const override { return QRPC_TRANSPORT_WEBRTC; }
     void Close(base::Connection &c) override { transport_.Close(c); }
     bool Connect(const qrpc_connect_conf_t &c) override {
       return transport_.Connect(
