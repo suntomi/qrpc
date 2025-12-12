@@ -55,6 +55,7 @@ namespace base {
     }
     int Register(int);
     void OnEvent(Fd fd, const Event &e) override;
+    int GetReapCount(const Signal &s);
   protected:
     class Nop {
     public:

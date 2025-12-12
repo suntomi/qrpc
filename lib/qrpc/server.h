@@ -11,7 +11,6 @@
 #include "qrpc.h"
 
 #include "qrpc/base.h"
-#include "qrpc/handler_map.h"
 #include "qrpc/worker.h"
 
 namespace qrpc {
@@ -19,12 +18,7 @@ namespace qrpc {
 class Server {
  public:
 	typedef Worker::TaskQueue TaskQueue;
-  struct PortConfig : public qrpc_listen_conf_t {
-    HandlerMap handler_map;
-
-    PortConfig(const qrpc_listen_conf_t &config) : 
-     qrpc_listen_conf_t(config), handler_map() {}
-  }; 
+  typedef qrpc_listen_conf_t PortConfig;
   enum Status {
     RUNNING,
     TERMINATING,
@@ -47,20 +41,19 @@ class Server {
     status_(RUNNING), n_worker_(n_worker), worker_queue_(nullptr), 
     stream_index_factory_(0x7FFFFFFF) {}
   ~Server() {}
-  HandlerMap *Open(const qrpc_listen_conf_t &conf) {
+  int Open(const qrpc_listen_conf_t &conf) {
     if (port_configs_.find(conf.ep.port) != port_configs_.end()) {
-      return nullptr; //already port used
+      QRPC_LOGJ(error, {{"ev","port dup"},{"port",conf.ep.port}});
+      return QRPC_EDUP; //already port used
     } 
     auto pc = port_configs_.emplace(std::piecewise_construct, 
                 std::forward_as_tuple(conf.ep.port), std::forward_as_tuple(conf));
     if (!pc.second) {
       QRPC_LOGJ(error, {{"ev","port dup"},{"port",conf.ep.port}});
       ASSERT(false);
-      return nullptr;
+      return QRPC_EDUP;
     }
-    auto &pconf = pc.first->second;
-    //first is iterator of map<int, PortConfig>
-    return &(pconf.handler_map);
+    return QRPC_OK;
   }
 	int Start(bool block) {
     if (!alive()) { return QRPC_OK; }

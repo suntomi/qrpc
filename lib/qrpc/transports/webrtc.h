@@ -5,7 +5,6 @@
 
 #include "qrpc/base.h"
 #include "qrpc/client.h"
-#include "qrpc/handler_map.h"
 #include "qrpc/listener.h"
 #include "qrpc/server.h"
 #include "qrpc/stream.h"
@@ -22,18 +21,18 @@ namespace webrtc {
 
   // NewStream
   static inline Stream *NewStream(
-    const Stream::Config &c, base::Connection &conn, const HandlerEntry &he
+    const Stream::Config &c, base::Connection &conn, const qrpc_handler_entry_t &he
   ) {
     Stream *s;
     switch (he.type) {
-    case HandlerType::STREAM: {
+    case qrpc_handler_type_t::STREAM: {
       if (qrpc_closure_is_empty(he.stream.stream_reader)) {
         return new CodedByteStream(conn, c, he.stream);
       } else {
         return new RawByteStream(conn, c, he.stream); 
       }
     } break;
-    case HandlerType::RPC: {
+    case qrpc_handler_type_t::RPC: {
       return new RPCStream(conn, c, he.rpc, conn.alarm_processor());
     } break;
     default:

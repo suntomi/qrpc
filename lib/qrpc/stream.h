@@ -3,7 +3,6 @@
 #include "qrpc.h"
 
 #include "qrpc/base.h"
-#include "qrpc/handler_map.h"
 
 #include "base/alarm.h"
 #include "base/stream.h"

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "qrpc/base.h"
-#include "qrpc/handler_map.h"
 
 #include <functional>
 

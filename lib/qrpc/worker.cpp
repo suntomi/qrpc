@@ -36,8 +36,5 @@ int Worker::GlobalPortIndex(int port_index) const {
     (index() * server().port_configs().size()) +
     port_index; 
 }
-HandlerMap &Worker::HandlerMapFor(int port_index) {
-  return server().port_configs().at(port_index).handler_map;
-}
 
 } //namespace qrpc

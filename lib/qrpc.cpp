@@ -287,9 +287,9 @@ QRPC_THREADSAFE qrpc_server_t qrpc_server_create(int n_worker) {
   auto sv = new Server(n_worker);
   return sv->ToHandle();
 }
-qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *conf) {
+QRPC_BOOTSTRAP int qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *conf) {
   auto psv = Server::FromHandle(sv);
-  return psv->Open(*conf)->ToHandle();
+  return psv->Open(*conf);
 }
 QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block) {
   auto psv = Server::FromHandle(sv);
@@ -303,97 +303,65 @@ QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv) {
 
 
 
-// // --------------------------
-// //
-// // hdmap API
-// //
-// // --------------------------
-// QRPC_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *name, qrpc_stream_handler_t handler) {
-//   return HandlerMap::FromHandle(h)->AddEntry(name, handler);
-// }
-// QRPC_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *name, qrpc_rpc_handler_t handler) {
-//   return HandlerMap::FromHandle(h)->AddEntry(name, handler);
-// }
-// QRPC_BOOTSTRAP bool qrpc_hdmap_stream_factory(qrpc_hdmap_t h, const char *name, qrpc_stream_factory_t factory) {
-//   return HandlerMap::FromHandle(h)->AddEntry(name, factory);
-// }
-// QRPC_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t handler) {
-//   HandlerMap::FromHandle(h)->SetRawHandler(handler);
-// }
-
-
-// // --------------------------
-// //
-// // conn API
-// //
-// // --------------------------
-// QRPC_THREADSAFE bool qrpc_conn_app_proto(qrpc_conn_t conn, const uint8_t **pp_proto, qrpc_size_t *p_proto_len) {
-//   return SessionDelegate::FromHandle(conn)->GetAppProto(pp_proto, p_proto_len);
-// }
-// QRPC_THREADSAFE void qrpc_conn_close_ex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len) {
-//   Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Disconnect, code, detail, detail_len);
-// }
-// QRPC_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn) {
-//   Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Reconnect);
-// } 
-// QRPC_THREADSAFE void qrpc_conn_flush(qrpc_conn_t conn) {
-//   Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Flush);
-// } 
-// QRPC_THREADSAFE bool qrpc_conn_is_client(qrpc_conn_t conn) {
-//   return Serial::IsClient(conn.s);
-// }
-// QRPC_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_t cb) {
-//   SessionDelegate *d;
-//   UNWRAP_CONN(conn, d, {
-//     no_ret_closure_call_with_check(cb, conn, nullptr);
-//     return true;
-//   }, "nq_conn_is_valid");
-//   no_ret_closure_call_with_check(cb, conn, INVALID_REASON(conn));
-//   return false;
-// }
-// QRPC_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modify_hdmap_t modifier) {
-//   SessionDelegate *d;
-//   Boxer *b;
-//   UNWRAP_CONN_OR_ENQUEUE(conn, d, b, {
-//     auto hm = d->ResetHandlerMap()->ToHandle();
-//     qrpc_closure_call(modifier, hm);
-//   }, {
-//     b->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::ModifyHandlerMap, qrpc_to_dyn_closure(modifier));
-//   }, "nq_conn_modify_hdmap");
-// }
-// QRPC_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn) {
-//   SessionDelegate *d;
-//   UNWRAP_CONN(conn, d, {
-//     return qrpc_time_usec(d->ReconnectDurationUS());
-//   }, "nq_conn_reconnect_wait");
-//   return 0;
-// }
-// QRPC_CLOSURECALL void *nq_conn_ctx(qrpc_conn_t conn) {
-//   SessionDelegate *d;
-//   UNSAFE_UNWRAP_CONN(conn, d, {
-//     return d->Context();
-//   }, "nq_conn_ctx");
-//   return nullptr;
-// }
-// //these are hidden API for test, because returned value is unstable
-// //when used with client connection (under reconnection)
-// QRPC_THREADSAFE qrpc_cid_t qrpc_conn_id(qrpc_conn_t conn) {
-//   SessionDelegate *d;
-//   UNWRAP_CONN(conn, d, {
-//     return d->ConnectionId();
-//   }, "nq_conn_id");
-//   return 0;
-// }
-// QRPC_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reachability_t state) {
-//   Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Reachability, state);
-// }
-// QRPC_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn) {
-//   SessionDelegate *d;
-//   UNWRAP_CONN(conn, d, {
-//     return d->UnderlyingFd();
-//   }, "nq_conn_fd");
-//   return -1; 
-// }
+// --------------------------
+//
+// conn API
+//
+// --------------------------
+QRPC_THREADSAFE void qrpc_conn_close_ex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len) {
+  Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Disconnect, code, detail, detail_len);
+}
+QRPC_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn) {
+  Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Reconnect);
+} 
+QRPC_THREADSAFE void qrpc_conn_flush(qrpc_conn_t conn) {
+  Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Flush);
+} 
+QRPC_THREADSAFE bool qrpc_conn_is_client(qrpc_conn_t conn) {
+  return Serial::IsClient(conn.s);
+}
+QRPC_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_t cb) {
+  SessionDelegate *d;
+  UNWRAP_CONN(conn, d, {
+    no_ret_closure_call_with_check(cb, conn, nullptr);
+    return true;
+  }, "nq_conn_is_valid");
+  no_ret_closure_call_with_check(cb, conn, INVALID_REASON(conn));
+  return false;
+}
+QRPC_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn) {
+  SessionDelegate *d;
+  UNWRAP_CONN(conn, d, {
+    return qrpc_time_usec(d->ReconnectDurationUS());
+  }, "nq_conn_reconnect_wait");
+  return 0;
+}
+QRPC_CLOSURECALL void *nq_conn_ctx(qrpc_conn_t conn) {
+  SessionDelegate *d;
+  UNSAFE_UNWRAP_CONN(conn, d, {
+    return d->Context();
+  }, "nq_conn_ctx");
+  return nullptr;
+}
+//these are hidden API for test, because returned value is unstable
+//when used with client connection (under reconnection)
+QRPC_THREADSAFE qrpc_cid_t qrpc_conn_id(qrpc_conn_t conn) {
+  SessionDelegate *d;
+  UNWRAP_CONN(conn, d, {
+    return d->ConnectionId();
+  }, "nq_conn_id");
+  return 0;
+}
+QRPC_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reachability_t state) {
+  Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Reachability, state);
+}
+QRPC_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn) {
+  SessionDelegate *d;
+  UNWRAP_CONN(conn, d, {
+    return d->UnderlyingFd();
+  }, "nq_conn_fd");
+  return -1; 
+}
 
 
 // // --------------------------

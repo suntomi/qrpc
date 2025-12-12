@@ -97,4 +97,13 @@ namespace base {
       fd_ = -1;
     }
   }
+  int SignalHandler::GetReapCount(const Signal &s) {
+    #if defined(__ENABLE_EPOLL__)
+      return s.ssi_code;
+    #elif defined(__ENABLE_KQUEUE__)
+      return static_cast<int>(s.data);
+    #else
+      logger::die({{"ev","GetReapCount() not supported on this platform"}});
+    #endif
+  }
 }

@@ -73,8 +73,6 @@ typedef struct qrpc_client_tag *qrpc_client_t; //qrpc::Client
 
 typedef struct qrpc_server_tag *qrpc_server_t; //qrpc::Server
 
-typedef struct qrpc_hdmap_tag *qrpc_hdmap_t; //qrpc::HandlerMap
-
 typedef struct {
   uint64_t data[1];
 } qrpc_serial_t;
@@ -257,6 +255,7 @@ typedef enum {
   QRPC_EAGAIN = -10,  //temporary failure. retry required
   QRPC_ESIZE = -11,   //not enough size
   QRPC_ECALLBACK = -12, //callback returns error
+  QRPC_EDUP = -13,    //duplicate resource
 } qrpc_error_t;
 
 typedef enum {
@@ -342,8 +341,6 @@ QRPC_DECL_CLOSURE(void, qrpc_on_server_conn_close_t, void *, qrpc_conn_t,  const
 /* conn */
 //called as 2nd argument qrpc_conn_valid, when actually given conn is valid.
 QRPC_DECL_CLOSURE(void, qrpc_on_conn_validate_t, void *, qrpc_conn_t, const char *);
-//called when qrpc_conn_modify_hdmap invoked with valid qrpc_conn_t
-QRPC_DECL_CLOSURE(void, qrpc_on_conn_modify_hdmap_t, void *, qrpc_hdmap_t);
 //called when qrpc_conn emit event
 QRPC_DECL_CLOSURE(void, qrpc_on_event_t, void *, qrpc_conn_t, const void *);
 
@@ -472,6 +469,24 @@ QRPC_INLINE void *qrpc_closure_proc_generic_noop(...) { return nullptr; }
 
 #define qrpc_closure_call(__pclsr, ...) ((__pclsr).proc((__pclsr).arg, __VA_ARGS__))
 
+
+
+// --------------------------
+//
+// signal API
+//
+// --------------------------
+typedef void *qrpc_signal_router_t;
+typedef struct qrpc_signal_event_tag {
+  int signum;
+  int reap_count; //number of times signal raised from last event
+} qrpc_signal_event_t;
+QRPC_DECL_CLOSURE(void, qrpc_signal_handler_t, qrpc_signal_router_t, qrpc_signal_event_t*);
+QRPC_BOOTSTRAP int qrpc_signal_handle(qrpc_signal_router_t r, int signum, qrpc_signal_handler_t handler);
+QRPC_BOOTSTRAP int qrpc_signal_unhandle(qrpc_signal_router_t r, int signum);
+
+
+
 // --------------------------
 //
 // client API
@@ -592,7 +607,7 @@ QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv);
 //create server which has n_worker of workers
 QRPC_BOOTSTRAP qrpc_server_t qrpc_server_create(const qrpc_svconf_t *conf);
 //listen and returns handler map associated with it. 
-QRPC_BOOTSTRAP qrpc_hdmap_t qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *config);
+QRPC_BOOTSTRAP int qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *config);
 //if block is true, qrpc_server_start blocks until some other thread calls qrpc_server_join. 
 QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block);
 //request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API anymore
@@ -602,38 +617,9 @@ QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv);
 
 // --------------------------
 //
-// hdmap API
-//
-// --------------------------
-//setup original stream protocol (client) based on its label, with 3 pattern.
-QRPC_BOOTSTRAP bool qrpc_hdmap_stream_handler(qrpc_hdmap_t h, const char *label, qrpc_stream_handler_t handler);
-
-QRPC_BOOTSTRAP bool qrpc_hdmap_rpc_handler(qrpc_hdmap_t h, const char *label, qrpc_rpc_handler_t handler);
-//media handler
-QRPC_BOOTSTRAP bool qrpc_hdmap_media_handler(qrpc_hdmap_t h, const char *label, qrpc_media_handler_t handler);
-// set stream router. unlike qrpc_hdmap_raw_handler, the router is used as "fallback". that is, if label is matched
-// above qrpc_hdmap_XXX_handler entry, router will not be called.
-QRPC_BOOTSTRAP bool qrpc_hdmap_stream_router(qrpc_hdmap_t h, qrpc_stream_router_t router);
-// set media router. unlike qrpc_hdmap_raw_handler, the router is used as "fallback". that is, if label is matched
-// above qrpc_hdmap_XXX_handler entry, router will not be called.
-QRPC_BOOTSTRAP bool qrpc_hdmap_media_router(qrpc_hdmap_t h, qrpc_media_router_t router);
-//if you call this API, qrpc_hdmap_t become "raw mode". any other hdmap settings are ignored, 
-//and all incoming/outgoing streams are handled with the handler which is given to this API.
-//even media stream packet is handled by handler.on_stream_record.
-QRPC_BOOTSTRAP void qrpc_hdmap_raw_handler(qrpc_hdmap_t h, qrpc_stream_handler_t sh, qrpc_media_handler_t mh);
-
-
-// --------------------------
-//
 // conn API
 //
 // --------------------------
-// modify handler map of connection, which is usually inherit from qrpc_client_t or qrpc_server_t.
-// if you use this API in callback functions of qrpc_conn_t (eg. qrpc_on_client/server_conn_open_t) are called,
-// all modification of hdmap will be immediately finished. (this is recommended usage)
-// if it called from outside of callback functions for qrpc_conn_t, it will be queued
-// and actual modification will not immediately take place.
-QRPC_THREADSAFE void qrpc_conn_modify_hdmap(qrpc_conn_t conn, qrpc_on_conn_modify_hdmap_t modifier);
 //close connection with reason_code and reason_detail through close frame.
 //close and destroy conn/associated stream eventually, so never touch conn/stream/rpc after calling this API
 QRPC_THREADSAFE void qrpc_conn_closex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len);
@@ -799,6 +785,8 @@ QRPC_THREADSAFE qrpc_conn_t qrpc_media_conn(qrpc_media_t media);
 QRPC_THREADSAFE void qrpc_media_consume(qrpc_media_t media, qrpc_media_consumer_t c);
 // create media subscriber object from conn, which can be used for qrpc_media_sub
 QRPC_THREADSAFE qrpc_media_consumer_t qrpc_conn_media_consumer(qrpc_conn_t conn, qrpc_media_params_t params);
+
+
 
 // --------------------------
 //

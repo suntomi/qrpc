@@ -33,7 +33,6 @@ private:
     if (thread_.joinable()) { thread_.join(); }
   }
   int GlobalPortIndex(int port_index) const;
-  HandlerMap &HandlerMapFor(int port_index);
 
   //accessor
   inline const Server &server() const { return server_; }
