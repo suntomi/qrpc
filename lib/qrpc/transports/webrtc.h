@@ -47,7 +47,6 @@ namespace webrtc {
   public:
     ServerConnection(ConnectionFactory &cf, DtlsTransport::Role dtls_role, const qrpc_listen_conf_t &config) :
       Connection(cf, dtls_role), on_open_(config.on_open), on_close_(config.on_close), ctx_(nullptr) {}
-    qrpc_conn_t ToHandle() { return { .p = this, .s = serial_ }; }
     static inline base::webrtc::Listener::Connection *FromHandle(qrpc_conn_t conn) {
       auto c = reinterpret_cast<base::webrtc::Listener::Connection *>(conn.p);
       return c;
@@ -114,7 +113,6 @@ namespace webrtc {
           }
           return std::shared_ptr<Stream>(qrpc::webrtc::NewStream(c, conn, *he));
         }), on_open_(conf.on_open), on_close_(conf.on_close), on_finalize_(conf.on_finalize) {}
-    qrpc_conn_t ToHandle() { return { .p = this, .s = 0 }; }
     ~ClientConnection() override { qrpc_closure_call(on_finalize_, ToHandle()); }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { return qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), &ctx_); }
@@ -154,7 +152,7 @@ namespace webrtc {
       return base::Loop::g_partition_id();
     }
     virtual void Resolve(int family_pref, const std::string &host, qrpc_on_resolve_host_t cb) override {
-      
+
     }
   private:
     AsyncResolver resolver_;

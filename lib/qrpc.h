@@ -97,10 +97,8 @@ typedef struct qrpc_media_tag {
   void *p;    //NqMedia
 } qrpc_media_t;
 
-typedef struct qrpc_alarm_tag {
-  qrpc_serial_t s;   //see AlarmSerialCodec
-  void *p;      //NqAlarm
-} qrpc_alarm_t;
+typedef void *qrpc_alarm_t;
+typedef uint64_t qrpc_alarm_id_t;
 
 typedef enum {
   QRPC_TRANSPORT_WEBRTC,
@@ -260,7 +258,7 @@ typedef enum {
 
 typedef enum {
   QRPC_CLOSE_REASON_NONE = 0,
-  QRPC_CLOSE_REASON_LOCAL = 1,    //application calls qrpc_conn_close
+  QRPC_CLOSE_REASON_LOCAL = 1,    //application calls qrpc_conn/stream/rpc_close
   QRPC_CLOSE_REASON_REMOTE = 2,   //remote peer closed
   QRPC_CLOSE_REASON_SYSCALL = 3,  //some library function call fails
   QRPC_CLOSE_REASON_RESOLVE = 4,  //dns resolve fails
@@ -364,7 +362,7 @@ QRPC_DECL_CLOSURE(void, qrpc_on_stream_ack_t, void *, int, qrpc_time_t);
 
 QRPC_DECL_CLOSURE(void, qrpc_on_stream_retransmit_t, void *, int);
 //called as 2nd argument qrpc_stream_valid, when actually given stream is valid.
-QRPC_DECL_CLOSURE(void, qrpc_on_stream_validate_t, void *, qrpc_stream_t, const char *);
+QRPC_DECL_CLOSURE(void, qrpc_on_stream_validate_t, void *, qrpc_stream_t, bool);
 
 
 /* rpc */
@@ -395,7 +393,7 @@ QRPC_DECL_CLOSURE(bool, qrpc_media_consumer_t, void *, qrpc_media_t, const void 
 QRPC_DECL_CLOSURE(void *, qrpc_media_producer_t, void *, qrpc_size_t*);
 
 /* alarm */
-QRPC_DECL_CLOSURE(void, qrpc_on_alarm_t, void *, qrpc_time_t *);
+QRPC_DECL_CLOSURE(qrpc_time_t, qrpc_on_alarm_t, void *, qrpc_alarm_t);
 
 
 /* reachability */
@@ -648,21 +646,28 @@ QRPC_INLINE bool qrpc_conn_equal(qrpc_conn_t c1, qrpc_conn_t c2) { return c1.s.d
 // stream API 
 //
 // --------------------------
+struct qrpc_stream_config_tag {
+  const char *name;
+  uint16_t stream_id;
+  bool ordered;
+  uint16_t max_packet_lifetime;
+  uint16_t max_retransmits;
+};
+typedef struct qrpc_stream_config_tag qrpc_stream_config_t;
+QRPC_THREADSAFE qrpc_stream_config_t qrpc_stream_conf(const char *name);
 //create single stream from conn, which has type specified by "name". need to use valid conn
 //open callback of this stream handler will receive invalid stream and null **ppctx on error, 
 //valid stream handler and **ppctx where *ppctx == ctx on success.
-QRPC_CLOSURECALL void qrpc_conn_stream(qrpc_conn_t conn, const char *name, void *ctx);
+QRPC_THREADSAFE void qrpc_conn_stream(qrpc_conn_t conn, const qrpc_stream_config_t *conf, void *ctx);
 //get parent conn from rpc. it is possible returned qrpc_conn_t already become invalid when this function is called from non-owner thread of s
-QRPC_THREADSAFE qrpc_conn_t qrpc_stream_conn(qrpc_stream_t s);
+QRPC_CLOSURECALL qrpc_conn_t qrpc_stream_conn(qrpc_stream_t s);
 //get alarm from stream
 QRPC_CLOSURECALL qrpc_alarm_t qrpc_stream_alarm(qrpc_stream_t s);
-//check stream is valid. note that if (nq_stream_is_valid(...)) does not assure any safety of following operation.
+//check stream is valid.
+QRPC_CLOSURECALL bool qrpc_stream_is_valid(qrpc_stream_t s);
+//check stream is valid. note that if (qrpc_stream_is_valid(...)) does not assure any safety of following operation.
 //you should give cb parameter with filling qrpc_on_stream_validate member, to operate this stream object safely on validation success.
-//you can pass qrpc_closure_empty() for qrpc_conn_is_valid, if you dont need to callback.
-QRPC_THREADSAFE bool qrpc_stream_is_valid(qrpc_stream_t s, qrpc_on_stream_validate_t cb);
-//check stream is outgoing. otherwise incoming. optionally you can get stream is valid, via p_valid. 
-//if p_valid returns true, means stream is incoming.
-QRPC_THREADSAFE bool qrpc_stream_outgoing(qrpc_stream_t s, bool *p_valid);
+QRPC_THREADSAFE void qrpc_stream_validate(qrpc_stream_t s, qrpc_on_stream_validate_t cb);
 //close this stream only (conn not closed.) useful if you use multiple stream and only 1 of them go wrong
 QRPC_THREADSAFE void qrpc_stream_close(qrpc_stream_t s);
 //send arbiter byte array/arbiter object to stream peer. if you want ack for each send, use qrpc_stream_send_ex
@@ -673,7 +678,7 @@ QRPC_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb)
 QRPC_INLINE bool qrpc_stream_equal(qrpc_stream_t c1, qrpc_stream_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
 //get stream id. this may change as you re-created stream on reconnection. 
 //useful if you need to give special meaning to specified stream_id, like http2 over quic
-QRPC_THREADSAFE qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s);
+QRPC_CLOSURECALL qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s);
 //get context, which is set at qrpc_conn_stream. only safe with qrpc_stream_t which passed to closure callbacks
 QRPC_CLOSURECALL void *qrpc_stream_ctx(qrpc_stream_t s);
 
@@ -817,18 +822,14 @@ QRPC_THREADSAFE qrpc_time_t qrpc_time_pause(qrpc_time_t d);
 // alarm API
 //
 // --------------------------
-#define STOP_INVOKE_QRPC_TIME (0)
 //configure alarm to invoke cb after current time exceeds first, 
-//at thread which handle receive callback of nq_rpc/stream_t that creates the alarm.
-//if you set next invocation timestamp value(>= input value) to 3rd argument of cb, alarm scheduled to run that time, 
-//if you set the value to 0(STOP_INVOKE_QRPC_TIME), it stopped (still valid and can reactivate with qrpc_alarm_set). 
-//otherwise alarm remove its memory, further use of qrpc_alarm_t is not possible (silently ignored)
+//at thread which handle receive callback of qrpc_rpc/stream_t that creates the alarm.
+//if you return next invocation timestamp value(>= input value) from cb, alarm scheduled to run that time, 
+//if you return value of qrpc_alarm_stop_rv(), it stopped. 
 //suitable if you want to create some kind of poll method of your connection.
-QRPC_THREADSAFE void qrpc_alarm_set(qrpc_alarm_t a, qrpc_time_t first, qrpc_on_alarm_t cb);
-//destroy alarm. after call this, any attempt to call qrpc_alarm_set will be ignored.
-QRPC_THREADSAFE void qrpc_alarm_destroy(qrpc_alarm_t a);
-//check if alarm is valid
-QRPC_THREADSAFE bool qrpc_alarm_is_valid(qrpc_alarm_t a);
+QRPC_CLOSURECALL qrpc_alarm_id_t qrpc_alarm_set(qrpc_alarm_t a, qrpc_time_t first, qrpc_on_alarm_t cb);
+//stop alarm with id that is returned by corresponding qrpc_alarm_set
+QRPC_CLOSURECALL void qrpc_alarm_cancel(qrpc_alarm_t a, qrpc_alarm_id_t id);
 //return special qrpc_time_t value to stop invoking alarm.
 QRPC_INLINE qrpc_time_t qrpc_alarm_stop_rv() { return 0ULL; }
 

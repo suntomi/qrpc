@@ -306,7 +306,7 @@ QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv) {
 //
 // --------------------------
 #define GET_FIRST(__x, ...) __x
-#define CONN_OP_RAW(__proc, ...) do { \
+#define OP_RAW(__proc, ...) do { \
   auto __h = GET_FIRST(__VA_ARGS__); \
   auto partition_id = base::Serial::GetPartitionId(__h.s); \
   if (partition_id != base::Loop::g_partition_id()) { \
@@ -317,7 +317,7 @@ QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv) {
     __proc; \
   } \
 } while (0)
-#define CONN_OP(__proc, ...) CONN_OP_RAW(do { \
+#define CONN_OP(__proc, ...) OP_RAW(do { \
   auto __c = base::Connection::FromHandle(GET_FIRST(__VA_ARGS__)); \
   if (__c != nullptr) { \
     __proc; \
@@ -331,10 +331,10 @@ QRPC_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn) {
   CONN_OP(__c->Reset(), conn);
 } 
 QRPC_THREADSAFE void qrpc_conn_validate(qrpc_conn_t conn, qrpc_on_conn_validate_t cb) {
-  CONN_OP_RAW(qrpc_closure_call(cb, conn, qrpc_conn_is_valid(conn));, conn, cb);
+  OP_RAW(qrpc_closure_call(cb, conn, qrpc_conn_is_valid(conn));, conn, cb);
 }
 QRPC_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, qrpc_on_event_t cb) {
-  CONN_OP_RAW(qrpc_closure_call(cb, conn);, conn, cb);
+  OP_RAW(qrpc_closure_call(cb, conn);, conn, cb);
 }
 QRPC_CLOSURECALL bool qrpc_conn_is_client(qrpc_conn_t conn) {
   auto c = base::Connection::FromHandle(conn);
@@ -356,87 +356,77 @@ QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn) {
 
 
 
-// // --------------------------
-// //
-// // stream API
-// //
-// // --------------------------
-// static inline void conn_stream_common(qrpc_conn_t conn, const char *name, void *ctx, const char *purpose) {
-//   SessionDelegate *d;
-//   UNWRAP_CONN(conn, d, ({
-//     // TODO(iyatomi): if possible, make this real thread safe
-//     d->InitStream(name, ctx);
-//   }), purpose);
-// }
-
-
-// QRPC_CLOSURECALL void qrpc_conn_stream(qrpc_conn_t conn, const char *name, void *ctx) {
-//   conn_stream_common(conn, name, ctx, "nq_conn_stream");
-// }
-// QRPC_THREADSAFE qrpc_conn_t qrpc_stream_conn(qrpc_stream_t s) {
-//   Stream *st;
-//   UNWRAP_STREAM(s, st, ({
-//     return Unwrapper::Stream2Conn(s.s, st);
-//   }), "nq_stream_conn");
-//   return INVALID_HANDLE<qrpc_conn_t>(IHR_CONN_NOT_FOUND);
-// }
-// QRPC_CLOSURECALL qrpc_alarm_t qrpc_stream_alarm(qrpc_stream_t s) {
-//   // TODO(iyatomi): if possible, make this real thread safe
-//   return Unwrapper::UnwrapBoxer(s)->NewAlarm()->ToHandle();
-// }
-// QRPC_THREADSAFE bool qrpc_stream_is_valid(qrpc_stream_t s, qrpc_on_stream_validate_t cb) {
-//   Stream *st;
-//   UNWRAP_STREAM(s, st, {
-//     no_ret_closure_call_with_check(cb, s, nullptr);
-//     return true;
-//   }, "nq_stream_is_valid");
-//   no_ret_closure_call_with_check(cb, s, INVALID_REASON(s));
-//   return false;
-// }
-// QRPC_THREADSAFE bool qrpc_stream_outgoing(qrpc_stream_t s, bool *p_valid) {
-//   Stream *st;
-//   UNWRAP_STREAM(s, st, {
-//     *p_valid = true;
-//     return IsOutgoing(Serial::IsClient(s.s), st->id());
-//   }, "nq_stream_close");
-//   *p_valid = false;
-//   return false;
-// }
-// QRPC_THREADSAFE void qrpc_stream_close(qrpc_stream_t s) {
-//   Unwrapper::UnwrapBoxer(s)->InvokeStream(s.s, ToStream(s), Boxer::OpCode::Disconnect);
-// }
-// QRPC_THREADSAFE void qrpc_stream_send(qrpc_stream_t s, const void *data, qrpc_size_t datalen) {
-//   Stream *st; Boxer *b;
-//   UNWRAP_STREAM_OR_ENQUEUE(s, st, b, {
-//     st->Handler<NqStreamHandler>()->Send(data, datalen);
-//   }, {
-//     b->InvokeStream(s.s, st, Boxer::OpCode::Send, data, datalen);
-//   }, "nq_stream_send");
-// }
-// QRPC_THREADSAFE void qrpc_stream_send_ex(qrpc_stream_t s, const void *data, qrpc_size_t datalen, qrpc_stream_opt_t *opt) {
-//   Stream *st; Boxer *b;
-//   UNWRAP_STREAM_OR_ENQUEUE(s, st, b, {
-//     st->Handler<NqStreamHandler>()->SendEx(data, datalen, *opt);
-//   }, {
-//     b->InvokeStream(s.s, st, Boxer::OpCode::SendEx, data, datalen, *opt);
-//   }, "nq_stream_send");
-// }
-// QRPC_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb) {
-//   Unwrapper::UnwrapBoxer(s)->InvokeStream(s.s, ToStream(s), Boxer::OpCode::Task, qrpc_to_dyn_closure(cb));
-// }
-// QRPC_CLOSURECALL void *nq_stream_ctx(qrpc_stream_t s) {
-//   Stream *st;
-//   UNSAFE_UNWRAP_STREAM(s, st, {
-//     return st->Context();
-//   }, "nq_stream_ctx");
-// }
-// QRPC_THREADSAFE qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s) {
-//   Stream *st;
-//   UNWRAP_STREAM(s, st, {
-//     return st->id();
-//   }, "nq_stream_sid");
-//   return 0;
-// }
+// --------------------------
+//
+// stream API
+//
+// --------------------------
+#define STREAM_OP(__proc, ...) OP_RAW(do { \
+  auto __s = base::Stream::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  if (__s != nullptr) { \
+    __proc; \
+  } \
+} while(0), __VA_ARGS__)
+QRPC_THREADSAFE qrpc_stream_config_t qrpc_stream_conf(const char *name) {
+  qrpc_stream_config_t conf = {
+    .name = name,
+    .ordered = true,
+    .stream_id = 0,
+    .max_packet_lifetime = 0,
+    .max_retransmits = 0,
+  };
+  return conf;
+}
+QRPC_THREADSAFE void qrpc_conn_stream(qrpc_conn_t conn, const qrpc_stream_config_t *conf, void *ctx) {
+  auto cf = *conf;
+  CONN_OP(__c->OpenStream(base::Stream::Config::From(cf, ctx));, conn, cf, ctx);
+}
+QRPC_CLOSURECALL qrpc_conn_t qrpc_stream_conn(qrpc_stream_t s) {
+  return base::Stream::FromHandle(s)->connection().ToHandle();
+}
+QRPC_CLOSURECALL qrpc_alarm_t qrpc_stream_alarm(qrpc_stream_t s) {
+  return base::Stream::FromHandle(s)->connection().alarm_processor().ToHandle();
+}
+QRPC_CLOSURECALL bool qrpc_stream_is_valid(qrpc_stream_t s) {
+  return base::Stream::FromHandle(s) != nullptr;
+}
+QRPC_THREADSAFE void qrpc_stream_validate(qrpc_stream_t s, qrpc_on_stream_validate_t cb) {
+  OP_RAW(qrpc_closure_call(cb, s, qrpc_stream_is_valid(s)), s, cb);
+}
+QRPC_THREADSAFE void qrpc_stream_close(qrpc_stream_t s) {
+  STREAM_OP(__s->Close(base::Stream::CloseReason {
+    .code = QRPC_CLOSE_REASON_LOCAL,
+    .detail_code = 0,
+    .msg = "closed by user",
+  }), s);
+}
+QRPC_THREADSAFE void qrpc_stream_send(qrpc_stream_t s, const void *data, qrpc_size_t datalen) {
+  auto partition_id = base::Serial::GetPartitionId(s.s);
+  if (partition_id != base::Loop::g_partition_id()) {
+    auto p = base::Syscall::Memdup(data, datalen);
+    Worker::queue(partition_id).enqueue([s, p, datalen]() {
+      auto st = base::Stream::FromHandle(s);
+      if (st != nullptr) {
+        st->Send(static_cast<const char *>(p), datalen);
+      }
+      base::Syscall::MemFree(p);
+    });
+  } else {
+      auto st = base::Stream::FromHandle(s);
+      if (st != nullptr) {
+        st->Send(static_cast<const char *>(data), datalen);
+      }
+  }
+}
+QRPC_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb) {
+  STREAM_OP(qrpc_closure_call(cb, s), s, cb);
+}
+QRPC_CLOSURECALL void *qrpc_stream_ctx(qrpc_stream_t s) {
+  return base::Stream::FromHandle(s)->context_ptr();
+}
+QRPC_CLOSURECALL qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s) {
+  return base::Stream::FromHandle(s)->id();
+}
 
 
 
@@ -571,23 +561,21 @@ QRPC_THREADSAFE uint32_t *qrpc_time_to_spec(qrpc_time_t n) {
 
 
 
-// // --------------------------
-// //
-// // alarm API
-// //
-// // --------------------------
-// QRPC_THREADSAFE void qrpc_alarm_set(qrpc_alarm_t a, qrpc_time_t invocation_ts, qrpc_on_alarm_t cb) {
-//   Unwrapper::UnwrapBoxer(a)->InvokeAlarm(a.s, ToAlarm(a), Boxer::OpCode::Start, invocation_ts, cb);
-// }
-// QRPC_THREADSAFE void qrpc_alarm_destroy(qrpc_alarm_t a) {
-//   Unwrapper::UnwrapBoxer(a)->InvokeAlarm(a.s, ToAlarm(a), Boxer::OpCode::Finalize);
-// }
-// QRPC_THREADSAFE bool qrpc_alarm_is_valid(qrpc_alarm_t a) {
-//   //because memory pointed to a.p never returned to heap 
-//   //(alarm memory is from pre-allocated block(by qrpc::Allocator), this check should work always.
-//   auto p = static_cast<NqAlarm *>(a.p);
-//   return p->alarm_serial() == a.s;
-// }
+// --------------------------
+//
+// alarm API
+//
+// --------------------------
+QRPC_CLOSURECALL qrpc_alarm_id_t qrpc_alarm_set(qrpc_alarm_t a, qrpc_time_t invocation_ts, qrpc_on_alarm_t cb) {
+  auto ap = base::AlarmProcessor::FromHandle(a);
+  return ap->Set([cb, a]() {
+    return qrpc_closure_call(cb, a);
+  }, invocation_ts);
+}
+QRPC_CLOSURECALL void qrpc_alarm_cancel(qrpc_alarm_t a, qrpc_alarm_id_t id) {
+  auto ap = base::AlarmProcessor::FromHandle(a);
+  ap->Cancel(id);
+}
 
 
 

@@ -20,9 +20,12 @@ namespace base {
     virtual const Serial &serial() const = 0;
     virtual bool is_client() const = 0;
     virtual void *context() = 0;
+    inline qrpc_conn_t ToHandle() {
+      return { .p = this, .s = this->serial() };
+    }
     static inline Connection *FromHandle(qrpc_conn_t conn) {
       auto p = reinterpret_cast<Connection *>(conn.p);
-      if (p->serial() != Serial(conn.s)) {
+      if (p->serial() != Serial(&conn.s)) {
         return nullptr;
       }
       return p;
