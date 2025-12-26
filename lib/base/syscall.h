@@ -14,6 +14,7 @@
 #include <net/if.h>
 
 #include <filesystem>
+#include <thread>
 
 #include "json.hpp"
 
@@ -94,6 +95,16 @@ public:
     } else {
       return false;
     }
+  }
+  static size_t GetCpuCores() {
+    return std::thread::hardware_concurrency();
+  }
+  static size_t GetFdLimit() {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) != 0) {
+      logger::die({{"ev", "getrlimit(RLIMIT_NOFILE) fails"},{"errno", Errno()}});
+    }
+    return rl.rlim_cur;
   }
   static socklen_t SetListenerAddress(
     struct sockaddr_storage &addr, uint16_t port, bool in6

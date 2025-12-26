@@ -2,6 +2,7 @@
 
 #include "base/webrtc.h"
 #include "base/string.h"
+#include "base/serial.h"
 
 #include "qrpc/base.h"
 #include "qrpc/client.h"
@@ -46,12 +47,17 @@ namespace webrtc {
   public:
     ServerConnection(ConnectionFactory &cf, DtlsTransport::Role dtls_role, const qrpc_listen_conf_t &config) :
       Connection(cf, dtls_role), on_open_(config.on_open), on_close_(config.on_close), ctx_(nullptr) {}
-    qrpc_conn_t ToHandle() { return { .p = this, .s = 0 }; }
+    qrpc_conn_t ToHandle() { return { .p = this, .s = serial_ }; }
+    static inline base::webrtc::Listener::Connection *FromHandle(qrpc_conn_t conn) {
+      auto c = reinterpret_cast<base::webrtc::Listener::Connection *>(conn.p);
+      return c;
+    }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { 
       qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), &ctx_);
       return qrpc_alarm_stop_rv();
     }
+    void *context() override { return ctx_; }
   protected:
     void *ctx_;
     qrpc_on_server_conn_open_t on_open_;
@@ -112,6 +118,7 @@ namespace webrtc {
     ~ClientConnection() override { qrpc_closure_call(on_finalize_, ToHandle()); }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { return qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), &ctx_); }
+    void *context() override { return ctx_; }
   protected:
     void *ctx_;
     qrpc_on_client_conn_open_t on_open_;
@@ -136,12 +143,24 @@ namespace webrtc {
         }
       );
     }
-    void Poll() override { Loop::Poll(); }
+    void Poll() override {
+      Worker::Task t;
+      while (queue_.try_dequeue(t)) { t(); }
+      Loop::Poll();
+    }
     void Close() override { transport_.Fin(); }
+    void Enqueue(Worker::Task &&t) override { queue_.enqueue(std::move(t)); }
+    base::Serial::PartitionId GetPartitionId() const override {
+      return base::Loop::g_partition_id();
+    }
+    virtual void Resolve(int family_pref, const std::string &host, qrpc_on_resolve_host_t cb) override {
+      
+    }
   private:
     AsyncResolver resolver_;
     qrpc_clconf_t config_;
     base::webrtc::Client transport_;
+    Worker::TaskQueue queue_;
   };
 }
 }

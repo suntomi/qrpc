@@ -5,13 +5,13 @@
 #include "base/logger.h"
 
 #include "base/defs.h"
+#include "base/serial.h"
 #include "base/timespec.h"
 
 #include "json.hpp"
 using json = nlohmann::json;
 
 #include "qrpc/base.h"
-#include "qrpc/serial.h"
 #include "qrpc/transport.h"
 
 #if defined(QRPC_THREADSAFE)
@@ -30,25 +30,6 @@ using namespace qrpc;
 
 // --------------------------
 //
-// chaos modes
-//
-// --------------------------
-#if defined(DEBUG)
-static bool g_chaos_write = false;
-extern bool chaos_write() {
-  return g_chaos_write;
-}
-void chaos_init() {
-  g_chaos_write = getenv("CHAOS") != nullptr;
-}
-#else
-#define chaos_init()
-#endif
-
-
-
-// --------------------------
-//
 // helper
 //
 // --------------------------
@@ -61,7 +42,7 @@ template <class H>
 H INVALID_HANDLE(InvalidHandleReason ihr) {
   H h;
   h.p = reinterpret_cast<void *>(ihr);
-  Serial::Clear(h.s);
+  base::Serial::Clear(h.s);
   return h;
 }
 template <class H>
@@ -74,7 +55,7 @@ const char *INVALID_REASON(const H &h) {
     case IHR_NOT_FOUND:
       return "not found";
     default:
-      if (Serial::IsEmpty(h.s)) {
+      if (base::Serial::IsEmpty(h.s)) {
         return "deallocated handle";
       } else {
         return "outdated handle";
@@ -137,11 +118,6 @@ static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_transport_type
   default:
     logger::die({{"ev","invalid wire proto"},{"proto",p}});
   }
-}
-
-static void lib_init() {
-  //break some of the systems according to the env value "CHAOS"
-  chaos_init();
 }
 
 #define no_ret_closure_call_with_check(__pclsr, ...) \
@@ -227,10 +203,29 @@ QRPC_THREADSAFE qrpc_connect_conf_t qrpc_connect_conf(qrpc_client_t cl, const ch
   qrpc_closure_init_noop(conf.stream_router, qrpc_stream_router_t);
   return conf;
 }
-QRPC_BOOTSTRAP qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf) {
-  lib_init(); //anchor
+QRPC_THREADSAFE qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf) {
   auto l = qrpc::Client::New(*conf);
   return l->ToHandle();
+}
+QRPC_THREADSAFE void qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_conf_t *conf) {
+  auto c = qrpc::Client::FromHandle(cl);
+  if (c->GetPartitionId() != base::Loop::g_partition_id()) {
+    c->Enqueue([c, conf]() {
+      c->Connect(*conf);
+    });
+  }
+  //we are not smart aleck and wanna use ipv4 if possible
+  c->Connect(*conf);
+}
+QRPC_THREADSAFE void qrpc_client_resolve(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb) {
+  auto c = qrpc::Client::FromHandle(cl);
+  if (c->GetPartitionId() != base::Loop::g_partition_id()) {
+    std::string host = hostname;
+    c->Enqueue([c, family_pref, host, cb]() {
+      c->Resolve(family_pref, host, cb);
+    });
+  }
+  c->Resolve(family_pref, hostname, cb);
 }
 QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
   auto c = qrpc::Client::FromHandle(cl);
@@ -238,16 +233,12 @@ QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
   delete c;
 }
 QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl) {
+  auto c = qrpc::Client::FromHandle(cl);
+  if (UNLIKELY(c->GetPartitionId() != base::Loop::g_partition_id())) {
+    logger::die({{"ev","qrpc_client_poll called from non-owner thread"},});
+  }
   qrpc::Client::FromHandle(cl)->Poll();
 }
-QRPC_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_conf_t *conf) {
-  auto c = qrpc::Client::FromHandle(cl);
-  //we are not smart aleck and wanna use ipv4 if possible
-  return c->Connect(*conf);
-}
-// QRPC_BOOTSTRAP bool qrpc_client_resolve_host(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb) {
-//   return qrpc::Client::FromHandle(cl)->Resolve(family_pref, hostname, cb);
-// }
 QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srclen, char *dst, qrpc_size_t dstlen) {
   if (AsyncResolver::NtoP(src, srclen, dst, dstlen) < 0) {
     return nullptr;
@@ -266,7 +257,9 @@ QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srclen, char 
 // --------------------------
 QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf() {
   return qrpc_svconf_t{
-    .n_worker = 1 // TODO: get number of cpu cores
+    .n_worker = static_cast<int>(base::Syscall::GetCpuCores()), // TODO: get number of cpu cores
+    .max_nfd = static_cast<int>(base::Syscall::GetFdLimit()), 
+    .process_index = 0,
   };
 }
 QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv) {
@@ -283,22 +276,26 @@ QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv) {
   qrpc_closure_init_noop(conf.on_close, qrpc_on_server_conn_close_t);
   return conf;
 }
-QRPC_THREADSAFE qrpc_server_t qrpc_server_create(int n_worker) {
-  auto sv = new Server(n_worker);
+QRPC_THREADSAFE qrpc_server_t qrpc_server_create(const qrpc_svconf_t *conf) {
+  auto c = conf == nullptr ? qrpc_server_conf() : *conf;
+  if (c.n_worker < 0 || c.n_worker > 0xFFFF) {
+    logger::die({{"ev","invalid n_worker"},{"n_worker",c.n_worker}});
+  }
+  auto sv = new Server(c);
   return sv->ToHandle();
 }
 QRPC_BOOTSTRAP int qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *conf) {
-  auto psv = Server::FromHandle(sv);
-  return psv->Open(*conf);
+  auto s = Server::FromHandle(sv);
+  return s->Open(*conf);
 }
 QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block) {
-  auto psv = Server::FromHandle(sv);
-  psv->Start(block);
+  auto s = Server::FromHandle(sv);
+  s->Start(block);
 }
-QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv) {
-  auto psv = Server::FromHandle(sv);
-  psv->Join();
-  delete psv;
+QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv) {
+  auto s = Server::FromHandle(sv);
+  s->Join();
+  delete s;
 }
 
 
@@ -308,60 +305,55 @@ QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv) {
 // conn API
 //
 // --------------------------
-QRPC_THREADSAFE void qrpc_conn_close_ex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len) {
-  Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Disconnect, code, detail, detail_len);
+#define GET_FIRST(__x, ...) __x
+#define CONN_OP_RAW(__proc, ...) do { \
+  auto __h = GET_FIRST(__VA_ARGS__); \
+  auto partition_id = base::Serial::GetPartitionId(__h.s); \
+  if (partition_id != base::Loop::g_partition_id()) { \
+    Worker::queue(partition_id).enqueue([__VA_ARGS__]() { \
+      __proc; \
+    }); \
+  } else { \
+    __proc; \
+  } \
+} while (0)
+#define CONN_OP(__proc, ...) CONN_OP_RAW(do { \
+  auto __c = base::Connection::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  if (__c != nullptr) { \
+    __proc; \
+  } \
+} while(0), __VA_ARGS__)
+
+QRPC_THREADSAFE void qrpc_conn_close(qrpc_conn_t conn) {
+  CONN_OP(__c->Close(), conn);
 }
 QRPC_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn) {
-  Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Reconnect);
+  CONN_OP(__c->Reset(), conn);
 } 
-QRPC_THREADSAFE void qrpc_conn_flush(qrpc_conn_t conn) {
-  Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Flush);
-} 
-QRPC_THREADSAFE bool qrpc_conn_is_client(qrpc_conn_t conn) {
-  return Serial::IsClient(conn.s);
+QRPC_THREADSAFE void qrpc_conn_validate(qrpc_conn_t conn, qrpc_on_conn_validate_t cb) {
+  CONN_OP_RAW(qrpc_closure_call(cb, conn, qrpc_conn_is_valid(conn));, conn, cb);
 }
-QRPC_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_t cb) {
-  SessionDelegate *d;
-  UNWRAP_CONN(conn, d, {
-    no_ret_closure_call_with_check(cb, conn, nullptr);
-    return true;
-  }, "nq_conn_is_valid");
-  no_ret_closure_call_with_check(cb, conn, INVALID_REASON(conn));
+QRPC_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, qrpc_on_event_t cb) {
+  CONN_OP_RAW(qrpc_closure_call(cb, conn);, conn, cb);
+}
+QRPC_CLOSURECALL bool qrpc_conn_is_client(qrpc_conn_t conn) {
+  auto c = base::Connection::FromHandle(conn);
+  if (c != nullptr) {
+    return c->is_client();
+  }
   return false;
 }
-QRPC_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn) {
-  SessionDelegate *d;
-  UNWRAP_CONN(conn, d, {
-    return qrpc_time_usec(d->ReconnectDurationUS());
-  }, "nq_conn_reconnect_wait");
-  return 0;
+QRPC_CLOSURECALL bool qrpc_conn_is_valid(qrpc_conn_t conn) {
+  return base::Connection::FromHandle(conn) != nullptr;
 }
-QRPC_CLOSURECALL void *nq_conn_ctx(qrpc_conn_t conn) {
-  SessionDelegate *d;
-  UNSAFE_UNWRAP_CONN(conn, d, {
-    return d->Context();
-  }, "nq_conn_ctx");
+QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn) {
+  auto c = base::Connection::FromHandle(conn);
+  if (c != nullptr) {
+    return c->context();
+  }
   return nullptr;
 }
-//these are hidden API for test, because returned value is unstable
-//when used with client connection (under reconnection)
-QRPC_THREADSAFE qrpc_cid_t qrpc_conn_id(qrpc_conn_t conn) {
-  SessionDelegate *d;
-  UNWRAP_CONN(conn, d, {
-    return d->ConnectionId();
-  }, "nq_conn_id");
-  return 0;
-}
-QRPC_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reachability_t state) {
-  Unwrapper::UnwrapBoxer(conn)->InvokeConn(conn.s, ToConn(conn), Boxer::OpCode::Reachability, state);
-}
-QRPC_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn) {
-  SessionDelegate *d;
-  UNWRAP_CONN(conn, d, {
-    return d->UnderlyingFd();
-  }, "nq_conn_fd");
-  return -1; 
-}
+
 
 
 // // --------------------------

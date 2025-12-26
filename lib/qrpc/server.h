@@ -26,20 +26,17 @@ class Server {
   };
  protected:
   std::atomic<Status> status_;
-  uint32_t process_index_, n_worker_;  // process index in cluster (eg. statefulset number in k8s), number of worker
+  uint32_t process_index_, n_worker_, max_nfd_;  // process index in cluster (eg. statefulset number in k8s), number of worker
 	std::unique_ptr<TaskQueue[]> worker_queue_;
 	std::unordered_map<int, PortConfig> port_configs_;
   std::unordered_map<int, Worker*> workers_;
   std::mutex mutex_;
   std::condition_variable cond_;
   std::thread shutdown_thread_;
-  IdFactory<uint32_t> stream_index_factory_;
-  qrpc_time_t timer_intv_;
-
  public:
-	Server(uint32_t n_worker) : 
-    status_(RUNNING), n_worker_(n_worker), worker_queue_(nullptr), 
-    stream_index_factory_(0x7FFFFFFF) {}
+	Server(const qrpc_svconf_t &conf) : status_(RUNNING),
+    n_worker_(conf.n_worker), max_nfd_(conf.max_nfd),
+    process_index_(conf.process_index), worker_queue_(nullptr) {}
   ~Server() {}
   int Open(const qrpc_listen_conf_t &conf) {
     if (port_configs_.find(conf.ep.port) != port_configs_.end()) {
@@ -61,9 +58,9 @@ class Server {
 		if (worker_queue_ == nullptr) {
 			return QRPC_EALLOC;
 		}
-    int r = 0;
+    int r = 0, max_nfd = std::floor(max_nfd_ / n_worker_);
 		for (uint32_t i = 0; i < n_worker_; i++) {
-			if ((r = StartWorker(i)) < 0) {
+			if ((r = StartWorker(max_nfd)) < 0) {
 				return r;
 			}
 		}
@@ -82,6 +79,16 @@ class Server {
     }
 		return QRPC_OK;
 	}
+  TaskQueue &AddWorker(base::Serial::PartitionId id, Worker *w) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    // assert if workers_[id - 1] already exists
+    auto it = workers_.find(id - 1);
+    if (it != workers_.end()) {
+      logger::die({{"ev","Server::AddWorker(): worker already exists"},{"index",id - 1}});
+    }
+    workers_.emplace(id - 1, w);
+    return worker_queue_[id - 1];
+  }
   void Join() {
     if (!alive()) { return; }
     {
@@ -111,7 +118,6 @@ class Server {
   inline const std::unordered_map<int, PortConfig> &port_configs() const { return port_configs_; }
   inline std::unordered_map<int, PortConfig> &port_configs() { return port_configs_; }
   inline qrpc_server_t ToHandle() { return (qrpc_server_t)this; }
-  inline IdFactory<uint32_t> &stream_index_factory() { return stream_index_factory_; }
   static inline Server *FromHandle(qrpc_server_t sv) { return (Server *)sv; }
 
  protected:
@@ -122,10 +128,9 @@ class Server {
     status_ = TERMINATED;
     cond_.notify_all();
   }
-  int StartWorker(int index) {
-    auto l = new Worker(index, *this);
-    workers_[index] = l;
-    l->Start(worker_queue_[index]);
+  int StartWorker(int max_nfd) {
+    auto w = new Worker(*this);
+    w->Start(max_nfd);
     return QRPC_OK;
   } 
 };

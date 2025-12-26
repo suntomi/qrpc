@@ -237,7 +237,7 @@ struct qrpc_webrtc_endpoint_tag {
 typedef qrpc_webrtc_endpoint_tag qrpc_webrtc_endpoint_t;
 // extra endpoint info for webtransport transport (if any)
 struct qrpc_webtx_endpoint_tag {
-  char dummy[0];
+  char dummy[1];
 };
 typedef qrpc_webtx_endpoint_tag qrpc_webtx_endpoint_t;
 
@@ -339,10 +339,10 @@ QRPC_DECL_CLOSURE(void, qrpc_on_server_conn_close_t, void *, qrpc_conn_t,  const
 
 
 /* conn */
-//called as 2nd argument qrpc_conn_valid, when actually given conn is valid.
-QRPC_DECL_CLOSURE(void, qrpc_on_conn_validate_t, void *, qrpc_conn_t, const char *);
+//provided as 2nd argument qrpc_conn_validate 
+QRPC_DECL_CLOSURE(void, qrpc_on_conn_validate_t, void *, qrpc_conn_t, bool);
 //called when qrpc_conn emit event
-QRPC_DECL_CLOSURE(void, qrpc_on_event_t, void *, qrpc_conn_t, const void *);
+QRPC_DECL_CLOSURE(void, qrpc_on_event_t, void *, qrpc_conn_t);
 
 
 /* stream */
@@ -544,17 +544,17 @@ QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf();
 // get default qrpc_connect_conf_t
 QRPC_THREADSAFE qrpc_connect_conf_t qrpc_connect_conf(qrpc_client_t c, const char *host, int port);
 // create client object which have max_nfd of connection. 
-QRPC_BOOTSTRAP qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf);
+QRPC_THREADSAFE qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf);
+// create conn from client. can get qrpc_conn_t via argument of qrpc_clconf_t::on_open
+// return false on error.
+QRPC_THREADSAFE void qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_conf_t *conf);
 // do actual network IO. need to call periodically
 QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl);
 // close connections and destroy client object. after call this, do not call qrpc_client_* API.
 QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl);
-// create conn from client. can get qrpc_conn_t via argument of qrpc_clconf_t::on_open
-// return false on error.
-QRPC_BOOTSTRAP bool qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_conf_t *conf);
 // resolve host. qrpc_client_t need to be polled by qrpc_client_poll to work correctly
 // family_pref can be AF_INET or AF_INET6, and control which address family searched first. 
-QRPC_BOOTSTRAP bool qrpc_client_resolve(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb);
+QRPC_THREADSAFE void qrpc_client_resolve(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb);
 // for subsequent use of qrpc_client_resolve. passing 3rd and 4th argument of qrpc_on_resolve_host_t to this function,
 // as src and srcsz. and passing buffer for dst and dstsz, to store string converted result of src/srcsz.
 // return dst if succeed otherwise nullptr returned.
@@ -569,6 +569,8 @@ QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srcsz, char *
 // --------------------------
 typedef struct {
   int n_worker; //number of worker threads
+  int max_nfd;  //max number of fds. each worker will have max_nfd / n_worker of fds
+  int process_index; //process index for multi process server. set 0 for single process server
 } qrpc_svconf_t;
 typedef struct {
   //connection open/close watcher
@@ -601,17 +603,17 @@ typedef struct {
 } qrpc_listen_conf_t;
 
 // get default qrpc_server_conf_t
-QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf();
+QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf(const qrpc_svconf_t *conf);
 // get default qrpc_listen_conf_t
 QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv);
 //create server which has n_worker of workers
-QRPC_BOOTSTRAP qrpc_server_t qrpc_server_create(const qrpc_svconf_t *conf);
+QRPC_THREADSAFE qrpc_server_t qrpc_server_create(const qrpc_svconf_t *conf);
 //listen and returns handler map associated with it. 
 QRPC_BOOTSTRAP int qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *config);
 //if block is true, qrpc_server_start blocks until some other thread calls qrpc_server_join. 
 QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block);
 //request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API anymore
-QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv);
+QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv);
 
 
 
@@ -620,38 +622,25 @@ QRPC_BOOTSTRAP void qrpc_server_join(qrpc_server_t sv);
 // conn API
 //
 // --------------------------
-//close connection with reason_code and reason_detail through close frame.
+//close connection.
 //close and destroy conn/associated stream eventually, so never touch conn/stream/rpc after calling this API
-QRPC_THREADSAFE void qrpc_conn_closex(qrpc_conn_t conn, qrpc_close_reason_code_t code, const uint8_t *detail, qrpc_size_t detail_len);
-//same as qrpc_conn_close_ex but do not send reason code and detail
-QRPC_INLINE void qrpc_conn_close(qrpc_conn_t conn) { qrpc_conn_closex(conn, QRPC_CLOSE_REASON_LOCAL, (const uint8_t *)"", 0); }
+QRPC_THREADSAFE void qrpc_conn_close(qrpc_conn_t conn);
 //this just restart connection, if connection not start, start it, otherwise close connection once, then start again.
 //it never destroy connection itself, but associated stream/rpc all destroyed. (client only)
 QRPC_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn); 
-//flush buffered packets of all stream
-QRPC_THREADSAFE void qrpc_conn_flush(qrpc_conn_t conn);
-//check connection is client mode or not.
-QRPC_THREADSAFE bool qrpc_conn_is_client(qrpc_conn_t conn);
 //check conn is valid. invalid means fail to create or closed, or temporary disconnected (will reconnect soon).
-//note that if (nq_conn_is_valid(...)) does not assure any safety of following operation, when multi threaded event loop runs
-//you should give cb parameter with filling qrpc_on_conn_validate member, to operate this conn safety on validation success.
-//you can pass qrpc_closure_empty() for qrpc_conn_is_valid, if you dont need to callback.
-QRPC_THREADSAFE bool qrpc_conn_is_valid(qrpc_conn_t conn, qrpc_on_conn_validate_t cb);
-//get reconnect wait duration in us. 0 means does not wait reconnection
-QRPC_THREADSAFE qrpc_time_t qrpc_conn_reconnect_wait(qrpc_conn_t conn);
+//cb is called to indicate conn is valid now. last argument of callback (boolean) is true, conn is valid.
+QRPC_THREADSAFE void qrpc_conn_validate(qrpc_conn_t conn, qrpc_on_conn_validate_t cb);
+//emit event on this conn. when this called, cb registered by qrpc_conn_watch, is called with `args`
+QRPC_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, qrpc_on_event_t cb);
+//check connection is client mode or not.
+QRPC_CLOSURECALL bool qrpc_conn_is_client(qrpc_conn_t conn);
+//check conn is valid. no delay like qrpc_conn_validate, but only can be called in clousre
+QRPC_CLOSURECALL bool qrpc_conn_is_valid(qrpc_conn_t conn);
 //get context, which is set at on_conn_open
 QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn);
 //check equality of qrpc_conn_t.
 QRPC_INLINE bool qrpc_conn_equal(qrpc_conn_t c1, qrpc_conn_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
-//manually set reachability change for current connection
-QRPC_THREADSAFE void qrpc_conn_reachability_change(qrpc_conn_t conn, qrpc_reachability_t new_status);
-//get fd attached to the conn. client conn returns dedicated fd for the connection,
-//server side returns lister fd, which is shared among connections.sz
-QRPC_THREADSAFE int qrpc_conn_fd(qrpc_conn_t conn);
-//emit event on this conn. when this called, cb registered by qrpc_conn_watch, is called with `args`
-QRPC_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, const char *event, const void *args);
-//make cb callbacked when corresponding qrpc_conn_emit with `event` called
-QRPC_THREADSAFE void qrpc_conn_watch(const char *event, qrpc_on_event_t cb);
 
 
 // --------------------------

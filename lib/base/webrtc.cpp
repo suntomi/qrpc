@@ -1085,6 +1085,9 @@ void ConnectionFactory::Connection::Close() {
     syscall_->Call("close");
   }
 }
+void ConnectionFactory::Connection::Reset() {
+  logger::die({{"ev","not implemented"}});
+}
 IceProber *ConnectionFactory::Connection::InitIceProber(
   const std::string &ufrag, const std::string &pwd, uint64_t priority) {
   TRACK();

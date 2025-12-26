@@ -208,7 +208,7 @@ namespace webrtc {
       friend class ConnectionFactory;
     public:
       Connection(ConnectionFactory &sv, RTC::DtlsTransport::Role dtls_role) :
-        factory_(sv), last_active_(qrpc_time_now()), dtls_role_(dtls_role) {
+        factory_(sv), serial_(sv.loop().partition_id()), last_active_(qrpc_time_now()), dtls_role_(dtls_role) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case RTC::DtlsTransport::Role::CLIENT:
@@ -238,6 +238,7 @@ namespace webrtc {
     public:
       // implements base::Connection
       void Close() override;
+      void Reset() override;
       int Send(const char *p, size_t sz) override;
       int Send(Stream &s, const char *p, size_t sz, bool binary) override;
       void Close(Stream &s) override;
@@ -246,6 +247,9 @@ namespace webrtc {
         return OpenStream(c, stream_factory());
       }
       AlarmProcessor &alarm_processor() override { return factory().alarm_processor(); }
+      const Serial &serial() const override { return serial_; }
+      bool is_client() const override { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
+      void *context() override { return nullptr; }
     public: // callbacks
       virtual int OnConnect() { return QRPC_OK; }
       virtual qrpc_time_t OnShutdown() { return 0; }
@@ -262,7 +266,6 @@ namespace webrtc {
       inline bool rtp_enabled() const { return rtp_handler_ != nullptr; }
       // for now, qrpc server initiates dtls transport because safari does not initiate it
       // even if we specify "setup: passive" in SDP of whip response
-      inline bool is_client() const { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
       inline bool is_consumer() const { 
         return std::find_if(media_stream_configs_.begin(), media_stream_configs_.end(), [](const auto &c) {
           return c.direction == rtp::MediaStreamConfig::Direction::SEND;
@@ -406,6 +409,7 @@ namespace webrtc {
       bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) override;
     protected:
       ConnectionFactory &factory_;
+      base::Serial serial_;
       qrpc_time_t last_active_, start_shutdown_{0};
       std::unique_ptr<IceServer> ice_server_; // ICE
       std::unique_ptr<IceProber> ice_prober_; // ICE(client)
@@ -428,8 +432,7 @@ namespace webrtc {
       std::unique_ptr<CloseReason> close_reason_;
     };
   public:
-    ConnectionFactory(Loop &l, Config &&config) :
-      loop_(l), config_(std::move(config)), connections_() { Init(); }
+    ConnectionFactory(Loop &l, Config &&config) : loop_(l), config_(std::move(config)) { Init(); }
     virtual ~ConnectionFactory() { Fin(); }
   public:
     Loop &loop() { return loop_; }
