@@ -333,7 +333,7 @@ QRPC_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn) {
 QRPC_THREADSAFE void qrpc_conn_validate(qrpc_conn_t conn, qrpc_on_conn_validate_t cb) {
   OP_RAW(qrpc_closure_call(cb, conn, qrpc_conn_is_valid(conn));, conn, cb);
 }
-QRPC_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, qrpc_on_event_t cb) {
+QRPC_THREADSAFE void qrpc_conn_task(qrpc_conn_t conn, qrpc_on_conn_task_t cb) {
   OP_RAW(qrpc_closure_call(cb, conn);, conn, cb);
 }
 QRPC_CLOSURECALL bool qrpc_conn_is_client(qrpc_conn_t conn) {
@@ -362,6 +362,29 @@ QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn) {
 //
 // --------------------------
 #define STREAM_OP(__proc, ...) OP_RAW(do { \
+  auto __s = base::Stream::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  if (__s != nullptr) { \
+    __proc; \
+  } \
+} while(0), __VA_ARGS__)
+#define GET_SECOND(__x, __y, ...) __y
+#define GET_THIRD(__x, __y, __z, ...) __z
+#define BYTES_OP(__proc, ...) do { \
+  auto __h = GET_FIRST(__VA_ARGS__); \
+  auto __ptr = GET_SECOND(__VA_ARGS__); \
+  auto __size = GET_THIRD(__VA_ARGS__); \
+  auto partition_id = base::Serial::GetPartitionId(__h.s); \
+  if (partition_id != base::Loop::g_partition_id()) { \
+    GET_SECOND(__VA_ARGS__) = base::Syscall::Memdup(__ptr, __size); \
+    Worker::queue(partition_id).enqueue([__VA_ARGS__]() { \
+      __proc; \
+      base::Syscall::MemFree(const_cast<void *>(GET_SECOND(__VA_ARGS__))); \
+    }); \
+  } else { \
+    __proc; \
+  } \
+} while (0)
+#define STREAM_BYTES_OP(__proc, ...) BYTES_OP(do { \
   auto __s = base::Stream::FromHandle(GET_FIRST(__VA_ARGS__)); \
   if (__s != nullptr) { \
     __proc; \
@@ -401,22 +424,7 @@ QRPC_THREADSAFE void qrpc_stream_close(qrpc_stream_t s) {
   }), s);
 }
 QRPC_THREADSAFE void qrpc_stream_send(qrpc_stream_t s, const void *data, qrpc_size_t datalen) {
-  auto partition_id = base::Serial::GetPartitionId(s.s);
-  if (partition_id != base::Loop::g_partition_id()) {
-    auto p = base::Syscall::Memdup(data, datalen);
-    Worker::queue(partition_id).enqueue([s, p, datalen]() {
-      auto st = base::Stream::FromHandle(s);
-      if (st != nullptr) {
-        st->Send(static_cast<const char *>(p), datalen);
-      }
-      base::Syscall::MemFree(p);
-    });
-  } else {
-      auto st = base::Stream::FromHandle(s);
-      if (st != nullptr) {
-        st->Send(static_cast<const char *>(data), datalen);
-      }
-  }
+  STREAM_BYTES_OP(__s->Send(static_cast<const char *>(data), datalen), s, data, datalen);
 }
 QRPC_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb) {
   STREAM_OP(qrpc_closure_call(cb, s), s, cb);
@@ -430,106 +438,83 @@ QRPC_CLOSURECALL qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s) {
 
 
 
-// // --------------------------
-// //
-// // rpc API
-// //
-// // --------------------------
-// static inline void rpc_reply_common(qrpc_rpc_t rpc, qrpc_error_t result, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen) {
-//   ASSERT(result <= 0);
-//   Stream *st; Boxer *b;
-//   UNWRAP_STREAM_OR_ENQUEUE(rpc, st, b, {
-//     st->Handler<NqSimpleRPCStreamHandler>()->Reply(result, msgid, data, datalen);
-//   }, {
-//     b->InvokeStream(rpc.s, st, Boxer::OpCode::Reply, result, msgid, data, datalen);
-//   }, result < 0 ? "nq_rpc_error" : "nq_rpc_reply");
-// }
+// --------------------------
+//
+// rpc API
+//
+// --------------------------
+#define RPC_OP(__proc, ...) OP_RAW(do { \
+  auto __r = qrpc::RPCStream::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  if (__r != nullptr) { \
+    __proc; \
+  } \
+} while(0), __VA_ARGS__)
+#define RPC_BYTES_OP(__proc, ...) BYTES_OP(do { \
+  auto __r = qrpc::RPCStream::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  if (__r != nullptr) { \
+    __proc; \
+  } \
+} while(0), __VA_ARGS__)
 
-
-// QRPC_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const char *name, void *ctx) {
-//   conn_stream_common(conn, name, ctx, "nq_conn_rpc");
-// }
-// QRPC_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc) {
-//   Stream *st;
-//   UNWRAP_STREAM(rpc, st, ({
-//     return Unwrapper::Stream2Conn(rpc.s, st);
-//   }), "nq_rpc_conn");
-//   return INVALID_HANDLE<qrpc_conn_t>(IHR_CONN_NOT_FOUND);
-// }
-// QRPC_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc) {
-//   // TODO(iyatomi): if possible, make this real thread safe
-//   return Unwrapper::UnwrapBoxer(rpc)->NewAlarm()->ToHandle();
-// }
-// QRPC_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc, qrpc_on_rpc_validate_t cb) {
-//   Stream *st;
-//   UNWRAP_STREAM(rpc, st, {
-//     no_ret_closure_call_with_check(cb, rpc, nullptr);
-//     return true;
-//   }, "nq_rpc_is_valid");
-//   no_ret_closure_call_with_check(cb, rpc, INVALID_REASON(rpc));
-//   return false;
-// }
-// QRPC_THREADSAFE bool qrpc_rpc_outgoing(qrpc_rpc_t rpc, bool *p_valid) {
-//   Stream *st;
-//   UNWRAP_STREAM(rpc, st, {
-//     *p_valid = true;
-//     return IsOutgoing(Serial::IsClient(rpc.s), st->id());
-//   }, "nq_stream_close");
-//   *p_valid = false;
-//   return false;
-// }
-// QRPC_THREADSAFE void qrpc_rpc_close(qrpc_rpc_t rpc) {
-//   Unwrapper::UnwrapBoxer(rpc)->InvokeStream(rpc.s, ToStream(rpc), Boxer::OpCode::Disconnect);
-// }
-// QRPC_THREADSAFE void qrpc_rpc_call(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_on_rpc_reply_t on_reply) {
-//   ASSERT(type > 0);
-//   Stream *st; Boxer *b;
-//   UNWRAP_STREAM_OR_ENQUEUE(rpc, st, b, {
-//     st->Handler<NqSimpleRPCStreamHandler>()->Call(type, data, datalen, on_reply);
-//   }, {
-//     b->InvokeStream(rpc.s, st, Boxer::OpCode::Call, type, data, datalen, on_reply);
-//   }, "nq_rpc_call");
-// }
-// QRPC_THREADSAFE void qrpc_rpc_call_ex(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_rpc_opt_t *opts) {
-//   ASSERT(type > 0);
-//   Stream *st; Boxer *b;
-//   UNWRAP_STREAM_OR_ENQUEUE(rpc, st, b, {
-//     st->Handler<NqSimpleRPCStreamHandler>()->CallEx(type, data, datalen, *opts);
-//   }, {
-//     b->InvokeStream(rpc.s, st, Boxer::OpCode::CallEx, type, data, datalen, *opts);
-//   }, "nq_rpc_call_ex");
-// }
-// QRPC_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen) {
-//   ASSERT(type > 0);
-//   Stream *st; Boxer *b;
-//   UNWRAP_STREAM_OR_ENQUEUE(rpc, st, b, {
-//     st->Handler<NqSimpleRPCStreamHandler>()->Notify(type, data, datalen);
-//   }, {
-//     b->InvokeStream(rpc.s, st, Boxer::OpCode::Notify, type, data, datalen);
-//   }, "nq_rpc_notify");
-// }
-// QRPC_THREADSAFE void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen) {
-//   rpc_reply_common(rpc, QRPC_OK, msgid, data, datalen);
-// }
-// QRPC_THREADSAFE void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen) {
-//   rpc_reply_common(rpc, QRPC_EUSER, msgid, data, datalen);
-// }
-// QRPC_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb) {
-//   Unwrapper::UnwrapBoxer(rpc)->InvokeStream(rpc.s, ToStream(rpc), Boxer::OpCode::Task, qrpc_to_dyn_closure(cb));
-// }
-// QRPC_CLOSURECALL void *nq_rpc_ctx(qrpc_rpc_t rpc) {
-//   Stream *st;
-//   UNSAFE_UNWRAP_STREAM(rpc, st, {
-//     return st->Context();
-//   }, "nq_rpc_ctx");
-// }
-// QRPC_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc) {
-//   Stream *st;
-//   UNWRAP_STREAM(rpc, st, {
-//     return st->id();
-//   }, "nq_rpc_sid");
-//   return 0;
-// }
+QRPC_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const qrpc_stream_config_t *conf, void *ctx) {
+  auto cf = *conf;
+  CONN_OP(__c->OpenStream(base::Stream::Config::From(cf, ctx));, conn, cf, ctx);
+}
+QRPC_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc) {
+  return base::Stream::FromHandle(rpc)->connection().ToHandle();
+}
+QRPC_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc) {
+  return base::Stream::FromHandle(rpc)->connection().alarm_processor().ToHandle();
+}
+QRPC_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc) {
+  return base::Stream::FromHandle(rpc) != nullptr;
+}
+QRPC_THREADSAFE void qrpc_rpc_validate(qrpc_rpc_t rpc, qrpc_on_rpc_validate_t cb) {
+  OP_RAW(qrpc_closure_call(cb, rpc, qrpc_rpc_is_valid(rpc)), rpc, cb);
+}
+QRPC_THREADSAFE void qrpc_rpc_close(qrpc_rpc_t rpc) {
+  RPC_OP(__r->Close(base::Stream::CloseReason {
+    .code = QRPC_CLOSE_REASON_LOCAL,
+    .detail_code = 0,
+    .msg = "closed by user",
+  }), rpc);
+}
+QRPC_THREADSAFE void qrpc_rpc_call(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_on_rpc_reply_t on_reply) {
+  RPC_BYTES_OP(
+    __r->Call(type, static_cast<const char *>(data), datalen, on_reply),
+    rpc, data, datalen, type, on_reply
+  );
+}
+QRPC_THREADSAFE void qrpc_rpc_callx(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen, qrpc_rpc_opt_t *opts) {
+  auto o = *opts;
+  RPC_BYTES_OP(
+    __r->CallEx(type, static_cast<const char *>(data), datalen, o),
+    rpc, data, datalen, type, o
+  );
+}
+QRPC_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen) {
+  RPC_BYTES_OP(
+    __r->Notify(type, static_cast<const char *>(data), datalen),
+    rpc, data, datalen, type
+  );
+}
+QRPC_CLOSURECALL void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen) {
+  auto r = qrpc::RPCStream::FromHandle(rpc);
+  r->Reply(QRPC_OK, msgid, static_cast<const char *>(data), datalen);
+}
+QRPC_CLOSURECALL void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, qrpc_error_t error, const void *data, qrpc_size_t datalen) {
+  auto r = qrpc::RPCStream::FromHandle(rpc);
+  r->Reply(error, msgid, static_cast<const char *>(data), datalen);
+}
+QRPC_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb) {
+  RPC_OP(qrpc_closure_call(cb, rpc), rpc, cb);
+}
+QRPC_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t rpc) {
+  return base::Stream::FromHandle(rpc)->context_ptr();
+}
+QRPC_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc) {
+  return base::Stream::FromHandle(rpc)->id();
+}
 
 
 

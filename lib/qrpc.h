@@ -339,8 +339,8 @@ QRPC_DECL_CLOSURE(void, qrpc_on_server_conn_close_t, void *, qrpc_conn_t,  const
 /* conn */
 //provided as 2nd argument qrpc_conn_validate 
 QRPC_DECL_CLOSURE(void, qrpc_on_conn_validate_t, void *, qrpc_conn_t, bool);
-//called when qrpc_conn emit event
-QRPC_DECL_CLOSURE(void, qrpc_on_event_t, void *, qrpc_conn_t);
+// 
+QRPC_DECL_CLOSURE(void, qrpc_on_conn_task_t, void *, qrpc_conn_t);
 
 
 /* stream */
@@ -357,10 +357,6 @@ QRPC_DECL_CLOSURE(qrpc_size_t, qrpc_stream_writer_t, void *, qrpc_stream_t, cons
 QRPC_DECL_CLOSURE(void, qrpc_on_stream_record_t, void *, qrpc_stream_t, const void *, qrpc_size_t);
 
 QRPC_DECL_CLOSURE(void, qrpc_on_stream_task_t, void *, qrpc_stream_t);
-
-QRPC_DECL_CLOSURE(void, qrpc_on_stream_ack_t, void *, int, qrpc_time_t);
-
-QRPC_DECL_CLOSURE(void, qrpc_on_stream_retransmit_t, void *, int);
 //called as 2nd argument qrpc_stream_valid, when actually given stream is valid.
 QRPC_DECL_CLOSURE(void, qrpc_on_stream_validate_t, void *, qrpc_stream_t, bool);
 
@@ -379,7 +375,7 @@ QRPC_DECL_CLOSURE(void, qrpc_on_rpc_reply_t, void *, qrpc_rpc_t, qrpc_error_t, c
 
 QRPC_DECL_CLOSURE(void, qrpc_on_rpc_task_t, void *, qrpc_rpc_t);
 //called as 2nd argument qrpc_stream_valid, when actually given stream is valid.
-QRPC_DECL_CLOSURE(void, qrpc_on_rpc_validate_t, void *, qrpc_rpc_t, const char *);
+QRPC_DECL_CLOSURE(void, qrpc_on_rpc_validate_t, void *, qrpc_rpc_t, bool);
 
 
 /* media */
@@ -630,7 +626,7 @@ QRPC_THREADSAFE void qrpc_conn_reset(qrpc_conn_t conn);
 //cb is called to indicate conn is valid now. last argument of callback (boolean) is true, conn is valid.
 QRPC_THREADSAFE void qrpc_conn_validate(qrpc_conn_t conn, qrpc_on_conn_validate_t cb);
 //emit event on this conn. when this called, cb registered by qrpc_conn_watch, is called with `args`
-QRPC_THREADSAFE void qrpc_conn_emit(qrpc_conn_t conn, qrpc_on_event_t cb);
+QRPC_THREADSAFE void qrpc_conn_task(qrpc_conn_t conn, qrpc_on_conn_task_t cb);
 //check connection is client mode or not.
 QRPC_CLOSURECALL bool qrpc_conn_is_client(qrpc_conn_t conn);
 //check conn is valid. no delay like qrpc_conn_validate, but only can be called in clousre
@@ -697,7 +693,7 @@ typedef struct {
 //create single rpc object from conn, which has type specified by "name". need to use valid conn
 //open callback of this rpc handler will receive invalid rpc and null **ppctx on error, 
 //valid stream handler and **ppctx where *ppctx == ctx on success.
-QRPC_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const char *name, void *ctx);
+QRPC_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const qrpc_stream_config_t *conf, void *ctx);
 //get parent conn from rpc. it is possible returned qrpc_conn_t already become invalid when this function is called from non-owner thread of rpc
 QRPC_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc);
 //get alarm from stream or rpc
@@ -705,10 +701,7 @@ QRPC_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc);
 //check rpc is valid. note that if (nq_rpc_is_valid(...)) does not assure any safety of following operation.
 //you should give cb parameter with filling qrpc_on_rpc_validate member, to operate this rpc object safely on validation success.
 //you can pass qrpc_closure_empty() for qrpc_conn_is_valid, if you dont need to callback.
-QRPC_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc, qrpc_on_rpc_validate_t cb);
-//check rpc is outgoing. otherwise incoming. optionally you can get stream is valid, via p_valid. 
-//if p_valid returns true, means stream is incoming.
-QRPC_THREADSAFE bool qrpc_rpc_outgoing(qrpc_rpc_t s, bool *p_valid);
+QRPC_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc);
 //close this stream only (conn not closed.) useful if you use multiple stream and only 1 of them go wrong
 QRPC_THREADSAFE void qrpc_rpc_close(qrpc_rpc_t rpc);
 //send arbiter byte array or object to stream peer. type should be positive
@@ -720,16 +713,16 @@ QRPC_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *d
 //send reply of specified request. result >= 0, data and datalen is response, otherwise error detail
 QRPC_THREADSAFE void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen);
 //send error response to specified request. data and datalen is error detail
-QRPC_THREADSAFE void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen);
+QRPC_THREADSAFE void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, qrpc_error_t error, const void *data, qrpc_size_t datalen);
 //schedule execution of closure which is given to cb, will called with given rpc.
 QRPC_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb);
 //check equality of qrpc_rpc_t.
 QRPC_INLINE bool qrpc_rpc_equal(qrpc_rpc_t c1, qrpc_rpc_t c2) { return c1.s.data[0] == c2.s.data[0] && (c1.s.data[0] == 0 || c1.p == c2.p); }
 //get rpc id. this may change as you re-created rpc on reconnection.
 //useful if you need to give special meaning to specified stream_id, like http2 over quic
-QRPC_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc);
+QRPC_CLOSURECALL qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc);
 //get context, which is set at qrpc_conn_rpc. only safe with qrpc_rpc_t which passed to closure callbacks
-QRPC_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t s);
+QRPC_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t rpc);
 
 
 

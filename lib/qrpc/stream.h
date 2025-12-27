@@ -77,11 +77,12 @@ namespace qrpc {
     void OnShutdown() override;
     void Notify(uint16_t type, const void *p, qrpc_size_t len);
     void Call(uint16_t type, const void *p, qrpc_size_t len, qrpc_on_rpc_reply_t cb);
-    void CallEx(uint16_t type, const void *p, qrpc_size_t len, qrpc_rpc_opt_t &opt);
+    void CallEx(uint16_t type, const void *p, qrpc_size_t len, const qrpc_rpc_opt_t &opt);
     void Reply(qrpc_error_t result, qrpc_msgid_t msgid, const void *p, qrpc_size_t len);
     void Close(const CloseReason &r) override;
   public:
     qrpc_rpc_t ToHandle() { return { .s = 0, .p = this }; }
+    static inline RPCStream *FromHandle(qrpc_rpc_t rpc) { return Stream::FromHandle(rpc)->As<RPCStream>(); }
     qrpc_time_t CheckTimeout();
     inline void SendCommon(uint16_t type, qrpc_msgid_t msgid, const void *p, qrpc_size_t len) {
       ASSERT(type > 0);

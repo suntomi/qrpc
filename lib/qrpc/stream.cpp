@@ -159,7 +159,7 @@ namespace qrpc {
     SendCommon(type, msgid, p, len);
     EntryRequest(msgid, cb, default_timeout_ts_);
   }
-  void RPCStream::CallEx(uint16_t type, const void *p, qrpc_size_t len, qrpc_rpc_opt_t &opt) {
+  void RPCStream::CallEx(uint16_t type, const void *p, qrpc_size_t len, const qrpc_rpc_opt_t &opt) {
     qrpc_msgid_t msgid = msgid_factory_.New();
     SendCommon(type, msgid, p, len);
     EntryRequest(msgid, opt.callback, opt.timeout);
@@ -168,8 +168,7 @@ namespace qrpc {
     ASSERT(result <= 0);
     //pack and send buffer
     char buffer[HEADER_BUFFER_SIZE + LENGTH_BUFFER_SIZE + len];
-    size_t ofs = 0;
-    ofs = base::HeaderCodec::Encode(result, msgid, buffer, sizeof(buffer));
+    size_t ofs = base::HeaderCodec::Encode(result, msgid, buffer, sizeof(buffer));
     ofs += base::LengthCodec::Encode(len, buffer + ofs, sizeof(buffer) - ofs);
     memcpy(buffer + ofs, p, len);
     Send(buffer, ofs + len);
