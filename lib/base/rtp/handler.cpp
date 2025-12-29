@@ -482,7 +482,7 @@ namespace rtp {
 			auto *p = FindProducerByPath(config.media_path);
 			if (p != nullptr) {
 				// preserve ssrcs related with the producer. because if chrome has 2 tabs which connects to qrpc server, 
-				// later one does not send rid/mid to the server. so remember ssrc => rid mapping of previous setting and 
+				// later one does not send rid/mid to the server. so remember ssrc => rid mapping of previous setting 
 				auto &map_ref = ssrc_stream_recovery_map_;
 				for (const auto &kv : p->GetRtpStreams()) {
 					const auto &rid = kv.first->GetRid();

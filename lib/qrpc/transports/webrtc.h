@@ -136,8 +136,8 @@ namespace webrtc {
     bool Connect(const qrpc_connect_conf_t &c) override {
       return transport_.Connect(
         base::webrtc::Client::Endpoint::From(c.ep),
-        [c](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
-          return new ClientConnection(cf, role, c);
+        [conf = c](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
+          return new ClientConnection(cf, role, conf);
         }
       );
     }

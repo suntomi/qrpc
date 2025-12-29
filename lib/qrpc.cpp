@@ -520,6 +520,101 @@ QRPC_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc) {
 
 // --------------------------
 //
+// media API
+//
+// --------------------------
+QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
+  // default: opus
+  static const char *audio_rtcp_fbs[] = {
+    "transport-cc"
+  };
+  static qrpc_media_codec_t audio_codecs[] = {
+    {
+      .mime_type = "opus",
+      .payload_type = 111,
+      .clock_rate = 48000,
+      .channels = 2,
+      .fmtp = "minptime=10;useinbandfec=1",
+      .n_rtcp_fbs = bulkof(audio_rtcp_fbs),
+      .rtcp_fbs = audio_rtcp_fbs
+    }
+  };
+  static qrpc_media_hdext_t audio_hdexts[] = {
+    {.id = QRPC_RTP_HDEXT_SSRC_AUDIO_LEVEL, .uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level"},
+    {.id = QRPC_RTP_HDEXT_ABS_SEND_TIME, .uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time"},
+    {.id = QRPC_RTP_HDEXT_TRANSPORT_WIDE_CC_01, .uri = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"},
+    {.id = QRPC_RTP_HDEXT_MID, .uri = "urn:ietf:params:rtp-hdrext:sdes:mid"},
+  };
+  // default: VP8
+  static const char *video_rtcp_fbs[] = {
+    "transport-cc", "goog-remb", "ccm fir", "nack", "nack pli"
+  };
+  static qrpc_media_codec_t video_codecs[] = {
+    {
+      .mime_type = "VP8",
+      .payload_type = 96,
+      .clock_rate = 90000,
+      .channels = 0,
+      .fmtp = nullptr,
+      .n_rtcp_fbs = bulkof(video_rtcp_fbs),
+      .rtcp_fbs = video_rtcp_fbs
+    }
+  };
+  static qrpc_media_hdext_t video_hdexts[] = {
+    {.id = QRPC_RTP_HDEXT_TOFFSET, .uri = "urn:ietf:params:rtp-hdrext:toffset"},
+    {.id = QRPC_RTP_HDEXT_ABS_SEND_TIME, .uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time"},
+    {.id = QRPC_RTP_HDEXT_VIDEO_ORIENTATION, .uri = "urn:3gpp:video-orientation"},
+    {.id = QRPC_RTP_HDEXT_TRANSPORT_WIDE_CC_01, .uri = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"},
+    {.id = QRPC_RTP_HDEXT_PLAYOUT_DELAY, .uri = "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay"},
+    {.id = QRPC_RTP_HDEXT_MID, .uri = "urn:ietf:params:rtp-hdrext:sdes:mid"},
+    {.id = QRPC_RTP_HDEXT_STREAM_ID, .uri = "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id"},
+    {.id = QRPC_RTP_HDEXT_REPAIRED_STREAM_ID, .uri = "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"},
+    {.id = QRPC_RTP_HDEXT_DEPENDENCY_DESCRIPTOR, .uri = "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension"},
+  };
+  return {
+    .audio_cap = {
+      .n_codecs = bulkof(audio_codecs),
+      .codecs = audio_codecs,
+      .n_hdexts = bulkof(audio_hdexts),
+      .hdexts = audio_hdexts,
+    },
+    .video_cap = {
+      .n_codecs = bulkof(video_codecs),
+      .codecs = video_codecs,
+      .n_hdexts = bulkof(video_hdexts),
+      .hdexts = video_hdexts,
+    },
+  };
+}
+QRPC_THREADSAFE void qrpc_conn_media_init(qrpc_conn_t c, qrpc_media_config_t *config) {
+  auto c = base::Connection::FromHandle(c);
+}
+QRPC_THREADSAFE void qrpc_conn_media_open(qrpc_conn_t c, qrpc_media_produce_config_t *config) {
+
+}
+QRPC_THREADSAFE void qrpc_conn_media_watch(qrpc_conn_t c, qrpc_media_consume_config_t *config) {
+
+}
+QRPC_THREADSAFE void qrpc_media_watch(qrpc_media_t m, qrpc_on_media_consume_t cb) {
+
+}
+QRPC_THREADSAFE void qrpc_media_close(qrpc_media_t m) {
+
+}
+QRPC_THREADSAFE void qrpc_media_resume(qrpc_media_t m) {
+
+}
+QRPC_THREADSAFE void qrpc_media_pause(qrpc_media_t m) {
+
+}
+QRPC_CLOSURECALL bool qrpc_media_paused(qrpc_media_t m) {
+  return true;
+}
+
+
+
+// --------------------------
+//
 // time API
 //
 // --------------------------

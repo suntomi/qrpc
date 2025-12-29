@@ -506,7 +506,6 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           }
           SDP sdp(sdpit->second.get<std::string>());
           std::string answer;
-          std::map<std::string,rtp::Producer*> created_producers;
           if (!sdp.Answer(mpmit->second.get<std::map<std::string,std::string>>(), c, answer, &context)) {
             RAISE("fail to produce");
           }
@@ -514,7 +513,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             RAISE("nothing produced");
           }
           json status_map;
-          for (const auto &kv : created_producers) {
+          for (const auto &kv : context.created_producers) {
             status_map[kv.first] = kv.second->status().ToJson();
           }
           Call("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
@@ -2182,13 +2181,13 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
       logger::error({{"ev","fail to find sdp to answer"},{"req",client_req}});
       return QRPC_EINVAL;
     }
-    auto client_sdp = client_sdp_it->get<std::string>();
-    auto cnit = client_req.find("cname");
+    const auto &client_sdp = client_sdp_it->get<std::string>();
+    const auto &cnit = client_req.find("cname");
     if (cnit == client_req.end()) {
       logger::error({{"ev","fail to find value for key 'cname'"},{"req",client_req}});
       return QRPC_EINVAL;
     }
-    const auto capit = client_req.find("capability");
+    const auto &capit = client_req.find("capability");
     if (capit == client_req.end()) {
       QRPC_LOGJ(error, {{"ev","fail to find value for key 'capability'"},{"req",client_req}});
       return QRPC_OK;
@@ -2203,7 +2202,7 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
     }
     logger::info({{"ev","allocate connection"},{"ufrag",ufrag}});
     std::string answer;
-    auto cap_sdp = capit->get<std::string>();
+    const auto &cap_sdp = capit->get<std::string>();
     if (!c->SetRtpCapability(cap_sdp, answer)) {
       QRPC_LOGJ(error, {{"ev","fail to parse capability"},{"capability_sdp",cap_sdp}});
       return QRPC_OK;
