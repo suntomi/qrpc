@@ -587,7 +587,6 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
   };
 }
 QRPC_THREADSAFE void qrpc_conn_media_init(qrpc_conn_t c, qrpc_media_config_t *config) {
-  auto c = base::Connection::FromHandle(c);
 }
 QRPC_THREADSAFE void qrpc_conn_media_open(qrpc_conn_t c, qrpc_media_produce_config_t *config) {
 

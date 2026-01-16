@@ -1,5 +1,7 @@
 #pragma once
 
+#include "base/serial.h"
+
 #include <string>
 
 namespace base {
@@ -12,9 +14,25 @@ namespace base {
     typedef std::string ScalabilityMode; // scalability mode of RTP stream (SVC)
     typedef uint64_t Ssrc; // Ssrc of RTP stream
   public:
-    Media(const std::string &l) : label_(l) {}
-    const std::string &label() const { return label_; }
+    Media(const std::string &path, Serial::PartitionId pid)
+      : serial_(pid), path_(path) {}
+    virtual ~Media() = default;
+    virtual int OnOpen() { return QRPC_OK; }
+    virtual void OnClose() {}
+    const Serial &serial() const { return serial_; }
+    const std::string &path() const { return path_; }
+    inline qrpc_media_t ToHandle() {
+      return { .p = this, .s = this->serial() };
+    }
+    static inline Media *FromHandle(qrpc_media_t media) {
+      auto p = reinterpret_cast<const Media *>(media.p);
+      if (p->serial() != Serial(&media.s)) {
+        return nullptr;
+      }
+      return const_cast<Media *>(p);
+    }
   protected:
-    std::string label_;
+    Serial serial_;
+    std::string path_;
   };
 }

@@ -425,7 +425,7 @@ namespace rtp {
 		auto lpath = str::Join(parsed, "/");
 		auto lit = medias_.find(lpath);
 		if (lit == medias_.end()) {
-			auto m = std::make_shared<Media>(lpath);
+			auto m = listener().media_factory(lpath);
 			medias_[lpath] = m;
 			return m;
 		}

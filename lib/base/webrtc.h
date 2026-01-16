@@ -407,6 +407,9 @@ namespace webrtc {
       void SendSctpData(const uint8_t* data, size_t len) override { ASSERT(false); }
       const rtp::Handler::Config &GetRtpConfig() const override { return transport_config().rtp; }
       bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) override;
+      std::shared_ptr<base::Media> media_factory(const std::string &path) override {
+        return std::make_shared<base::Media>(path, serial().partition_id());
+      }
     protected:
       ConnectionFactory &factory_;
       base::Serial serial_;

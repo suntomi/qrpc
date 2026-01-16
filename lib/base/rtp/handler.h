@@ -172,6 +172,7 @@ namespace rtp {
       virtual void SendSctpData(const uint8_t* data, size_t len) = 0;
       virtual bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, MediaStreamConfig::Direction dir) = 0;
       virtual const Config &GetRtpConfig() const = 0;
+      virtual std::shared_ptr<base::Media> media_factory(const std::string &path) = 0;
     };
     typedef Listener::onSendCallback onSendCallback;
   public:
@@ -183,7 +184,7 @@ namespace rtp {
     inline const std::string &cname() const { return listener_.cname(); }
     inline const absl::flat_hash_map<std::string, RTC::Consumer*> &consumers() const { return this->mapConsumers; }
     inline const absl::flat_hash_map<std::string, RTC::Producer*> &producers() const { return this->mapProducers; }
-    inline const std::map<Media::Mid, Media::Id> mid_media_path_map() const { return mid_media_path_map_; }
+    inline const std::map<Media::Mid, Media::Id> &mid_media_path_map() const { return mid_media_path_map_; }
     inline std::map<uint32_t, StreamRecoveryContext> &ssrc_stream_recovery_map() { return ssrc_stream_recovery_map_; }
     inline int SendToStream(const std::string &path, const char *data, size_t len) {
       return listener_.SendToStream(path, data, len);

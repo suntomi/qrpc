@@ -22,7 +22,7 @@ private:
   static thread_local Server *server_;
   Loop loop_;
   std::thread thread_; // actually runs event loop
- public:
+public:
   Worker(Server &server) : 
     loop_(), thread_() { SetThreadLocal(server); }
   void Run(int max_nfd);
@@ -42,7 +42,7 @@ private:
   inline Loop &loop() { return loop_; }
   inline std::thread::id thread_id() const { return thread_.get_id(); }
   static TaskQueue &queue(PartitionId id);
- private:
+private:
   DISALLOW_COPY_AND_ASSIGN(Worker);
 };
 }

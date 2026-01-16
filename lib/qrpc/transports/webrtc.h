@@ -9,6 +9,7 @@
 #include "qrpc/listener.h"
 #include "qrpc/server.h"
 #include "qrpc/stream.h"
+#include "qrpc/media.h"
 
 namespace qrpc {
 using ListenerInterface = Listener;
@@ -47,16 +48,13 @@ namespace webrtc {
   public:
     ServerConnection(ConnectionFactory &cf, DtlsTransport::Role dtls_role, const qrpc_listen_conf_t &config) :
       Connection(cf, dtls_role), on_open_(config.on_open), on_close_(config.on_close), ctx_(nullptr) {}
-    static inline base::webrtc::Listener::Connection *FromHandle(qrpc_conn_t conn) {
-      auto c = reinterpret_cast<base::webrtc::Listener::Connection *>(conn.p);
-      return c;
-    }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { 
       qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), &ctx_);
       return qrpc_alarm_stop_rv();
     }
     void *context() override { return ctx_; }
+    std::shared_ptr<base::Media> media_factory(const std::string &path) override;
   protected:
     void *ctx_;
     qrpc_on_server_conn_open_t on_open_;
@@ -94,6 +92,7 @@ namespace webrtc {
     bool Listen(int signaling_port, const qrpc_endpoint_t &ep) {
       return base::webrtc::Listener::Listen(signaling_port, base::webrtc::Listener::Endpoint::From(ep));
     }
+    inline const qrpc_listen_conf_t &config() const { return config_; }
   private:
     Worker &worker_;
     qrpc_listen_conf_t config_;
@@ -105,20 +104,22 @@ namespace webrtc {
   public:
     ClientConnection(ConnectionFactory &cf, DtlsTransport::Role dtls_role, const qrpc_connect_conf_t &conf) :
       Connection(cf, dtls_role, base::webrtc::Client::TransportConfig::From(conf.transport), 
-        [conf](const Stream::Config &c, base::Connection &conn) {
+        [this](const Stream::Config &c, base::Connection &conn) {
           auto &cc = dynamic_cast<ClientConnection &>(conn);
-          auto he = qrpc_closure_call(conf.stream_router, c.label.c_str(), cc.ToHandle());
+          auto he = qrpc_closure_call(config_.stream_router, c.label.c_str(), cc.ToHandle());
           if (he == nullptr) {
             logger::die({{"ev","no handler found"},{"label",c.label},{"ptr",base::str::dptr(&conn)}});
           }
           return std::shared_ptr<Stream>(qrpc::webrtc::NewStream(c, conn, *he));
-        }), on_open_(conf.on_open), on_close_(conf.on_close), on_finalize_(conf.on_finalize) {}
+        }), config_(conf), on_open_(conf.on_open), on_close_(conf.on_close), on_finalize_(conf.on_finalize) {}
     ~ClientConnection() override { qrpc_closure_call(on_finalize_, ToHandle()); }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { return qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), &ctx_); }
     void *context() override { return ctx_; }
+    std::shared_ptr<base::Media> media_factory(const std::string &path) override;
   protected:
     void *ctx_;
+    qrpc_connect_conf_t config_;
     qrpc_on_client_conn_open_t on_open_;
     qrpc_on_client_conn_close_t on_close_;
     qrpc_on_client_conn_finalize_t on_finalize_;

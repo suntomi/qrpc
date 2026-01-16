@@ -73,8 +73,8 @@ namespace base {
     static inline Stream *FromHandle(qrpc_rpc_t rpc) { return FromPair(rpc.p, rpc.s); }
     template <class T>  T *As() { return dynamic_cast<T *>(this); }
   private:
-    static inline Stream *FromPair(void *p, const qrpc_serial_t &s) {
-      auto st = reinterpret_cast<Stream *>(p);
+    static inline Stream *FromPair(const void *p, const qrpc_serial_t &s) {
+      auto st = reinterpret_cast<Stream *>(const_cast<void *>(p));
       if (st->serial_ != Serial(&s)) {
         return nullptr;
       }

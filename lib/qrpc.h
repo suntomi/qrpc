@@ -79,25 +79,25 @@ typedef struct {
 
 typedef struct qrpc_conn_tag {
   qrpc_serial_t s; //base::Serial
-  void *p;    //base::Connection
+  const void *p;    //base::Connection
 } qrpc_conn_t;
 
 typedef struct qrpc_stream_tag {
   qrpc_serial_t s; //base::Serial
-  void *p;    //base::Stream
+  const void *p;    //base::Stream
 } qrpc_stream_t; 
 //below are essentially same as nq_stream, but would be helpful to prevent misuse of rpc/stream/media/alarm
 typedef struct qrpc_rpc_tag {
   qrpc_serial_t s; //base::Serial
-  void *p;    //qrpc::RPCStream
+  const void *p;    //qrpc::RPCStream
 } qrpc_rpc_t; 
 
 typedef struct qrpc_media_tag {
   qrpc_serial_t s; // base::Serial
-  void *p;    //base::webrtc::Media
+  const void *p;    //base::webrtc::Media
 } qrpc_media_t;
 
-typedef void *qrpc_alarm_t;
+typedef const void *qrpc_alarm_t;
 typedef uint64_t qrpc_alarm_id_t;
 
 typedef enum {

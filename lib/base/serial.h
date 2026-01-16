@@ -49,7 +49,7 @@ public:
 public:
   inline Serial(PartitionId id) { data[0] = MakeSerial(id); }
   inline Serial(const qrpc_serial_t *s) { data[0] = s->data[0]; }
-  inline PartitionId thread_id() const { return data[0] >> ((sizeof(data[0]) - sizeof(PartitionId)) << 3); }
+  inline PartitionId partition_id() const { return data[0] >> ((sizeof(data[0]) - sizeof(PartitionId)) << 3); }
   inline const Serial &operator = (const qrpc_serial_t &s) {
     data[0] = s.data[0];
     return *this;

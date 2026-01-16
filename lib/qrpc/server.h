@@ -16,7 +16,7 @@
 namespace qrpc {
 // server is a class to manage multiple workers and ports.
 class Server {
- public:
+public:
 	typedef Worker::TaskQueue TaskQueue;
   typedef qrpc_listen_conf_t PortConfig;
   enum Status {
@@ -24,7 +24,7 @@ class Server {
     TERMINATING,
     TERMINATED,
   };
- protected:
+protected:
   std::atomic<Status> status_;
   uint32_t process_index_, n_worker_, max_nfd_;  // process index in cluster (eg. statefulset number in k8s), number of worker
 	std::unique_ptr<TaskQueue[]> worker_queue_;
@@ -33,7 +33,7 @@ class Server {
   std::mutex mutex_;
   std::condition_variable cond_;
   std::thread shutdown_thread_;
- public:
+public:
 	Server(const qrpc_svconf_t &conf) : status_(RUNNING),
     n_worker_(conf.n_worker), max_nfd_(conf.max_nfd),
     process_index_(conf.process_index), worker_queue_(nullptr) {}
@@ -120,7 +120,7 @@ class Server {
   inline qrpc_server_t ToHandle() { return (qrpc_server_t)this; }
   static inline Server *FromHandle(qrpc_server_t sv) { return (Server *)sv; }
 
- protected:
+protected:
   void Stop() {
     for (auto &kv : workers_) {
       kv.second->Join();
