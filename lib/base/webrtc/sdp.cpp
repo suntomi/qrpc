@@ -320,8 +320,8 @@ a=msid-semantic: WMS
         ASSERT(false);
         return false;
       }
-      params.media_path = pit->second;
-      if (mid.empty()) { // for newly created params, assign new mid
+      params.media_path = pit->second; // media_path of peer which corresponds to peer mid
+      if (mid.empty()) { // for newly created params, assign new mid (the actually used mid is decided here)
         params.mid = c.rtp_handler().GenerateMid();
       } else {
         params.mid = mid; // for reused params, use existing mid (preserved at above)
@@ -418,6 +418,54 @@ a=msid-semantic: WMS
     // geneating answer for prodducer
     ASSERT(!proto.empty());
     return GenerateAnswer(c, proto, section_params, answer);
+  }
+  std::string SDP::MediaSectionFrom(const char *type, const qrpc_media_params_t &params) {
+    if (params.n_codecs == 0) {
+      return "";
+    }
+    // build payload type list for m= line
+    std::string payloads;
+    for (qrpc_size_t i = 0; i < params.n_codecs; i++) {
+      payloads += str::Format(" %u", params.codecs[i].payload_type);
+    }
+    // m= line: m=<type> 9 UDP/TLS/RTP/SAVPF <payloads>
+    std::string section = str::Format("m=%s 9 UDP/TLS/RTP/SAVPF%s\n", type, payloads.c_str());
+    section += "c=IN IP4 0.0.0.0\n";
+    // a=rtpmap, a=fmtp, a=rtcp-fb for each codec
+    for (qrpc_size_t i = 0; i < params.n_codecs; i++) {
+      const auto &codec = params.codecs[i];
+      // a=rtpmap:<pt> <codec>/<clock_rate>[/<channels>]
+      if (codec.channels > 0) {
+        section += str::Format("a=rtpmap:%u %s/%u/%u\n",
+          codec.payload_type, codec.mime_type, codec.clock_rate, codec.channels);
+      } else {
+        section += str::Format("a=rtpmap:%u %s/%u\n",
+          codec.payload_type, codec.mime_type, codec.clock_rate);
+      }
+      // a=fmtp:<pt> <params>
+      if (codec.fmtp != nullptr && codec.fmtp[0] != '\0') {
+        section += str::Format("a=fmtp:%u %s\n", codec.payload_type, codec.fmtp);
+      }
+      // a=rtcp-fb:<pt> <fb_type>
+      for (qrpc_size_t j = 0; j < codec.n_rtcp_fbs; j++) {
+        section += str::Format("a=rtcp-fb:%u %s\n", codec.payload_type, codec.rtcp_fbs[j]);
+      }
+    }
+    // a=extmap:<id> <uri>
+    for (qrpc_size_t i = 0; i < params.n_hdexts; i++) {
+      const auto &hdext = params.hdexts[i];
+      section += str::Format("a=extmap:%u %s\n", static_cast<uint32_t>(hdext.id), hdext.uri);
+    }
+    return section;
+  }
+
+  std::string SDP::CapSdpFrom(const qrpc_media_config_t &config) {
+    std::string sdp;
+    // generate audio section
+    sdp += MediaSectionFrom("audio", config.audio_cap);
+    // generate video section
+    sdp += MediaSectionFrom("video", config.video_cap);
+    return sdp;
   }
 } // namespace webrtc
 } // namespace base

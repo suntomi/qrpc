@@ -207,7 +207,8 @@ namespace rtp {
 				if (!sync) {
 					QRPC_LOGJ(info, {{"ev","ignore media because already prepare"},{"media_path",media_path},{"sync",sync}});
 					continue;
-				} else {
+				} else { // if consume target reconnects, old consumer may not work because target's connection and media stream is recreated.
+					// so we search existing consumer to see if it is connected to same peer rtp_id, otherwise we create new consumer for new peer connection
 					auto cid = ConsumerFactory::GenerateId(rtp_id(), media_path);
 					auto cit = consumers().find(cid);
 					if (cit != consumers().end()) {
@@ -403,16 +404,16 @@ namespace rtp {
 		}
 		return false;
 	}
-	std::shared_ptr<Media> Handler::FindFrom(const std::string &path, bool consumer) {
-		auto parsed = str::Split(path, "/");
+	std::shared_ptr<Media> Handler::FindFrom(const std::string &media_path, bool consumer) {
+		auto parsed = str::Split(media_path, "/");
 		if (consumer) {
 			if (parsed.size() < 3) {
-				QRPC_LOGJ(error, {{"ev","invalid consumer path"},{"path",path}});
+				QRPC_LOGJ(error, {{"ev","invalid consumer path"},{"media_path",media_path}});
 				ASSERT(false);
 				return nullptr;
 			}
 		} else if (parsed.size() < 2) {
-			QRPC_LOGJ(error, {{"ev","invalid producer path"},{"path",path}});
+			QRPC_LOGJ(error, {{"ev","invalid producer path"},{"media_path",media_path}});
 			ASSERT(false);
 			return nullptr;
 		}
@@ -427,6 +428,7 @@ namespace rtp {
 		if (lit == medias_.end()) {
 			auto m = listener().media_factory(lpath);
 			medias_[lpath] = m;
+			m->OnOpen();
 			return m;
 		}
 		return lit->second;
@@ -516,6 +518,9 @@ namespace rtp {
 		return true;
 	}
 	void Handler::CloseConsumer(Consumer *c) {
+		auto *m = ConsumerFactory::MediaFrom(c);
+		ASSERT(m != nullptr);
+		m->OnClose();
 		auto &fbb = GetFBB();
 		HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CLOSE_CONSUMER, 
 			FBS::Transport::CreateCloseConsumerRequestDirect(fbb, c->id.c_str()));
@@ -524,6 +529,7 @@ namespace rtp {
 		auto pl = json({{"args",{{"path",cname() + "/" + p->media_path()}}},{"fn","close_track"}}).dump();
 		auto data = pl.c_str();
 		auto len = pl.size();
+		p->media()->OnClose();
 		for (auto *c : router_.GetConsumersOf(p)) {
 			auto &h = ConsumerFactory::HandlerFrom(c);
 			h.SendToStream(Stream::SYSCALL_NAME, data, len);

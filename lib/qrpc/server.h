@@ -117,8 +117,8 @@ public:
   qrpc_transport_type_t transport_type() const;
   inline const std::unordered_map<int, PortConfig> &port_configs() const { return port_configs_; }
   inline std::unordered_map<int, PortConfig> &port_configs() { return port_configs_; }
-  inline qrpc_server_t ToHandle() { return (qrpc_server_t)this; }
-  static inline Server *FromHandle(qrpc_server_t sv) { return (Server *)sv; }
+  inline qrpc_server_t ToHandle() { return reinterpret_cast<qrpc_server_t>(this); }
+  static inline Server *FromHandle(qrpc_server_t sv) { return reinterpret_cast<Server *>(sv); }
 
 protected:
   void Stop() {

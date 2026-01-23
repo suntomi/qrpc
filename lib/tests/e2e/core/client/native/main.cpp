@@ -393,7 +393,7 @@ a=sendrecv
 a=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid
 a=extmap:4 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
 a=extmap:5 urn:ietf:params:rtp-hdrext:toffset
-a=extmap:6/recvonly http://www.webrtc.org/experiments/rtp-hdrext/playout-delay
+a=extmap:6 http://www.webrtc.org/experiments/rtp-hdrext/playout-delay
 a=extmap:7 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01
 a=fmtp:126 profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1
 a=fmtp:97 profile-level-id=42e01f;level-asymmetry-allowed=1

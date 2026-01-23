@@ -382,6 +382,8 @@ QRPC_DECL_CLOSURE(void, qrpc_on_rpc_validate_t, void *, qrpc_rpc_t, bool);
 QRPC_DECL_CLOSURE(bool, qrpc_on_media_open_t, void *, qrpc_media_t, void**);
 //media closed. after this called, qrpc_media_t which given to this function will be invalid.
 QRPC_DECL_CLOSURE(void, qrpc_on_media_close_t, void *, qrpc_media_t);
+//media status changes. first const char * is event name, "pause" or "resume". and second const char * is reason
+QRPC_DECL_CLOSURE(void, qrpc_on_media_state_change_t, void *, qrpc_media_t, const char *, const char *);
 //media stream packet received. return false to unsubscribe media stream.
 QRPC_DECL_CLOSURE(bool, qrpc_on_media_consume_t, void *, const void *, qrpc_size_t);
 //media stream packet need to produce to send remote peer. return pointer for packet,
@@ -421,6 +423,7 @@ typedef struct {
 typedef struct {
   qrpc_on_media_open_t on_media_open;
   qrpc_on_media_close_t on_media_close;
+  qrpc_on_media_state_change_t on_media_state_change; // pause/resume
 } qrpc_media_handler_t;
 
 typedef enum {
@@ -791,10 +794,19 @@ typedef struct {
   const char *uri;
 } qrpc_media_hdext_t;
 typedef struct {
+  uint32_t max_bitrate;
+  const char *scalability_mode;
+  uint32_t ssrc, rtx_ssrc;
+  uint64_t payload_type, rtx_payload_type;
+  bool dtx, rtx;
+} qrpc_media_encoding_t;
+typedef struct {
   qrpc_size_t n_codecs;
   qrpc_media_codec_t *codecs;
   qrpc_size_t n_hdexts;
   qrpc_media_hdext_t *hdexts;
+  qrpc_size_t n_encodings;
+  qrpc_media_encoding_t *encodings;
 } qrpc_media_params_t;
 typedef struct {
   // media_path is used to identify media stream. required.
@@ -817,16 +829,21 @@ typedef struct {
   qrpc_media_params_t audio_cap, video_cap;
 } qrpc_media_config_t;
 // generate default config
+// client main config
 QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config();
+// produce config
+QRPC_THREADSAFE qrpc_media_produce_config_t qrpc_media_produce_config(const char *path);
+// consume config
+QRPC_THREADSAFE qrpc_media_consume_config_t qrpc_media_consume_config(const char *path);
 // initialize rtp feature, and set some config. eg. set capability
 // only client connection need to call this. otherwise got error through qrpc_on_media_open_t
-QRPC_THREADSAFE void qrpc_conn_media_init(qrpc_conn_t c, qrpc_media_config_t *config);
+QRPC_THREADSAFE void qrpc_conn_media_init(qrpc_conn_t c, const qrpc_media_config_t *config);
 // produce meeia. note that qrpc_on_media_produce_t called the thread which holds qrpc_conn_t.
 // so be careful conflicts between the thread calls qrpc_conn_media_open and 
 // the one which calls qrpc_on_media_produce_t (eg. reading from camera or speaker)
-QRPC_THREADSAFE void qrpc_conn_media_open(qrpc_conn_t c, qrpc_media_produce_config_t *config);
+QRPC_THREADSAFE void qrpc_conn_media_open(qrpc_conn_t c, const qrpc_media_produce_config_t *config);
 // consume media. same care as qrpc_conn_media_open is required (eg. for devices to play emitted rtp packet)
-QRPC_THREADSAFE void qrpc_conn_media_watch(qrpc_conn_t c, qrpc_media_consume_config_t *config);
+QRPC_THREADSAFE void qrpc_conn_media_watch(qrpc_conn_t c, const qrpc_media_consume_config_t *config);
 // watch (mainly for watched media)
 QRPC_THREADSAFE void qrpc_media_watch(qrpc_media_t m, qrpc_on_media_consume_t cb);
 // close media. closed media slot can be used subsequent qrpc_conn_media_watch or qrpc_conn_media_open

@@ -19,6 +19,7 @@ namespace base {
     virtual ~Media() = default;
     virtual int OnOpen() { return QRPC_OK; }
     virtual void OnClose() {}
+    virtual void OnStateChange(const char *ev, const char *reason) {}
     const Serial &serial() const { return serial_; }
     const std::string &path() const { return path_; }
     inline qrpc_media_t ToHandle() {

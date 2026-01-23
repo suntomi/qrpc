@@ -28,6 +28,7 @@ namespace rtp {
     ) : RTC::Producer(s, id, l, p), handler_(handler), media_(m) {}
     ~Producer() override {}
     const Parameters *params() const;
+    Media *media() const { return media_.get(); }
     inline const std::string media_path() const { return media_->path() + "/" + Parameters::FromMediaKind(GetKind()); }
     ProducerStatus status() const;
   public:

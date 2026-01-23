@@ -416,7 +416,7 @@ qrpc_time_t ConnectionFactory::UdpSessionTmpl<PS>::OnShutdown() {
 #define RAISE(str) { \
   std::string __error = std::string(str) + " at " +  __FILE__ +  ":" + LINESTR; \
   QRPC_LOGJ(error, {{"ev","syscall failure"},{"fn",fn},{"pl",pl},{"error",__error}}); \
-  Call((fn + "_ack").c_str(), msgid, {{"error",__error}}); \
+  Respond((fn + "_ack").c_str(), msgid, {{"error",__error}}); \
   return QRPC_OK; \
 }
 static std::map<std::string, logger::level> syscall_log_levels = {
@@ -449,7 +449,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       if (fn == "close") {
         QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
         c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
-        Call("close_ack",msgid,{});
+        Respond("close_ack",msgid,{});
       } else {
         const auto ait = data.find("args");
         if (ait == data.end()) {
@@ -470,7 +470,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
               RAISE(error);
             }
           }
-          Call("remote_answer_ack",msgid,{});
+          Respond("remote_answer_ack",msgid,{});
         } else if (fn == "produce") {
           const auto sdpit = args.find("sdp");
           if (sdpit == args.end()) {
@@ -516,7 +516,10 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           for (const auto &kv : context.created_producers) {
             status_map[kv.first] = kv.second->status().ToJson();
           }
-          Call("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
+          Respond("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
+        } else if (fn == "produce_ack") {
+
+
         } else if (fn == "publish_stream") {
           const auto pit = args.find("path");
           if (pit == args.end()) {
@@ -536,7 +539,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
               RAISE("fail to publish");
             }
           }
-          Call("publish_stream_ack",msgid,{});
+          Respond("publish_stream_ack",msgid,{});
         } else if (fn == "consume") {
           QRPC_LOGJ(info, {{"ev","consume request"},{"args",args}});
           const auto pit = args.find("path");
@@ -573,7 +576,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             auto st = rtp::ConsumerFactory::StatusFrom(kv.second);
             status_map[kv.first] = st.ToJson();
           }
-          Call("consume_ack",msgid,{
+          Respond("consume_ack",msgid,{
             {"status_map",status_map},{"sdp",sdp},
             {"mid_media_path_map",c.rtp_handler().mid_media_path_map()}
           });
@@ -587,7 +590,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           if (!c.rtp_handler().Pause(pit->second.get<std::string>(), reason)) {
             RAISE("fail to pause track:" + reason);
           }
-          Call("pause_ack",msgid,{});
+          Respond("pause_ack",msgid,{});
         } else if (fn == "resume") {
           if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
           const auto pit = args.find("path");
@@ -598,14 +601,14 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           if (!c.rtp_handler().Resume(pit->second.get<std::string>(), reason)) {
             RAISE("fail to pause track:" + reason);
           }
-          Call("resume_ack",msgid,{});
+          Respond("resume_ack",msgid,{});
         } else if (fn == "ping") {
           std::string error;
           if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
           if (!c.rtp_handler().Ping(error)) {
             RAISE("fail to ping:" + error);
           }
-          Call("ping_ack",msgid,{},logger::level::trace);
+          Respond("ping_ack",msgid,{},logger::level::trace);
         } else if (fn == "close_media") {
           std::string sdp_or_error;
           std::vector<std::string> closed_paths;
@@ -616,7 +619,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           if (!c.CloseMedia(pit->second.get<std::string>(), closed_paths, sdp_or_error)) {
             RAISE("fail to close media:" + sdp_or_error);
           }
-          Call("close_media_ack",msgid,{{"paths",closed_paths},{"sdp",sdp_or_error}});
+          Respond("close_media_ack",msgid,{{"paths",closed_paths},{"sdp",sdp_or_error}});
         } else {
           RAISE("syscall is not supported");
         }
@@ -635,7 +638,11 @@ int ConnectionFactory::SyscallStream::Call(const char *fn) {
 int ConnectionFactory::SyscallStream::Call(const char *fn, const json &j) {
   return Send({{"fn",fn},{"args",j}});
 }
-int ConnectionFactory::SyscallStream::Call(const char *fn, uint32_t msgid, const json &j, logger::level llv) {
+int ConnectionFactory::SyscallStream::Call(const char *fn, uint32_t msgid, const json &j) {
+  return Send({{"fn",fn},{"msgid",msgid},{"args",j}});
+}
+
+int ConnectionFactory::SyscallStream::Respond(const char *fn, uint32_t msgid, const json &j, logger::level llv) {
   QRPC_LOGVJ(llv, {{"ev","syscall response"},{"fn",fn},{"msgid",msgid},{"args",j}})
   return Send({{"fn",fn},{"msgid",msgid},{"args",j}});
 }
@@ -692,7 +699,6 @@ bool ConnectionFactory::Connection::PrepareConsume(
     parsed[parsed.size() - 1] = "";
   }
   auto &mscs = media_stream_configs();
-  std::vector<uint32_t> generated_ssrcs;
   InitRTP();
   if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), media_kind, 
     options_map, sync, mscs, created_consumers)) {
@@ -802,7 +808,6 @@ bool ConnectionFactory::Connection::ConsumeMedia(
     QRPC_LOGJ(warn, {{"ev","ignore because peer not found"},{"cname",parsed[0]}});
     return true;
   }
-  std::vector<uint32_t> generated_ssrcs;
   if (rtp_handler().Consume(*h, config, error)) {
     return true;
   } else {
@@ -1967,6 +1972,148 @@ namespace client {
 }
 
 // Client
+int Client::Connection::OnMediaSyscallAck(
+  const std::string &fn, qrpc_error_t result, const std::map<std::string,nlohmann::json> &args
+) {
+  if (result < 0) {
+    QRPC_LOGJ(error, {{"ev","produce syscall failed"},{"rc",result}});
+    return result;
+  }
+  QRPC_LOGJ(info, {{"ev","produce syscall ack received"}});
+  // mid_media_path map
+  const auto &path_map = args.find("mid_media_path_map");
+  if (path_map == args.end()) {
+    QRPC_LOGJ(error, {{"ev","produce syscall ack missing mid_media_path_map"}});
+    return QRPC_EINVAL;
+  }
+  // parse args and update media_stream_configs_
+  const auto &sdp = args.find("sdp");
+  if (sdp == args.end()) {
+    QRPC_LOGJ(error, {{"ev","produce syscall ack missing sdp"}});
+    return QRPC_EINVAL;
+  }
+  SDP remote_offer(sdp->second.get<std::string>());
+  std::string answer; SDP::MediaContext mc;
+  // this generates producer
+  if (!remote_offer.Answer(path_map->second.get<std::map<std::string,std::string>>(), *this, answer, &mc)) {
+    QRPC_LOGJ(error, {{"ev","fail to answer remote offer in produce syscall ack"}});
+    return QRPC_EINVAL;
+  }
+  // generate consumer of genrated producer, which is attached to this connection.
+  // if RTP payload of these producers are provided, it will be sent to remote peer via these consumers
+  for (const auto &kv : mc.created_producers) {
+    auto *slot = media_stream_configs().FindSlot(kv.second->params()->mid);
+    if (slot == nullptr) {
+      QRPC_LOGJ(error, {{"ev","media stream config not found for created producer"},
+        {"mid",kv.second->params()->mid}});
+      return QRPC_EINVAL;
+    }
+    // apply media status and invoke callbacks if any
+    const auto &stmap = args.find("status_map");
+    if (stmap != args.end()) {
+      const auto &it = stmap->second.find(slot->media_path);
+      if (it != stmap->second.end()) {
+        const auto m = rtp_handler().FindFrom(slot->media_path, true);
+        if (m != nullptr) {
+          const auto &reasons = it->find("pausedReasons");
+          if (reasons != it->end()) {
+            for (const auto &r : reasons->get<std::vector<std::string>>()) {
+              m->OnStateChange("pause", r.c_str());
+            }
+          }
+        }
+      }
+    }
+    // create consumer for this producer, by consume it with itself.
+    // this sends RTP packet which is provided to ReceiveRtpPacket to its peer.
+    if (fn == "produce_ack") {
+      std::string error;
+      if (!rtp_handler().Consume(rtp_handler(), *slot, error)) {
+        QRPC_LOGJ(error, {{"ev","fail to consume self"},{"error",error}});
+        return QRPC_EINVAL;
+      }
+    } else if (fn == "consume_ack") {
+      // no need to create consumer. consumer will be created when user want to receive RTP packet
+    } else {
+      QRPC_LOGJ(error, {{"ev","unexpected reply"},{"fn",fn}});
+      ASSERT(false);
+      return QRPC_EINVAL;
+    }
+  }
+  return QRPC_OK;
+}
+int Client::Connection::InitMedia(const qrpc_media_config_t &config) {
+  // 1. init rtp
+  InitRTP();
+  // 2. convert qrpc_media_config_t to sdp string
+  auto cap_sdp = SDP::CapSdpFrom(config);
+  std::string answer;
+  if (!SetRtpCapability(cap_sdp, answer)) {
+    logger::error({{"ev","fail to set rtp capability"},{"reason",answer}});
+    return QRPC_EINVAL;;
+  }
+  return QRPC_OK;
+}
+int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
+  // convert and add qrpc_media_produce_config_t into media_stream_configs_ to prepare for actual media production
+  rtp::MediaStreamConfig video, audio;
+  if (!audio.Set(c.path,
+    rtp::MediaStreamConfig::MediaKind::AUDIO, rtp::MediaStreamConfig::Direction::SEND,
+    c.audio.params, rtp::MediaStreamConfig::ControlOptions(c.audio.paused), rid_seed_)) {
+    QRPC_LOGJ(error, {{"ev","invalid audio media params"}});
+    return QRPC_EINVAL;
+  }
+  if (!video.Set(c.path,
+    rtp::MediaStreamConfig::MediaKind::VIDEO, rtp::MediaStreamConfig::Direction::SEND,
+    c.video.params, rtp::MediaStreamConfig::ControlOptions(c.video.paused), rid_seed_)) {
+    QRPC_LOGJ(error, {{"ev","invalid video media params"}});
+    return QRPC_EINVAL;
+  }
+  // send message "produce" via $syscall stream
+  auto mscs = media_stream_configs();
+  mscs.insert(mscs.end(), {audio, video});
+  auto midPathMap = json::object();
+  auto ridScalabilityModeMap = json::object();
+  // set midPathMap and ridScalabilityModeMap from existing media_stream_configs and above audio, video
+  for (const auto &msc : mscs) {
+    midPathMap[msc.mid] = msc.media_path;
+    for (const auto &e : msc.encodings) {
+      if (!e.rid.empty() && !e.scalabilityMode.empty()) {
+        ridScalabilityModeMap[e.rid] = e.scalabilityMode;
+      }
+    }
+  }
+  auto msgid = factory().to<Client>().msgid_factory().New();
+  return Call("produce", msgid, {
+    // TODO: if does not worked without application section, add dummy one
+    {"sdp", SDP::MediaSectionFrom("audio", c.audio.params) + SDP::MediaSectionFrom("video", c.video.params)},
+    {"initOptions", {{"video", {{"pause", c.video.paused}}},{"audio", {{"pause", c.audio.paused}}}}},
+    {"midPathMap", midPathMap},
+    {"rtp", {{"ridScalabilityModeMap", ridScalabilityModeMap}}}
+  }, [this](qrpc_error_t result, const std::map<std::string,json> &args) {
+    return OnMediaSyscallAck("produce_ack", result, args);
+  });
+}
+int Client::Connection::WatchMedia(const qrpc_media_consume_config_t &c) {
+  auto msgid = factory().to<Client>().msgid_factory().New();
+  // find media_stream_configs() so that config for c.path already exists
+  auto sync = media_stream_configs().FindSlotByPath(c.path) != nullptr;
+  return Call("consume", msgid, {
+    {"path", c.path},
+    {"initOptions", {{"sync", sync},{"audio", {{"pause", c.audio.paused}}},{"video", {{"pause", c.video.paused}}}}}
+  }, [this](qrpc_error_t result, const std::map<std::string,json> &args) {
+    return OnMediaSyscallAck("consume_ack", result, args);
+  });
+}
+int Client::Connection::OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,json> &args) {
+  QRPC_LOGJ(info, {{"ev","syscall ack received"},{"msgid",msgid}});
+  auto it = inflight_syscalls_.find(msgid);
+  if (it == inflight_syscalls_.end()) {
+    // timeout or no need to wait response
+    return QRPC_OK;
+  }
+  return it->second.callback(QRPC_OK, args);
+}
 bool Client::Open(
   const Endpoint &ep,
   const std::vector<Candidate> &candidates,

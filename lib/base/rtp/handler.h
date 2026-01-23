@@ -32,11 +32,22 @@ namespace rtp {
     struct ControlOptions {
       ControlOptions(const json &j);
       ControlOptions() : pause(false) {}
+      ControlOptions(bool p) : pause(p) {}
       bool pause;
     };
     enum Direction { SEND, RECV };
     MediaStreamConfig() : Parameters() {}
     MediaStreamConfig(const Parameters &p, Direction d) : Parameters(p), direction(d) {}
+    bool Set(
+      const std::string &path, MediaKind kind, Direction d,
+      const qrpc_media_params_t &params, const ControlOptions opts,
+      uint32_t &rid_seed
+    ) {
+      this->media_path = path;
+      this->direction = d;
+      this->options = opts;
+      return Parameters::Set(kind, params, rid_seed);
+    }
     inline bool sender() const { return direction == Direction::SEND; }
     inline bool receiver() const { return direction == Direction::RECV; }
     inline bool probator() const { return mid == RTC::RtpProbationGenerator::GetMidValue(); }
@@ -134,6 +145,14 @@ namespace rtp {
       }
       return nullptr;
     }
+    inline MediaStreamConfig *FindSlotByPath(const std::string &path) {
+      for (auto &c : *this) {
+        if (c.media_path == path) {
+          return &c;
+        }
+      }
+      return nullptr;
+    }
   };
   class Handler : public RTC::Transport {
   public:
@@ -146,7 +165,7 @@ namespace rtp {
     };
     class Listener {
     public:
-      typedef const std::function<void(bool sent)> onSendCallback;  
+      typedef const std::function<void(bool sent)> onSendCallback;
     public:
       virtual const std::string &rtp_id() const = 0;
       virtual const std::string &cname() const = 0;
@@ -241,7 +260,7 @@ namespace rtp {
     }
     void UpdateByCapability(const Capability &cap);
     std::shared_ptr<Media> FindFrom(const Parameters &p, bool consumer);
-    std::shared_ptr<Media> FindFrom(const std::string &label, bool consumer);
+    std::shared_ptr<Media> FindFrom(const std::string &media_path, bool consumer);
     inline Producer *FindProducerByPath(const std::string &path) const {
       return FindProducer(ProducerFactory::GenerateId(rtp_id(), path));
     }

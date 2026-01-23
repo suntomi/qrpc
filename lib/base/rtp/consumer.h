@@ -32,6 +32,7 @@ namespace rtp {
     FillBuffer(Consumer *c, flatbuffers::FlatBufferBuilder& builder);
     static Handler &HandlerFrom(Consumer *c);
     static ConsumerStatus StatusFrom(Consumer *c);
+    static Media *MediaFrom(Consumer *c);
     static void OnProducerManuallyClosed(Consumer *c);
   protected:
     Handler &handler_;

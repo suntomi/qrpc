@@ -545,7 +545,16 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
     {.id = QRPC_RTP_HDEXT_TRANSPORT_WIDE_CC_01, .uri = "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"},
     {.id = QRPC_RTP_HDEXT_MID, .uri = "urn:ietf:params:rtp-hdrext:sdes:mid"},
   };
-  // default: VP8
+  static qrpc_media_encoding_t audio_encodings[] = {
+    {
+      .max_bitrate = 500000,
+      .scalability_mode = nullptr,
+      .ssrc = 0, .rtx_ssrc = 0,
+      .payload_type = 111, .rtx_payload_type = 0,
+      .dtx = true, .rtx = false,
+    },
+  };
+  // default: VP8 simulcast
   static const char *video_rtcp_fbs[] = {
     "transport-cc", "goog-remb", "ccm fir", "nack", "nack pli"
   };
@@ -571,28 +580,56 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
     {.id = QRPC_RTP_HDEXT_REPAIRED_STREAM_ID, .uri = "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"},
     {.id = QRPC_RTP_HDEXT_DEPENDENCY_DESCRIPTOR, .uri = "https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension"},
   };
+  static qrpc_media_encoding_t video_encodings[] = {
+    {
+      .max_bitrate = 500000,
+      .scalability_mode = "L1T3",
+      .ssrc = 0, .rtx_ssrc = 0,
+      .payload_type = 96, .rtx_payload_type = 97,
+      .dtx = false, .rtx = true,
+    },
+    {
+      .max_bitrate = 1000000,
+      .scalability_mode = "L1T3",
+      .ssrc = 0, .rtx_ssrc = 0,
+      .payload_type = 96, .rtx_payload_type = 97,
+      .dtx = false, .rtx = true,
+    },
+    {
+      .max_bitrate = 5000000,
+      .scalability_mode = "L1T3",
+      .ssrc = 0, .rtx_ssrc = 0,
+      .payload_type = 96, .rtx_payload_type = 97,
+      .dtx = false, .rtx = true,
+    },
+  };
   return {
     .audio_cap = {
       .n_codecs = bulkof(audio_codecs),
       .codecs = audio_codecs,
       .n_hdexts = bulkof(audio_hdexts),
       .hdexts = audio_hdexts,
+      .n_encodings = bulkof(audio_encodings),
+      .encodings = audio_encodings,
     },
     .video_cap = {
       .n_codecs = bulkof(video_codecs),
       .codecs = video_codecs,
       .n_hdexts = bulkof(video_hdexts),
       .hdexts = video_hdexts,
+      .n_encodings = bulkof(video_encodings),
+      .encodings = video_encodings,
     },
   };
 }
-QRPC_THREADSAFE void qrpc_conn_media_init(qrpc_conn_t c, qrpc_media_config_t *config) {
+QRPC_THREADSAFE void qrpc_conn_media_init(qrpc_conn_t c, const qrpc_media_config_t *config) {
+  CONN_OP(__c->InitMedia(*config), c, config);
 }
-QRPC_THREADSAFE void qrpc_conn_media_open(qrpc_conn_t c, qrpc_media_produce_config_t *config) {
-
+QRPC_THREADSAFE void qrpc_conn_media_open(qrpc_conn_t c, const qrpc_media_produce_config_t *config) {
+  CONN_OP(__c->OpenMedia(*config), c, config);
 }
-QRPC_THREADSAFE void qrpc_conn_media_watch(qrpc_conn_t c, qrpc_media_consume_config_t *config) {
-
+QRPC_THREADSAFE void qrpc_conn_media_watch(qrpc_conn_t c, const qrpc_media_consume_config_t *config) {
+  CONN_OP(__c->WatchMedia(*config), c, config);
 }
 QRPC_THREADSAFE void qrpc_media_watch(qrpc_media_t m, qrpc_on_media_consume_t cb) {
 

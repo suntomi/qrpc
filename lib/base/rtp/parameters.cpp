@@ -34,6 +34,76 @@ namespace rtp {
   };
   static const std::string RED_PAYLOAD_PARAM = "red_payload_params";
 
+  bool Parameters::Set(MediaKind kind, const qrpc_media_params_t &c, uint32_t &rid_seed) {
+    this->kind = kind;
+    this->network.address = "0.0.0.0";
+    this->network.port = 9; // discard port
+    this->network.ip_ver = 4; // v4
+    this->network.net_type = "IN"; // inet
+    this->rtp_proto = "UDP/TLS/RTP/SAVPF";
+    // copy codecs
+    for (qrpc_size_t i = 0; i < c.n_codecs; ++i) {
+      const auto &cc = c.codecs[i];
+      RTC::RtpCodecParameters codec;
+      codec.payloadType = cc.payload_type;
+      if (!SetMimeTypeToCodec(codec, cc.mime_type)) {
+        QRPC_LOGJ(warn, {{"ev","invalid mime type"},{"mime_type", cc.mime_type}});
+        ASSERT(false);
+        return false;
+      }
+      codec.clockRate = cc.clock_rate;
+      codec.channels = cc.channels;
+      codecs.push_back(codec);
+    }
+    // copy header extensions
+    for (qrpc_size_t i = 0; i < c.n_hdexts; ++i) {
+      const auto &hec = c.hdexts[i];
+      RTC::RtpHeaderExtensionParameters hdext;
+      hdext.id = hec.id;
+      auto t = FromUri(hec.uri);
+      if (t.has_value()) {
+        hdext.type = t.value();
+      } else {
+        QRPC_LOGJ(warn, {{"ev","unknown rtp header extension"},{"uri",hec.uri}});
+        ASSERT(false);
+        return false;
+      }
+      headerExtensions.push_back(hdext);
+    }
+    // copy encodings
+    if (c.n_encodings <= 0) {
+      QRPC_LOGJ(warn, {{"ev","no encoding found"},{"n_encodings",c.n_encodings}});
+      ASSERT(false);
+      return false;
+    }
+    else if (c.n_encodings == 1) {
+      // single encoding
+      const auto &ec = c.encodings[0];
+      if (!AddEncoding(ec.ssrc, ec.rtx_ssrc, ec.payload_type, ec.rtx_payload_type, ec.dtx)) {
+        QRPC_LOGJ(warn, {
+          {"ev","fail to add encoding"},{"rtx_pt",ec.rtx_payload_type},{"rtx_ssrc",ec.rtx_ssrc}});
+        ASSERT(false);
+        return false;
+      }
+      return true;
+    } else {
+      // simulcast/multiple encodings. use rid
+      for (qrpc_size_t i = 0; i < c.n_encodings; ++i) {
+        const auto &ec = c.encodings[i];
+        auto rid = rid_seed++;
+        if (!AddEncoding(
+          AUTOGEN_RID_PREFIX.data() + std::to_string(rid), // generate rid
+          ec.payload_type, ec.rtx_payload_type, ec.dtx, ec.scalability_mode
+        )) {
+          QRPC_LOGJ(warn, {{"ev","fail to add encoding"},{"scalability_mode",ec.scalability_mode}});
+          ASSERT(false);
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   static uint64_t SelectRtpmap(std::map<uint64_t, RtpMap> &rtpmaps) {
     ptrdiff_t candidate_index = -1;
     uint64_t current_candidate = 0;
@@ -169,29 +239,37 @@ namespace rtp {
     return std::optional(it->second);
   }
 
-  void Parameters::AddEncoding(
+  bool Parameters::AddEncoding(
     const std::string &rid, uint64_t pt, uint64_t rtxpt, bool dtx,
     const std::string &scalability_mode) {
     RTC::RtpEncodingParameters p;
     p.rid = rid;
-    ASSERT(!scalability_mode.empty());
+    if (scalability_mode.empty()) {
+      ASSERT(false);
+      return false;
+    }
     p.scalabilityMode = scalability_mode;
     p.dtx = dtx;
     p.codecPayloadType = pt;
     p.hasCodecPayloadType = pt != 0;
     p.hasRtx = rtxpt != 0; // here, rtx ssrc is unknown
     encodings.push_back(p);
+    return true;
   }
-  void Parameters::AddEncoding(uint32_t ssrc, uint32_t rtx_ssrc, uint64_t pt, uint64_t rtxpt, bool dtx) {
+  bool Parameters::AddEncoding(uint32_t ssrc, uint32_t rtx_ssrc, uint64_t pt, uint64_t rtxpt, bool dtx) {
     RTC::RtpEncodingParameters p;
     p.ssrc = ssrc;
     p.dtx = dtx;
     p.codecPayloadType = pt;
     p.hasCodecPayloadType = pt != 0;
-    ASSERT((rtxpt != 0) == (rtx_ssrc != 0));
+    if ((rtxpt != 0) != (rtx_ssrc != 0)) {
+      ASSERT(false);
+      return false;
+    }
     p.hasRtx = rtxpt != 0 && rtx_ssrc != 0; // here, rtx ssrc is unknown
     p.rtx.ssrc = rtx_ssrc;
     encodings.push_back(p);
+    return true;
   }
   const Parameters Parameters::ToProbator() const {
     Parameters p;
@@ -550,7 +628,11 @@ namespace rtp {
       for (auto &rid : str::Split(rids, ";")) {
         auto it = rid_scalability_mode_map.find(rid);
         auto scalability_mode = it != rid_scalability_mode_map.end() ? it->second : "";
-        AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
+        if (!AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode)) {
+          answer = str::Format("simulcast: failed to add encoding for rid %s", rid.c_str());
+          ASSERT(false);
+          return false;
+        }
       }
       auto d2it = scit->find("dir2");
       if (d2it != scit->end()) {
@@ -561,7 +643,11 @@ namespace rtp {
         for (auto &rid : str::Split(rids, ";")) {
           auto it = rid_scalability_mode_map.find(rid);
           auto scalability_mode = it != rid_scalability_mode_map.end() ? it->second : "";
-          AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode);
+          if (!AddEncoding(rid, selected_pt, rtx_pt, usedtx, scalability_mode)) {
+            answer = str::Format("simulcast: failed to add encoding for rid %s", rid.c_str());
+            ASSERT(false);
+            return false;
+          }
         }
       }
     }
@@ -598,11 +684,19 @@ namespace rtp {
             // that means id is media ssrc and rtx_ssrc_it contains its rtx ssrc
             // if id is in ssrc_group and is not key of media_rtx_ssrc_map, 
             // that means id is rtx ssrc and should not be treated as new encoding.
-            AddEncoding(id, rtx_ssrc_it->second, selected_pt, rtx_pt, usedtx);
+            if (!AddEncoding(id, rtx_ssrc_it->second, selected_pt, rtx_pt, usedtx)) {
+              answer = str::Format("ssrcs: failed to add encoding for ssrc %u", id);
+              ASSERT(false);
+              return false;
+            }
           } else if (ssrc_group_set.find(id) == ssrc_group_set.end()) {
             // id not in ssrc group, so no possibility that its rtx entry, 
             // just add it as new encoding.
-            AddEncoding(id, 0, selected_pt, rtx_pt, usedtx);
+            if (!AddEncoding(id, 0, selected_pt, rtx_pt, usedtx)) {
+              answer = str::Format("ssrcs: failed to add encoding for ssrc %u", id);
+              ASSERT(false);
+              return false;
+            }
           }
           auto ssrcit = ssrcs.find(id);
           if (ssrcit == ssrcs.end()) {

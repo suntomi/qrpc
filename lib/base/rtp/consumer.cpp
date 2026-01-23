@@ -30,6 +30,7 @@ namespace rtp {
     ) : C(s, id, producer_id, l, d), media_path_(config.media_path), media_(m) {}
     ~Wrap() override {}
     Handler &handler() { return *dynamic_cast<Handler *>(C::listener); }
+    Media *media() { return media_.get(); }
     ConsumerStatus status() const {
       return ConsumerStatus{.paused = C::IsPaused(), .producerPaused = C::IsProducerPaused()};
     }
@@ -129,6 +130,18 @@ namespace rtp {
         logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});
     }
   }
+  Media *ConsumerFactory::MediaFrom(Consumer *c) {
+    switch (c->GetType()) {
+      case RTC::RtpParameters::Type::SIMPLE:
+        return dynamic_cast<Wrap<RTC::SimpleConsumer>*>(c)->media();
+      case RTC::RtpParameters::Type::SIMULCAST:
+        return dynamic_cast<Wrap<RTC::SimulcastConsumer>*>(c)->media();
+      case RTC::RtpParameters::Type::PIPE:
+        return dynamic_cast<Wrap<RTC::PipeConsumer>*>(c)->media();
+      default:
+        logger::die({{"ev","unsupported consumer type:"},{"type",c->GetType()}});
+    }
+  }  
   flatbuffers::Offset<FBS::Consumer::DumpResponse>
   ConsumerFactory::FillBuffer(Consumer *c, flatbuffers::FlatBufferBuilder& builder) {
     switch (c->GetType()) {

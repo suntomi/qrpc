@@ -30,7 +30,9 @@ namespace rtp {
       APP = static_cast<int>(FBS::RtpParameters::MediaKind::MAX) + 1,
     };
   public:
+    constexpr static std::string_view AUTOGEN_RID_PREFIX = "r";
     Parameters() : RTC::RtpParameters(), ssrc_seed(GenerateSsrc()) {}
+    bool Set(MediaKind kind, const qrpc_media_params_t &c, uint32_t &rid_seed);
     bool Parse(const json &section, Capability &cap, std::string &answer,
       const std::map<std::string, std::string> &rid_scalability_mode_map = {});
     std::string Answer(const std::string &cname = "") const;
@@ -52,10 +54,18 @@ namespace rtp {
     static std::optional<MediaKind> ToMediaKind(const std::string &kind);
     inline const std::string &RtpProtocol() const { return rtp_proto; }
     inline std::string MediaKindName() const { return FromMediaKind(kind); }
-    void AddEncoding(
+    static inline bool SetMimeTypeToCodec(RTC::RtpCodecParameters &codec, const std::string &mime_type) {
+      try {
+        codec.mimeType.SetMimeType(mime_type);
+        return true;
+      } catch (const std::exception &e) {
+        return false;
+      }
+    }
+    bool AddEncoding(
       const std::string &rid, uint64_t pt, uint64_t rtxpt, bool dtx,
       const std::string &scalability_mode);
-    void AddEncoding(uint32_t ssrc, uint32_t rtx_ssrc, 
+    bool AddEncoding(uint32_t ssrc, uint32_t rtx_ssrc, 
       uint64_t pt, uint64_t rtxpt, bool dtx);
     inline bool FixSsrc(uint32_t old_ssrc, uint32_t new_ssrc) {
 			if (!ReplaceEncodings(encodings, old_ssrc, new_ssrc)) {
@@ -104,9 +114,9 @@ namespace rtp {
     ::flatbuffers::Offset<FBS::RtpParameters::RtpMapping>
     PackRtpMapping(::flatbuffers::FlatBufferBuilder &fbb) const;  
   public:
-    MediaKind kind;             // affect sdp geeneration
-    NetworkParameters network;  // affect sdp generation
-    std::string rtp_proto;      // affect sdp generation
+    MediaKind kind;             // affect sdp geeneration (eg. video, audio)
+    NetworkParameters network;  // affect sdp generation (eg. 9 of m=media 9)
+    std::string rtp_proto;      // affect sdp generation (eg. UDP/TLS/RTP/SAVPF)
     uint32_t ssrc_seed;         // affect consumer sdp generation only
     std::map<uint32_t, SsrcParameter> ssrcs;                  // affect producer sdp generation only
     SimulcastParameter simulcast;                             // affect producer sdp generation only

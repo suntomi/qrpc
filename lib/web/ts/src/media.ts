@@ -81,6 +81,7 @@ export class QRPCMedia {
       await c.watchMedia(this.path, {
         onopen: () => {},
         onclose: () => {},
+        // sync = true for receiving all prepared media tracks because client cache may be lost
         initOptions: Object.assign(this.initOptions, { sync: true })
       });
     } catch (e) {

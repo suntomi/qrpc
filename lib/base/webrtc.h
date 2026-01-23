@@ -16,6 +16,7 @@
 #include "RTC/RTCP/Packet.hpp"
 
 #include <mutex>
+#include <map>
 
 namespace base {
 namespace webrtc {
@@ -156,7 +157,8 @@ namespace webrtc {
         AdhocStream(c, config, Handler(Nop()), ConnectHandler(Nop()), ShutdownHandler(Nop())) {}
       ~SyscallStream() {}
       int OnRead(const char *p, size_t sz) override;
-      int Call(const char *fn, uint32_t msgid, const json &j, logger::level llv = logger::level::info);
+      int Respond(const char *fn, uint32_t msgid, const json &j, logger::level llv = logger::level::info);
+      int Call(const char *fn, uint32_t msgid, const json &j);
       int Call(const char *fn, const json &j);
       int Call(const char *fn);
     };
@@ -581,6 +583,13 @@ namespace webrtc {
     };
     class Connection : public ConnectionFactory::Connection {
     public:
+      typedef std::function<void *(qrpc_size_t &)> MediaStreamProducer;
+      typedef std::function<int (qrpc_error_t, const std::map<std::string,json> &args)> SyscallAckCallback;
+      typedef struct {
+        SyscallAckCallback callback;
+        qrpc_time_t timestamp;
+      } InflightSyscall;
+    public:
       Connection(
         ConnectionFactory &sv, RTC::DtlsTransport::Role dtls_role, 
         TransportConfig &&tc, StreamFactory &&sf
@@ -588,12 +597,43 @@ namespace webrtc {
         transport_config_(std::move(tc)), factory_method_(), stream_factory_(std::move(sf)) {}
       ~Connection() override {}
       void SetFactoryMethod(FactoryMethod &&fm) { factory_method_ = std::move(fm); }
+      void EntrySyscall(qrpc_msgid_t msgid, SyscallAckCallback &&cb, qrpc_time_t timeout) {
+        inflight_syscalls_[msgid] = InflightSyscall{ .callback = std::move(cb), .timestamp = qrpc_time_now() + timeout };
+      }
+      int Call(const std::string &fn, qrpc_msgid_t msgid, const json &args,
+        SyscallAckCallback &&cb, qrpc_time_t timeout = qrpc_time_sec(5)) {
+        if (syscall_ == nullptr) {
+          syscall_ = std::dynamic_pointer_cast<SyscallStream>(OpenStream({
+            .label = Stream::SYSCALL_NAME
+          }, [this](const Stream::Config &config, base::Connection &conn) {
+            return std::make_shared<SyscallStream>(conn, config);
+          }));
+        }
+        auto r = syscall_->Call(fn.c_str(), msgid, args);
+        if (r < 0) {
+          QRPC_LOGJ(error, {{"ev","fail to send produce syscall"},{"rc",r}});
+          return r;
+        }
+        EntrySyscall(msgid, std::move(cb), timeout);
+        return QRPC_OK;
+      }
+    public:
+      // implement base::Connection (partial)
+      int InitMedia(const qrpc_media_config_t &) override;
+      int OpenMedia(const qrpc_media_produce_config_t &) override;
+      int WatchMedia(const qrpc_media_consume_config_t &) override;
+      int OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,nlohmann::json> &args) override;
+    protected:
+      int OnMediaSyscallAck(const std::string &fn, qrpc_error_t result, const std::map<std::string,nlohmann::json> &args);
     public:
       inline FactoryMethod &&factory_method() { return std::move(factory_method_); }
       StreamFactory &stream_factory() override { return stream_factory_; }
       const TransportConfig &transport_config() const override { return transport_config_; }
       TransportConfig &transport_config() { return transport_config_; }
     protected:
+      uint32_t rid_seed_;
+      std::map<qrpc_msgid_t, InflightSyscall> inflight_syscalls_;
+      std::map<Media::Mid, MediaStreamProducer> media_stream_producers_;
       TransportConfig transport_config_;
       FactoryMethod factory_method_; // for reconnecting
       StreamFactory stream_factory_;
@@ -607,6 +647,7 @@ namespace webrtc {
     ~Client() override { Fin(); }
   public:
     std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
+    IdFactory<qrpc_msgid_t> &msgid_factory() { return msgid_factory_; }
   public:
     bool Connect(const Endpoint &ep, FactoryMethod &&fm);
     void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c), QRPC_CLOSE_REASON_LOCAL); }
@@ -622,6 +663,7 @@ namespace webrtc {
     );
   protected:
     HttpClient http_client_;
+    IdFactory<qrpc_msgid_t> msgid_factory_;
     std::map<IceUFrag, Endpoint> endpoints_;
     std::vector<TcpClient> tcp_clients_;
     std::vector<UdpClient> udp_clients_;
@@ -654,7 +696,7 @@ namespace webrtc {
         return new AdhocConnection(cf, dtls_role, std::move(ch), std::move(sh), std::move(tc), [this](
           const Stream::Config &c, base::Connection &conn
         ) {
-          // make copy of handlers here, all are move into the new AdhocStream
+          // make copy of handlers here, all are move into the new AdhocStream (same as AdhocConnection constructor)
           auto sh = stream_handler_;
           auto sch = stream_connect_handler_;
           auto ssh = stream_shutdown_handler_;
@@ -714,6 +756,14 @@ namespace webrtc {
       }
       const TransportConfig &transport_config() const override {
         return factory().to<base::webrtc::Listener>().transport_config();
+      }
+    public:
+      // implement base::Connection (partial)
+      int InitMedia(const qrpc_media_config_t &config) override { ASSERT(false); return QRPC_ENOTSUPPORT; }
+      int OpenMedia(const qrpc_media_produce_config_t &) override  { ASSERT(false); return QRPC_ENOTSUPPORT; }
+      int WatchMedia(const qrpc_media_consume_config_t &) override  { ASSERT(false); return QRPC_ENOTSUPPORT; }
+      int OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,json> &args) override {
+        ASSERT(false); return QRPC_ENOTSUPPORT;
       }
     };
   public:
