@@ -29,7 +29,7 @@ namespace rtp {
     ~Producer() override {}
     const Parameters *params() const;
     Media *media() const { return media_.get(); }
-    inline const std::string media_path() const { return media_->path() + "/" + Parameters::FromMediaKind(GetKind()); }
+    inline const std::string media_path() const { return Parameters::MakeMediaPath(media_->path(), params()->kind); }
     ProducerStatus status() const;
   public:
     static bool consumer_params(

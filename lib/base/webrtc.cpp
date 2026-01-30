@@ -517,9 +517,6 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             status_map[kv.first] = kv.second->status().ToJson();
           }
           Respond("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
-        } else if (fn == "produce_ack") {
-
-
         } else if (fn == "publish_stream") {
           const auto pit = args.find("path");
           if (pit == args.end()) {
@@ -1245,6 +1242,10 @@ void ConnectionFactory::Connection::TryParseRtcpPacket(const uint8_t *p, size_t 
     ASSERT(false);
     return;
   }
+  // here, p and sz is modified to decrypted packet
+  ReceivePlainRtcpPacket(p, sz);
+}
+void ConnectionFactory::Connection::ReceivePlainRtcpPacket(const uint8_t *p, size_t sz) {
   RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(p, sz);
   if (packet == nullptr) {
     logger::warn({{"proto","srtcp"},
@@ -1311,17 +1312,19 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
         {"proto","srtp"},{"ssrc",packet->GetSsrc()},{"roc",roc},
         {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
       });
-      // encryption back to work as usual after a few times reach here (eg. firefox), so remove assertion
+      // encryption start to work as usual after a few times reach here (eg. firefox), so remove assertion
       // ASSERT(false);
     }
     delete packet;
   }
+  ReceivePlainRtpPacket(p, sz);
+}
+void ConnectionFactory::Connection::ReceivePlainRtpPacket(const uint8_t *p, size_t sz) {
   auto *packet = RTC::RtpPacket::Parse(p, sz);
   if (packet == nullptr) {
     QRPC_LOGJ(warn, {{"proto","rtcp"},
       {"ev","received data is not a valid RTP packet"},
-      {"decrypted",decrypted},{"len",sz},
-      {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
+      {"len",sz},{"pl",str::HexDump(p, std::min((size_t)32, sz))}});
     ASSERT(false);
     return;
   }
@@ -1973,7 +1976,8 @@ namespace client {
 
 // Client
 int Client::Connection::OnMediaSyscallAck(
-  const std::string &fn, qrpc_error_t result, const std::map<std::string,nlohmann::json> &args
+  const std::string &fn, qrpc_error_t result, const std::map<std::string,nlohmann::json> &args,
+  std::function<int (const rtp::MediaStreamConfig &)> &&on_success
 ) {
   if (result < 0) {
     QRPC_LOGJ(error, {{"ev","produce syscall failed"},{"rc",result}});
@@ -2024,20 +2028,12 @@ int Client::Connection::OnMediaSyscallAck(
         }
       }
     }
-    // create consumer for this producer, by consume it with itself.
-    // this sends RTP packet which is provided to ReceiveRtpPacket to its peer.
-    if (fn == "produce_ack") {
-      std::string error;
-      if (!rtp_handler().Consume(rtp_handler(), *slot, error)) {
-        QRPC_LOGJ(error, {{"ev","fail to consume self"},{"error",error}});
-        return QRPC_EINVAL;
-      }
-    } else if (fn == "consume_ack") {
-      // no need to create consumer. consumer will be created when user want to receive RTP packet
-    } else {
-      QRPC_LOGJ(error, {{"ev","unexpected reply"},{"fn",fn}});
+    // context specific initialization
+    auto r = on_success(*slot);
+    if (r < 0) {
+      QRPC_LOGJ(error,{{"ev","on_success callback failed"},{"ec",r}});
       ASSERT(false);
-      return QRPC_EINVAL;
+      return r;
     }
   }
   return QRPC_OK;
@@ -2069,6 +2065,10 @@ int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
     QRPC_LOGJ(error, {{"ev","invalid video media params"}});
     return QRPC_EINVAL;
   }
+  std::map<std::string, qrpc_on_media_produce_t> on_produce_map = {
+    {audio.media_path, c.audio.source},
+    {video.media_path, c.video.source}
+  };
   // send message "produce" via $syscall stream
   auto mscs = media_stream_configs();
   mscs.insert(mscs.end(), {audio, video});
@@ -2090,8 +2090,31 @@ int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
     {"initOptions", {{"video", {{"pause", c.video.paused}}},{"audio", {{"pause", c.audio.paused}}}}},
     {"midPathMap", midPathMap},
     {"rtp", {{"ridScalabilityModeMap", ridScalabilityModeMap}}}
-  }, [this](qrpc_error_t result, const std::map<std::string,json> &args) {
-    return OnMediaSyscallAck("produce_ack", result, args);
+  }, [this, &on_produce_map](qrpc_error_t result, const std::map<std::string,json> &args) {
+    return OnMediaSyscallAck("produce_ack", result, args, [this, &on_produce_map](const rtp::MediaStreamConfig &slot) {
+      // create consumer for this producer, by consume it with itself.
+      // this sends RTP packet which is provided to ReceiveRtpPacket to its peer.
+      std::string error;
+      if (!rtp_handler().Consume(rtp_handler(), slot, error)) {
+        QRPC_LOGJ(error, {{"ev","fail to consume self"},{"error",error}});
+        return QRPC_EINVAL;
+      }
+      auto it = on_produce_map.find(slot.media_path);
+      if (it == on_produce_map.end()) {
+        QRPC_LOGJ(error, {{"ev","fail to find media producer callback"},{"path",slot.media_path}});
+        ASSERT(false);
+        return QRPC_EINVAL;
+      } else {
+        media_stream_producers_[slot.mid] = {
+          .callback = it->second,
+          .context = {
+            .keyframe_required = false,
+            .last_produced = qrpc_time_now()
+          }
+        };
+      }
+      return QRPC_OK;
+    });
   });
 }
 int Client::Connection::WatchMedia(const qrpc_media_consume_config_t &c) {
@@ -2102,7 +2125,10 @@ int Client::Connection::WatchMedia(const qrpc_media_consume_config_t &c) {
     {"path", c.path},
     {"initOptions", {{"sync", sync},{"audio", {{"pause", c.audio.paused}}},{"video", {{"pause", c.video.paused}}}}}
   }, [this](qrpc_error_t result, const std::map<std::string,json> &args) {
-    return OnMediaSyscallAck("consume_ack", result, args);
+    return OnMediaSyscallAck("consume_ack", result, args, [](const rtp::MediaStreamConfig &) {
+      // nothing to do for consumer
+      return QRPC_OK;
+    });
   });
 }
 int Client::Connection::OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,json> &args) {
@@ -2255,6 +2281,7 @@ int Client::Setup(const std::vector<Port> &ports) {
   return QRPC_OK;
 }
 void Client::Fin() {
+  StopProduce();
   for (auto it = udp_clients_.begin(); it != udp_clients_.end();) {
     auto p = it++;
     (*p).Fin();

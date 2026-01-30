@@ -97,6 +97,11 @@ typedef struct qrpc_media_tag {
   const void *p;    //base::webrtc::Media
 } qrpc_media_t;
 
+typedef struct qrpc_media_produce_context_tag {
+  qrpc_time_t last_produced;
+  bool keyframe_required;
+} qrpc_media_produce_context_t;
+
 typedef const void *qrpc_alarm_t;
 typedef uint64_t qrpc_alarm_id_t;
 
@@ -388,8 +393,8 @@ QRPC_DECL_CLOSURE(void, qrpc_on_media_state_change_t, void *, qrpc_media_t, cons
 QRPC_DECL_CLOSURE(bool, qrpc_on_media_consume_t, void *, const void *, qrpc_size_t);
 //media stream packet need to produce to send remote peer. return pointer for packet,
 //and fill second argument of closuresizes of packet. if nullptr returned, producer closed
-//if packet size is zero, packet is not sent.
-QRPC_DECL_CLOSURE(void *, qrpc_on_media_produce_t, void *, qrpc_size_t*);
+//if packet size is zero, packet is not sent. last argument is timestamp of last call of this closure.
+QRPC_DECL_CLOSURE(void *, qrpc_on_media_produce_t, void *, qrpc_size_t*, const qrpc_media_produce_context_t*);
 
 /* alarm */
 QRPC_DECL_CLOSURE(qrpc_time_t, qrpc_on_alarm_t, void *, qrpc_alarm_t);

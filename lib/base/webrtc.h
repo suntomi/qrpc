@@ -300,7 +300,9 @@ namespace webrtc {
       void OnTcpSessionShutdown(Session *s);
       void OnUdpSessionShutdown(Session *s);
       void TryParseRtcpPacket(const uint8_t *p, size_t sz);
+      void ReceivePlainRtcpPacket(const uint8_t *p, size_t sz);
       void TryParseRtpPacket(const uint8_t *p, size_t sz);
+      void ReceivePlainRtpPacket(const uint8_t *p, size_t sz);
       std::shared_ptr<Stream> NewStream(const Stream::Config &c, const StreamFactory &sf);
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c, const StreamFactory &sf);
       StreamFactory DefaultStreamFactory();
@@ -583,12 +585,15 @@ namespace webrtc {
     };
     class Connection : public ConnectionFactory::Connection {
     public:
-      typedef std::function<void *(qrpc_size_t &)> MediaStreamProducer;
       typedef std::function<int (qrpc_error_t, const std::map<std::string,json> &args)> SyscallAckCallback;
       typedef struct {
         SyscallAckCallback callback;
         qrpc_time_t timestamp;
       } InflightSyscall;
+      typedef struct {
+        qrpc_on_media_produce_t callback;
+        qrpc_media_produce_context_t context;
+      } MediaStreamProducer;
     public:
       Connection(
         ConnectionFactory &sv, RTC::DtlsTransport::Role dtls_role, 
@@ -623,8 +628,21 @@ namespace webrtc {
       int OpenMedia(const qrpc_media_produce_config_t &) override;
       int WatchMedia(const qrpc_media_consume_config_t &) override;
       int OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,nlohmann::json> &args) override;
+      void ProduceFrames(qrpc_time_t now) {
+        for (auto &p : media_stream_producers_) {
+          qrpc_size_t sz;
+          void *data = qrpc_closure_call(p.second.callback, &sz, &p.second.context);
+          if (data != nullptr && sz > 0) {
+            ReceivePlainRtpPacket(static_cast<const uint8_t *>(data), sz);
+            p.second.context.keyframe_required = false;
+          }
+          p.second.context.last_produced = now;
+        }
+      }      
     protected:
-      int OnMediaSyscallAck(const std::string &fn, qrpc_error_t result, const std::map<std::string,nlohmann::json> &args);
+      int OnMediaSyscallAck(
+        const std::string &fn, qrpc_error_t result, const std::map<std::string,nlohmann::json> &arg,
+        std::function<int (const rtp::MediaStreamConfig &)> &&on_success);
     public:
       inline FactoryMethod &&factory_method() { return std::move(factory_method_); }
       StreamFactory &stream_factory() override { return stream_factory_; }
@@ -662,11 +680,30 @@ namespace webrtc {
       size_t idx, std::shared_ptr<ConnectionFactory::Connection> &c
     );
   protected:
+    void StartProduce() {
+      if (produce_alarm_id_ != AlarmProcessor::INVALID_ID) { return; }
+      produce_alarm_id_ = alarm_processor().Set([this]() {
+        qrpc_time_t now = qrpc_time_now();
+        for (auto &it : connections_) {
+          auto &c = dynamic_cast<Connection &>(*it.second);
+          c.ProduceFrames(now);
+        }
+        return qrpc_time_now();
+      }, qrpc_time_now());
+    }
+    void StopProduce() {
+      if (produce_alarm_id_ != AlarmProcessor::INVALID_ID) {
+        alarm_processor().Cancel(produce_alarm_id_);
+        produce_alarm_id_ = AlarmProcessor::INVALID_ID;
+      }
+    }  
+  protected:
     HttpClient http_client_;
     IdFactory<qrpc_msgid_t> msgid_factory_;
     std::map<IceUFrag, Endpoint> endpoints_;
     std::vector<TcpClient> tcp_clients_;
     std::vector<UdpClient> udp_clients_;
+    AlarmProcessor::Id produce_alarm_id_{AlarmProcessor::INVALID_ID};
   };
 
 

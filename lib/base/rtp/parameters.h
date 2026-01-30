@@ -52,6 +52,9 @@ namespace rtp {
       return FromMediaKind(static_cast<MediaKind>(static_cast<int>(k)));
     }
     static std::optional<MediaKind> ToMediaKind(const std::string &kind);
+    static std::string MakeMediaPath(const std::string &base_path, MediaKind kind) {
+      return base_path + "/" + FromMediaKind(kind);
+    }
     inline const std::string &RtpProtocol() const { return rtp_proto; }
     inline std::string MediaKindName() const { return FromMediaKind(kind); }
     static inline bool SetMimeTypeToCodec(RTC::RtpCodecParameters &codec, const std::string &mime_type) {

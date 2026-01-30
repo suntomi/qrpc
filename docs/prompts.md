@@ -130,3 +130,5 @@ qrpc_conn_tはサーバー/クライアントの接続を共通で表すハン�
 
 ===================
 lib/base/webrtc/sdp.cpp に SDP::CapSdpTextFromを実装してください。この関数はlib/qrpc.hに定義されているqrpc_media_config_tを受け取って、この構造体が表しているaudio/video sectionのSDPを生成します。
+
+===================

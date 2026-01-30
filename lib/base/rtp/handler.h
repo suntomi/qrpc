@@ -43,7 +43,7 @@ namespace rtp {
       const qrpc_media_params_t &params, const ControlOptions opts,
       uint32_t &rid_seed
     ) {
-      this->media_path = path;
+      this->media_path = Parameters::MakeMediaPath(path, kind);
       this->direction = d;
       this->options = opts;
       return Parameters::Set(kind, params, rid_seed);
