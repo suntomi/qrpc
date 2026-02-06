@@ -794,10 +794,12 @@ typedef enum {
   QRPC_RTP_HDEXT_ABS_CAPTURE_TIME       = 13,
   QRPC_RTP_HDEXT_PLAYOUT_DELAY          = 14,
 } qrpc_media_rtp_hdext_id_t;
+// header extension info
 typedef struct {
   qrpc_media_rtp_hdext_id_t id;
   const char *uri;
 } qrpc_media_hdext_t;
+// media encoding info, need multiple entry for simulcast
 typedef struct {
   uint32_t max_bitrate;
   const char *scalability_mode;
@@ -830,10 +832,20 @@ typedef struct {
   } audio, video;
 } qrpc_media_consume_config_t;
 typedef struct {
-  // capabilities
+  // client capabilities
   qrpc_media_params_t audio_cap, video_cap;
 } qrpc_media_config_t;
-// generate default config
+// extra param for qrpc_media_control
+typedef union {
+  struct {
+    uint8_t spatial_layer; // prefered spatial layer
+    uint8_t temporal_layer; // prefered temporal layer
+  } set_preferred_layer;
+  struct {
+    uint32_t priority;
+  } set_priority;
+} qrpc_media_control_params_t;
+// generate default configs
 // client main config
 QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config();
 // produce config
@@ -857,8 +869,12 @@ QRPC_THREADSAFE void qrpc_media_close(qrpc_media_t m);
 QRPC_THREADSAFE void qrpc_media_pause(qrpc_media_t m);
 // resume paused media. qrpc_on_media_consume_t start calling again.
 QRPC_THREADSAFE void qrpc_media_resume(qrpc_media_t m);
+// control media. eg. request key frame, set prefered layer, etc.
+QRPC_THREADSAFE void qrpc_media_control(qrpc_media_t m, const char *command, const qrpc_media_control_params_t *param);
 // returns media is paused
 QRPC_CLOSURECALL bool qrpc_media_paused(qrpc_media_t m);
+// get media context
+QRPC_CLOSURECALL void *qrpc_media_ctx(qrpc_media_t m);
 
 // --------------------------
 //

@@ -623,6 +623,8 @@ namespace webrtc {
         return QRPC_OK;
       }
     public:
+      // implement rtp::Handler::Listener
+      void SendRtcpPacket(RTC::RTCP::Packet* packet) override;
       // implement base::Connection (partial)
       int InitMedia(const qrpc_media_config_t &) override;
       int OpenMedia(const qrpc_media_produce_config_t &) override;
@@ -651,7 +653,7 @@ namespace webrtc {
     protected:
       uint32_t rid_seed_;
       std::map<qrpc_msgid_t, InflightSyscall> inflight_syscalls_;
-      std::map<Media::Mid, MediaStreamProducer> media_stream_producers_;
+      std::map<Media::Ssrc, MediaStreamProducer> media_stream_producers_;
       TransportConfig transport_config_;
       FactoryMethod factory_method_; // for reconnecting
       StreamFactory stream_factory_;

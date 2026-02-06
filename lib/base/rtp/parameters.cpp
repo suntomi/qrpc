@@ -592,14 +592,14 @@ namespace rtp {
         }
         auto ssrcsit = it->find("ssrcs");
         if (ssrcsit == it->end()) {
-          answer = "ssrcGropus: no key for 'ssrcs'";
+          answer = "ssrcGroups: no key for 'ssrcs'";
           ASSERT(false);
           return false;
         }
         auto ssrcsstr = ssrcsit->get<std::string>();
         auto ssrcs = str::Split(ssrcsstr, " ");
         if (ssrcs.size() != 2) {
-          answer = str::Format("ssrcGropus: parse error for value for ssrcs = %s", ssrcsstr.c_str());
+          answer = str::Format("ssrcGroups: parse error for value for ssrcs = %s", ssrcsstr.c_str());
           ASSERT(false);
           return false;
         }

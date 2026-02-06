@@ -2105,14 +2105,18 @@ int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
         ASSERT(false);
         return QRPC_EINVAL;
       } else {
-        media_stream_producers_[slot.mid] = {
-          .callback = it->second,
-          .context = {
-            .keyframe_required = false,
-            .last_produced = qrpc_time_now()
-          }
-        };
+        for (const auto &kv : slot.ssrcs) {
+          media_stream_producers_[kv.first] = {
+            .callback = it->second,
+            .context = {
+              .keyframe_required = false,
+              .last_produced = qrpc_time_now()
+            }
+          };
+        }
       }
+      // start produce task
+      factory().to<Client>().StartProduce();
       return QRPC_OK;
     });
   });
@@ -2139,6 +2143,46 @@ int Client::Connection::OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::str
     return QRPC_OK;
   }
   return it->second.callback(QRPC_OK, args);
+}
+void Client::Connection::SendRtcpPacket(RTC::RTCP::Packet* packet) {
+  // hook FIR/PLI and set keyframe_required flag
+  if (packet->GetType() == RTC::RTCP::Type::PSFB) {
+    auto* feedback = static_cast<RTC::RTCP::FeedbackPsPacket*>(packet);
+    switch (feedback->GetMessageType()) {
+      case RTC::RTCP::FeedbackPs::MessageType::FIR:
+      {
+        auto* fir = static_cast<RTC::RTCP::FeedbackPsFirPacket*>(packet);
+        bool handled = false;
+        for (auto it = fir->Begin(); it != fir->End(); ++it) {
+          auto& item = *it;
+          uint32_t ssrc = item->GetSsrc();
+          auto pit = media_stream_producers_.find(ssrc);
+          if (pit != media_stream_producers_.end()) {
+            pit->second.context.keyframe_required = true;
+            logger::info({{"ev","keyframe required set by rtcp feedback"},{"ssrc",ssrc}});
+            handled = true;
+          }
+        }
+        if (handled) {
+          return; // skip sending fir packet to peer (because peer sends them)
+        }
+        break;
+      }
+      case RTC::RTCP::FeedbackPs::MessageType::PLI: {
+          uint32_t ssrc = feedback->GetMediaSsrc();
+          auto it = media_stream_producers_.find(ssrc);
+          if (it != media_stream_producers_.end()) {
+            it->second.context.keyframe_required = true;
+            logger::info({{"ev","keyframe required set by rtcp feedback"},{"ssrc",ssrc}});
+            return; // skip sending fir/pli packet to peer (because peer sends them)
+          }
+        }
+      default:
+        break;
+    }
+  }
+  // delegate to base class
+  ConnectionFactory::Connection::SendRtcpPacket(packet);
 }
 bool Client::Open(
   const Endpoint &ep,
