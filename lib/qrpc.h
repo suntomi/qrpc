@@ -97,11 +97,6 @@ typedef struct qrpc_media_tag {
   const void *p;    //base::webrtc::Media
 } qrpc_media_t;
 
-typedef struct qrpc_media_produce_context_tag {
-  qrpc_time_t last_produced;
-  bool keyframe_required;
-} qrpc_media_produce_context_t;
-
 typedef const void *qrpc_alarm_t;
 typedef uint64_t qrpc_alarm_id_t;
 
@@ -297,7 +292,89 @@ typedef enum {
   QRPC_REACHABLE_WWAN = 1,
 } qrpc_reachability_t;
 
+typedef enum {
+  QRPC_RTP_PARAM_INTEGER,
+  QRPC_RTP_PARAM_STRING,
+  QRPC_RTP_PARAM_DECIMAL,
+  QRPC_RTP_PARAM_BOOLEAN,
+} qrpc_media_param_type_t;
 
+typedef struct {
+  const char *name;
+  qrpc_media_param_type_t type;
+  union {
+    uint64_t i;
+    const char *s;
+    double d;
+    bool b;
+  };
+} qrpc_media_rtp_param_t;
+
+typedef struct {
+  const char *type;
+  const char *parameter;
+} qrpc_media_rtcp_fb_t;
+
+typedef struct {
+  const char *mime_type;
+  uint32_t clock_rate;
+  uint8_t payload_type;
+  uint8_t channels;
+  uint16_t padd;
+  //SDP: a=fmtp:$pt %s
+  const char *fmtp;
+  //SDP: a=rtcp-fb:$pt %s
+  qrpc_size_t n_rtcp_fbs;
+  const char **rtcp_fbs;
+} qrpc_media_codec_t;
+
+// rtp header extension ids
+typedef enum {
+  QRPC_RTP_HDEXT_MID                    = 1,
+  QRPC_RTP_HDEXT_STREAM_ID              = 2,
+  QRPC_RTP_HDEXT_REPAIRED_STREAM_ID     = 3,
+  QRPC_RTP_HDEXT_ABS_SEND_TIME          = 4,
+  QRPC_RTP_HDEXT_TRANSPORT_WIDE_CC_01   = 5,
+  QRPC_RTP_HDEXT_FRAME_MARKING_07       = 6,
+  QRPC_RTP_HDEXT_FRAME_MARKING          = 7,
+  QRPC_RTP_HDEXT_DEPENDENCY_DESCRIPTOR  = 8,
+  QRPC_RTP_HDEXT_SSRC_AUDIO_LEVEL       = 10,
+  QRPC_RTP_HDEXT_VIDEO_ORIENTATION      = 11,
+  QRPC_RTP_HDEXT_TOFFSET                = 12,
+  QRPC_RTP_HDEXT_ABS_CAPTURE_TIME       = 13,
+  QRPC_RTP_HDEXT_PLAYOUT_DELAY          = 14,
+} qrpc_media_rtp_hdext_id_t;
+
+// header extension info
+typedef struct {
+  qrpc_media_rtp_hdext_id_t id;
+  const char *uri;
+} qrpc_media_hdext_t;
+
+// media encoding info, need multiple entry for simulcast
+typedef struct {
+  uint32_t max_bitrate;
+  const char *scalability_mode;
+  uint32_t ssrc, rtx_ssrc;
+  uint64_t payload_type, rtx_payload_type;
+  bool dtx, rtx;
+} qrpc_media_encoding_t;
+
+typedef struct {
+  qrpc_size_t n_codecs;
+  qrpc_media_codec_t *codecs;
+  qrpc_size_t n_hdexts;
+  qrpc_media_hdext_t *hdexts;
+  qrpc_size_t n_encodings;
+  qrpc_media_encoding_t *encodings;
+} qrpc_media_params_t;
+
+typedef struct qrpc_media_produce_context_tag {
+  qrpc_time_t last_produced;
+  bool keyframe_required;
+  qrpc_size_t n_encodings;
+  const qrpc_media_encoding_t *encodings;
+} qrpc_media_produce_context_t;
 
 // --------------------------
 //
@@ -390,7 +467,7 @@ QRPC_DECL_CLOSURE(void, qrpc_on_media_close_t, void *, qrpc_media_t);
 //media status changes. first const char * is event name, "pause" or "resume". and second const char * is reason
 QRPC_DECL_CLOSURE(void, qrpc_on_media_state_change_t, void *, qrpc_media_t, const char *, const char *);
 //media stream packet received. return false to unsubscribe media stream.
-QRPC_DECL_CLOSURE(bool, qrpc_on_media_consume_t, void *, const void *, qrpc_size_t);
+QRPC_DECL_CLOSURE(bool, qrpc_on_media_consume_t, void *, qrpc_media_t, const void *, qrpc_size_t);
 //media stream packet need to produce to send remote peer. return pointer for packet,
 //and fill second argument of closuresizes of packet. if nullptr returned, producer closed
 //if packet size is zero, packet is not sent. last argument is timestamp of last call of this closure.
@@ -657,14 +734,14 @@ QRPC_INLINE bool qrpc_conn_equal(qrpc_conn_t c1, qrpc_conn_t c2) { return c1.s.d
 // stream API 
 //
 // --------------------------
-struct qrpc_stream_config_tag {
+typedef struct qrpc_stream_config_tag {
   const char *name;
   uint16_t stream_id;
   bool ordered;
   uint16_t max_packet_lifetime;
   uint16_t max_retransmits;
-};
-typedef struct qrpc_stream_config_tag qrpc_stream_config_t;
+} qrpc_stream_config_t;
+
 QRPC_THREADSAFE qrpc_stream_config_t qrpc_stream_conf(const char *name);
 //create single stream from conn, which has type specified by "name". need to use valid conn
 //open callback of this stream handler will receive invalid stream and null **ppctx on error, 
@@ -746,75 +823,6 @@ QRPC_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t rpc);
 // media API
 //
 // --------------------------
-typedef enum {
-  QRPC_RTP_PARAM_INTEGER,
-  QRPC_RTP_PARAM_STRING,
-  QRPC_RTP_PARAM_DECIMAL,
-  QRPC_RTP_PARAM_BOOLEAN,
-} qrpc_media_param_type_t;
-typedef struct {
-  const char *name;
-  qrpc_media_param_type_t type;
-  union {
-    uint64_t i;
-    const char *s;
-    double d;
-    bool b;
-  };
-} qrpc_media_rtp_param_t;
-typedef struct {
-  const char *type;
-  const char *parameter;
-} qrpc_media_rtcp_fb_t;
-typedef struct {
-  const char *mime_type;
-  uint32_t clock_rate;
-  uint8_t payload_type;
-  uint8_t channels;
-  uint16_t padd;
-  //SDP: a=fmtp:$pt %s
-  const char *fmtp;
-  //SDP: a=rtcp-fb:$pt %s
-  qrpc_size_t n_rtcp_fbs;
-  const char **rtcp_fbs;
-} qrpc_media_codec_t;
-// rtp header extension ids
-typedef enum {
-  QRPC_RTP_HDEXT_MID                    = 1,
-  QRPC_RTP_HDEXT_STREAM_ID              = 2,
-  QRPC_RTP_HDEXT_REPAIRED_STREAM_ID     = 3,
-  QRPC_RTP_HDEXT_ABS_SEND_TIME          = 4,
-  QRPC_RTP_HDEXT_TRANSPORT_WIDE_CC_01   = 5,
-  QRPC_RTP_HDEXT_FRAME_MARKING_07       = 6,
-  QRPC_RTP_HDEXT_FRAME_MARKING          = 7,
-  QRPC_RTP_HDEXT_DEPENDENCY_DESCRIPTOR  = 8,
-  QRPC_RTP_HDEXT_SSRC_AUDIO_LEVEL       = 10,
-  QRPC_RTP_HDEXT_VIDEO_ORIENTATION      = 11,
-  QRPC_RTP_HDEXT_TOFFSET                = 12,
-  QRPC_RTP_HDEXT_ABS_CAPTURE_TIME       = 13,
-  QRPC_RTP_HDEXT_PLAYOUT_DELAY          = 14,
-} qrpc_media_rtp_hdext_id_t;
-// header extension info
-typedef struct {
-  qrpc_media_rtp_hdext_id_t id;
-  const char *uri;
-} qrpc_media_hdext_t;
-// media encoding info, need multiple entry for simulcast
-typedef struct {
-  uint32_t max_bitrate;
-  const char *scalability_mode;
-  uint32_t ssrc, rtx_ssrc;
-  uint64_t payload_type, rtx_payload_type;
-  bool dtx, rtx;
-} qrpc_media_encoding_t;
-typedef struct {
-  qrpc_size_t n_codecs;
-  qrpc_media_codec_t *codecs;
-  qrpc_size_t n_hdexts;
-  qrpc_media_hdext_t *hdexts;
-  qrpc_size_t n_encodings;
-  qrpc_media_encoding_t *encodings;
-} qrpc_media_params_t;
 typedef struct {
   // media_path is used to identify media stream. required.
   const char *path;
@@ -824,6 +832,7 @@ typedef struct {
     qrpc_on_media_produce_t source;
   } audio, video;
 } qrpc_media_produce_config_t;
+
 typedef struct {
   const char *path;
   struct {
@@ -831,26 +840,40 @@ typedef struct {
     bool paused;
   } audio, video;
 } qrpc_media_consume_config_t;
+
 typedef struct {
   // client capabilities
   qrpc_media_params_t audio_cap, video_cap;
 } qrpc_media_config_t;
-// extra param for qrpc_media_control
-typedef union {
-  struct {
-    uint8_t spatial_layer; // prefered spatial layer
-    uint8_t temporal_layer; // prefered temporal layer
-  } set_preferred_layer;
-  struct {
-    uint32_t priority;
-  } set_priority;
-} qrpc_media_control_params_t;
+
+typedef enum {
+  QRPC_MEDIA_CONTROL_NOP = 0,
+  QRPC_MEDIA_CONTROL_REQUEST_KEY_FRAME,
+  QRPC_MEDIA_CONTROL_SET_PREFERRED_LAYER,
+  QRPC_MEDIA_CONTROL_SET_PRIORITY,
+  QRPC_MEDIA_CONTROL_PAUSE,
+  QRPC_MEDIA_CONTROL_RESUME,
+} qrpc_media_control_command_t;
+
+typedef struct {
+  qrpc_media_control_command_t command;
+  union {
+    // pause/resume/request_key_frame has no extra params
+    struct {
+      uint8_t spatial_layer;
+      uint8_t temporal_layer;
+    } set_preferred_layer;
+    struct {
+      uint32_t priority;
+    } set_priority;
+  };
+} qrpc_media_control_t;
 // generate default configs
 // client main config
 QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config();
 // produce config
 QRPC_THREADSAFE qrpc_media_produce_config_t qrpc_media_produce_config(const char *path);
-// consume config
+// consume config. path should include cname (eg.'alice' of "alice/webcam/video")
 QRPC_THREADSAFE qrpc_media_consume_config_t qrpc_media_consume_config(const char *path);
 // initialize rtp feature, and set some config. eg. set capability
 // only client connection need to call this. otherwise got error through qrpc_on_media_open_t
@@ -865,16 +888,29 @@ QRPC_THREADSAFE void qrpc_conn_media_watch(qrpc_conn_t c, const qrpc_media_consu
 QRPC_THREADSAFE void qrpc_media_watch(qrpc_media_t m, qrpc_on_media_consume_t cb);
 // close media. closed media slot can be used subsequent qrpc_conn_media_watch or qrpc_conn_media_open
 QRPC_THREADSAFE void qrpc_media_close(qrpc_media_t m);
-// pause media. qrpc_on_media_consume_t stops from being called.
-QRPC_THREADSAFE void qrpc_media_pause(qrpc_media_t m);
-// resume paused media. qrpc_on_media_consume_t start calling again.
-QRPC_THREADSAFE void qrpc_media_resume(qrpc_media_t m);
 // control media. eg. request key frame, set prefered layer, etc.
-QRPC_THREADSAFE void qrpc_media_control(qrpc_media_t m, const char *command, const qrpc_media_control_params_t *param);
+QRPC_THREADSAFE void qrpc_media_control(qrpc_media_t m, const qrpc_media_control_t *control);
+// pause media. qrpc_on_media_consume_t stops from being called.
+QRPC_INLINE void qrpc_media_pause(qrpc_media_t m) { 
+  qrpc_media_control_t control = { QRPC_MEDIA_CONTROL_PAUSE };
+  qrpc_media_control(m, &control);
+}
+// resume paused media. qrpc_on_media_consume_t start calling again.
+QRPC_INLINE void qrpc_media_resume(qrpc_media_t m) { 
+  qrpc_media_control_t control = { QRPC_MEDIA_CONTROL_RESUME };
+  qrpc_media_control(m, &control);
+}
+// request keyframe for video media
+QRPC_INLINE void qrpc_media_request_keyframe(qrpc_media_t m) { 
+  qrpc_media_control_t control = { QRPC_MEDIA_CONTROL_REQUEST_KEY_FRAME };
+  qrpc_media_control(m, &control);
+}
 // returns media is paused
 QRPC_CLOSURECALL bool qrpc_media_paused(qrpc_media_t m);
 // get media context
 QRPC_CLOSURECALL void *qrpc_media_ctx(qrpc_media_t m);
+// get media path
+QRPC_CLOSURECALL const char *qrpc_media_path(qrpc_media_t m);
 
 // --------------------------
 //

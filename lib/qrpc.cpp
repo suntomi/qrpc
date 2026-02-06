@@ -523,6 +523,12 @@ QRPC_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc) {
 // media API
 //
 // --------------------------
+#define MEDIA_OP(__proc, ...) OP_RAW(do { \
+  auto __m = qrpc::Media::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  if (__m != nullptr) { \
+    __proc; \
+  } \
+} while(0), __VA_ARGS__)
 QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
   // default: opus
   static const char *audio_rtcp_fbs[] = {
@@ -632,19 +638,19 @@ QRPC_THREADSAFE void qrpc_conn_media_watch(qrpc_conn_t c, const qrpc_media_consu
   CONN_OP(__c->WatchMedia(*config), c, config);
 }
 QRPC_THREADSAFE void qrpc_media_watch(qrpc_media_t m, qrpc_on_media_consume_t cb) {
-
+  MEDIA_OP(__m->SetWatcher(cb), m, cb);
 }
 QRPC_THREADSAFE void qrpc_media_close(qrpc_media_t m) {
-
+  MEDIA_OP(__m->connection().CloseMedia(base::Media::FromHandle(m)->path()), m);
 }
-QRPC_THREADSAFE void qrpc_media_resume(qrpc_media_t m) {
-
-}
-QRPC_THREADSAFE void qrpc_media_pause(qrpc_media_t m) {
-
+QRPC_THREADSAFE void qrpc_media_control(qrpc_media_t m, const qrpc_media_control_t *control) {
+  MEDIA_OP(__m->connection().ControlMedia(base::Media::FromHandle(m)->path(), *control), m, control);
 }
 QRPC_CLOSURECALL bool qrpc_media_paused(qrpc_media_t m) {
-  return true;
+  return base::Media::FromHandle(m)->connection().IsMediaPaused(base::Media::FromHandle(m)->path());
+}
+QRPC_CLOSURECALL const char *qrpc_media_path(qrpc_media_t m) {
+  return base::Media::FromHandle(m)->path().c_str();
 }
 
 

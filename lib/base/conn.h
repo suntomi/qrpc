@@ -17,8 +17,11 @@ namespace base {
     virtual std::shared_ptr<Stream> OpenStream(const Stream::Config &) = 0;
     virtual int InitMedia(const qrpc_media_config_t &) = 0;
     virtual int OpenMedia(const qrpc_media_produce_config_t &) = 0;
+    virtual int CloseMedia(const std::string &) = 0;
     virtual int WatchMedia(const qrpc_media_consume_config_t &) = 0;
+    virtual int ControlMedia(const std::string &, const qrpc_media_control_t &) = 0;
     virtual int OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,json> &args) = 0;
+    virtual bool IsMediaPaused(const std::string &path) = 0;
     virtual AlarmProcessor &alarm_processor() = 0;
     virtual StreamFactory &stream_factory() = 0;
     virtual const Serial &serial() const = 0;

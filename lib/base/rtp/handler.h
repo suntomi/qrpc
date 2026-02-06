@@ -233,6 +233,7 @@ namespace rtp {
       }
       return Channel::ChannelRequest(&socket(), ::flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()));
     }
+    static Channel::ChannelRequest CreateControlRequest(FBB &fbb, FBS::Request::Method m, const qrpc_media_control_t &control);
     template <typename Body> void HandleRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs) { 
       auto req = CreateRequest(fbb, m, ofs);
       RTC::Transport::HandleRequest(&req);
@@ -248,7 +249,7 @@ namespace rtp {
       const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
       MediaStreamConfigs &media_stream_configs, std::vector<std::string> &closed_paths, std::string &error);
     bool Consume(Handler &peer, const MediaStreamConfig &config, std::string &error);
-    bool ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error);
+    bool ControlStream(const std::string &path, const qrpc_media_control_t &control, bool &is_producer, std::string &error);
     bool CloseStream(MediaStreamConfig &config, std::string &error);
     bool Pause(const std::string &path, std::string &error);
     bool Resume(const std::string &path, std::string &error);
@@ -326,8 +327,8 @@ namespace rtp {
     Listener &listener_;
     ProducerFactory producer_factory_; // should be declared prior to Producer* and Consumer* containers
     ConsumerFactory consumer_factory_;
-    std::map<std::string, std::shared_ptr<base::Stream>> published_streams_;
-    std::map<Media::Id, std::shared_ptr<Media>> medias_;
+    std::map<std::string, std::shared_ptr<base::Stream>> published_streams_; // key: stream path
+    std::map<std::string, std::shared_ptr<Media>> medias_; // key: media path
     std::map<Media::Mid, std::string> mid_media_path_map_;
     std::map<uint32_t, StreamRecoveryContext> ssrc_stream_recovery_map_;
   };

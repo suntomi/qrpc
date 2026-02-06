@@ -2121,6 +2121,28 @@ int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
     });
   });
 }
+int Client::Connection::CloseMedia(const std::string &path) {
+  auto msgid = factory().to<Client>().msgid_factory().New();
+  return Call("close_media", msgid, {
+    {"path", path}
+  }, [this, path](qrpc_error_t result, const std::map<std::string,json> &args) {
+    if (result < 0) {
+      QRPC_LOGJ(error, {{"ev","close_media syscall failed"},{"rc",result}});
+      return result;
+    }
+    QRPC_LOGJ(info, {{"ev","close_media syscall ack received"},{"path",path}});
+    // remove media stream configs
+    auto it = media_stream_configs().begin();
+    while (it != media_stream_configs().end()) {
+      if (it->media_path == path) {
+        it = media_stream_configs().erase(it);
+      } else {
+        ++it;
+      }
+    }
+    return QRPC_OK;
+  });
+}
 int Client::Connection::WatchMedia(const qrpc_media_consume_config_t &c) {
   auto msgid = factory().to<Client>().msgid_factory().New();
   // find media_stream_configs() so that config for c.path already exists

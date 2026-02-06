@@ -252,6 +252,24 @@ namespace webrtc {
       const Serial &serial() const override { return serial_; }
       bool is_client() const override { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
       void *context() override { return nullptr; }
+      int ControlMedia(const std::string &path, const qrpc_media_control_t &control) override  {
+        bool is_producer; std::string error;
+        return rtp_handler().ControlStream(path, control, is_producer, error);
+      }
+      bool IsMediaPaused(const std::string &path) override {
+        auto consumer = rtp_handler().FindConsumerByPath(path);
+        if (consumer != nullptr) {
+          return consumer->IsPaused();
+        } else {
+          auto producer = rtp_handler().FindProducerByPath(path);
+          if (producer != nullptr) {
+            return producer->IsPaused();
+          }
+        }
+        ASSERT(false);
+        return false;
+      }
+
     public: // callbacks
       virtual int OnConnect() { return QRPC_OK; }
       virtual qrpc_time_t OnShutdown() { return 0; }
@@ -412,7 +430,7 @@ namespace webrtc {
       const rtp::Handler::Config &GetRtpConfig() const override { return transport_config().rtp; }
       bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) override;
       std::shared_ptr<base::Media> media_factory(const std::string &path) override {
-        return std::make_shared<base::Media>(path, serial().partition_id());
+        return std::make_shared<base::Media>(path, *this, serial().partition_id());
       }
     protected:
       ConnectionFactory &factory_;
@@ -628,6 +646,7 @@ namespace webrtc {
       // implement base::Connection (partial)
       int InitMedia(const qrpc_media_config_t &) override;
       int OpenMedia(const qrpc_media_produce_config_t &) override;
+      int CloseMedia(const std::string &) override;
       int WatchMedia(const qrpc_media_consume_config_t &) override;
       int OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,nlohmann::json> &args) override;
       void ProduceFrames(qrpc_time_t now) {
@@ -798,8 +817,9 @@ namespace webrtc {
       }
     public:
       // implement base::Connection (partial)
-      int InitMedia(const qrpc_media_config_t &config) override { ASSERT(false); return QRPC_ENOTSUPPORT; }
+      int InitMedia(const qrpc_media_config_t &) override { ASSERT(false); return QRPC_ENOTSUPPORT; }
       int OpenMedia(const qrpc_media_produce_config_t &) override  { ASSERT(false); return QRPC_ENOTSUPPORT; }
+      int CloseMedia(const std::string &) override  { ASSERT(false); return QRPC_ENOTSUPPORT; }
       int WatchMedia(const qrpc_media_consume_config_t &) override  { ASSERT(false); return QRPC_ENOTSUPPORT; }
       int OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,json> &args) override {
         ASSERT(false); return QRPC_ENOTSUPPORT;
