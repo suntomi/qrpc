@@ -608,9 +608,10 @@ namespace webrtc {
         SyscallAckCallback callback;
         qrpc_time_t timestamp;
       } InflightSyscall;
-      typedef struct {
+      typedef struct MediaStreamProducerTag {
         qrpc_on_media_produce_t callback;
         qrpc_media_produce_context_t context;
+        MediaStreamProducerTag(const qrpc_on_media_produce_t &cb) : callback(cb) {}
       } MediaStreamProducer;
     public:
       Connection(

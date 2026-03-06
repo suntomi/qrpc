@@ -2106,13 +2106,22 @@ int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
         return QRPC_EINVAL;
       } else {
         for (const auto &kv : slot.ssrcs) {
-          media_stream_producers_[kv.first] = {
-            .callback = it->second,
-            .context = {
-              .keyframe_required = false,
-              .last_produced = qrpc_time_now()
-            }
-          };
+          // Avoid deleted copy-assignment by constructing in place and setting fields.
+          auto pair = media_stream_producers_.emplace(
+            std::piecewise_construct,
+            std::forward_as_tuple(kv.first), std::forward_as_tuple(it->second));
+          if (pair.second) {
+            continue;
+          }
+          auto &producer = pair.first->second;
+          producer.callback = it->second;
+          producer.context.keyframe_required = false;
+          producer.context.last_produced = qrpc_time_now();
+          if (!slot.GetEncoding(kv.first, producer.context.encoding)) {
+            QRPC_LOGJ(error, {{"ev","fail to find encoding for ssrc"},{"ssrc",kv.first}});
+            ASSERT(false);
+            return QRPC_EINVAL;
+          }
         }
       }
       // start produce task

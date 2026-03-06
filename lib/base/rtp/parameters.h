@@ -35,6 +35,8 @@ namespace rtp {
     bool Set(MediaKind kind, const qrpc_media_params_t &c, uint32_t &rid_seed);
     bool Parse(const json &section, Capability &cap, std::string &answer,
       const std::map<std::string, std::string> &rid_scalability_mode_map = {});
+    static bool ParseFmtp(
+      const std::string &fmtp_params, RTC::RtpCodecParameters &codec, std::string &answer);
     std::string Answer(const std::string &cname = "") const;
     std::string Payloads() const {
       if (kind == rtp::Parameters::MediaKind::APP) {
@@ -70,6 +72,7 @@ namespace rtp {
       const std::string &scalability_mode);
     bool AddEncoding(uint32_t ssrc, uint32_t rtx_ssrc, 
       uint64_t pt, uint64_t rtxpt, bool dtx);
+    bool GetEncoding(uint32_t ssrc, qrpc_media_encoding_t &encoding) const;
     inline bool FixSsrc(uint32_t old_ssrc, uint32_t new_ssrc) {
 			if (!ReplaceEncodings(encodings, old_ssrc, new_ssrc)) {
         ASSERT(false);

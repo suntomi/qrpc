@@ -565,6 +565,7 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
     "transport-cc", "goog-remb", "ccm fir", "nack", "nack pli"
   };
   static qrpc_media_codec_t video_codecs[] = {
+    // a=rtpmap:96 VP8/90000
     {
       .mime_type = "VP8",
       .payload_type = 96,
@@ -573,6 +574,17 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
       .fmtp = nullptr,
       .n_rtcp_fbs = bulkof(video_rtcp_fbs),
       .rtcp_fbs = video_rtcp_fbs
+    },
+    // a=rtpmap:97 rtx/90000
+    // a=fmtp:97 apt=96
+    {
+      .mime_type = "rtx",
+      .payload_type = 97,
+      .clock_rate = 90000,
+      .channels = 0,
+      .fmtp = "apt=96",
+      .n_rtcp_fbs = 0,
+      .rtcp_fbs = {}
     }
   };
   static qrpc_media_hdext_t video_hdexts[] = {

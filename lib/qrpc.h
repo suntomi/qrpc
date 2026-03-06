@@ -321,9 +321,9 @@ typedef struct {
   uint8_t payload_type;
   uint8_t channels;
   uint16_t padd;
-  //SDP: a=fmtp:$pt %s
+  //SDP: %s of `a=fmtp:$pt %s` line
   const char *fmtp;
-  //SDP: a=rtcp-fb:$pt %s
+  //SDP: %s of `a=rtcp-fb:$pt %s` line
   qrpc_size_t n_rtcp_fbs;
   const char **rtcp_fbs;
 } qrpc_media_codec_t;
@@ -372,8 +372,7 @@ typedef struct {
 typedef struct qrpc_media_produce_context_tag {
   qrpc_time_t last_produced;
   bool keyframe_required;
-  qrpc_size_t n_encodings;
-  const qrpc_media_encoding_t *encodings;
+  qrpc_media_encoding_t encoding;
 } qrpc_media_produce_context_t;
 
 // --------------------------

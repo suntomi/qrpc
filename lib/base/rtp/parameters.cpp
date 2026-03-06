@@ -35,6 +35,7 @@ namespace rtp {
   static const std::string RED_PAYLOAD_PARAM = "red_payload_params";
 
   bool Parameters::Set(MediaKind kind, const qrpc_media_params_t &c, uint32_t &rid_seed) {
+    std::string answer;
     this->kind = kind;
     this->network.address = "0.0.0.0";
     this->network.port = 9; // discard port
@@ -53,6 +54,10 @@ namespace rtp {
       }
       codec.clockRate = cc.clock_rate;
       codec.channels = cc.channels;
+      // parse fmtp
+      if (!ParseFmtp(cc.fmtp, codec, answer)) {
+        return false;
+      }
       codecs.push_back(codec);
     }
     // copy header extensions
@@ -76,28 +81,38 @@ namespace rtp {
       ASSERT(false);
       return false;
     }
-    else if (c.n_encodings == 1) {
+    else {
       // single encoding
-      const auto &ec = c.encodings[0];
-      if (!AddEncoding(ec.ssrc, ec.rtx_ssrc, ec.payload_type, ec.rtx_payload_type, ec.dtx)) {
-        QRPC_LOGJ(warn, {
-          {"ev","fail to add encoding"},{"rtx_pt",ec.rtx_payload_type},{"rtx_ssrc",ec.rtx_ssrc}});
-        ASSERT(false);
-        return false;
+      auto &ec = c.encodings[0];
+      if (ec.ssrc == 0) {
+        ec.ssrc = ssrc_seed++;
+        QRPC_LOGJ(warn, {{"ev","ssrc auto assigned"},{"ssrc",ec.ssrc}});
       }
-      return true;
-    } else {
-      // simulcast/multiple encodings. use rid
-      for (qrpc_size_t i = 0; i < c.n_encodings; ++i) {
-        const auto &ec = c.encodings[i];
-        auto rid = rid_seed++;
-        if (!AddEncoding(
-          AUTOGEN_RID_PREFIX.data() + std::to_string(rid), // generate rid
-          ec.payload_type, ec.rtx_payload_type, ec.dtx, ec.scalability_mode
-        )) {
-          QRPC_LOGJ(warn, {{"ev","fail to add encoding"},{"scalability_mode",ec.scalability_mode}});
+      if (ec.rtx_ssrc == 0 && ec.rtx_payload_type != 0) {
+        ec.rtx_ssrc = ssrc_seed++;
+        QRPC_LOGJ(warn, {{"ev","rtx_ssrc auto assigned"},{"rtx_ssrc",ec.rtx_ssrc}});
+      }
+      if (c.n_encodings == 1) {
+        if (!AddEncoding(ec.ssrc, ec.rtx_ssrc, ec.payload_type, ec.rtx_payload_type, ec.dtx)) {
+          QRPC_LOGJ(warn, {
+            {"ev","fail to add encoding"},{"rtx_pt",ec.rtx_payload_type},{"rtx_ssrc",ec.rtx_ssrc}});
           ASSERT(false);
           return false;
+        }
+        return true;
+      } else {
+        // simulcast/multiple encodings. use rid
+        for (qrpc_size_t i = 0; i < c.n_encodings; ++i) {
+          auto &ec = c.encodings[i];
+          auto rid = rid_seed++;
+          if (!AddEncoding(
+            AUTOGEN_RID_PREFIX.data() + std::to_string(rid), // generate rid
+            ec.payload_type, ec.rtx_payload_type, ec.dtx, ec.scalability_mode
+          )) {
+            QRPC_LOGJ(warn, {{"ev","fail to add encoding"},{"scalability_mode",ec.scalability_mode}});
+            ASSERT(false);
+            return false;
+          }
         }
       }
     }
@@ -271,6 +286,41 @@ namespace rtp {
     encodings.push_back(p);
     return true;
   }
+  bool Parameters::GetEncoding(uint32_t ssrc, qrpc_media_encoding_t &encoding) const {
+    for (const auto &it : encodings) {
+      if (it.ssrc != ssrc) {
+        continue;
+      }
+      encoding.ssrc = it.ssrc;
+      encoding.max_bitrate = it.maxBitrate;
+      encoding.payload_type = it.codecPayloadType;
+      encoding.dtx = it.dtx;
+      encoding.scalability_mode = it.scalabilityMode.c_str();
+      if (it.hasRtx) {
+        encoding.rtx = true;
+        encoding.rtx_ssrc = it.rtx.ssrc;
+        encoding.rtx_payload_type = 0;
+        for (const auto &it2 : encodings) {
+          if (it2.ssrc != it.rtx.ssrc) {
+            continue;
+          }
+          encoding.rtx_payload_type = it2.codecPayloadType;
+        }
+        if (encoding.rtx_payload_type == 0) {
+          logger::error({{"ev","has rtx but no corresponding encoding"},{"rtx_ssrc", it.rtx.ssrc}});
+          return false;
+        }
+      } else {
+        encoding.rtx = false;
+        encoding.rtx_ssrc = 0;
+        encoding.rtx_payload_type = 0;
+      }
+      return true;
+    }
+    QRPC_LOGJ(warn, {{"ev","encoding not found for ssrc"},{"ssrc",ssrc}});
+    ASSERT(false);
+    return false;
+  }
   const Parameters Parameters::ToProbator() const {
     Parameters p;
     p.mid = RTC::RtpProbationGenerator::GetMidValue();
@@ -299,6 +349,39 @@ namespace rtp {
     return p;
   }
 
+  bool Parameters::ParseFmtp(const std::string &fmtp_params, RTC::RtpCodecParameters &c, std::string &answer) {
+    for (auto t : str::Split(fmtp_params, ";")) {
+      auto kv = str::Split(t, "=");
+      if (kv.size() != 2) {
+        kv = str::Split(t, "/");
+        if (kv.size() == 2) {
+          // seems to be special case for RED payload fmtp, like 111/111.
+          // TODO: but actually how to set value for c.parameters for the case?
+          c.parameters.Add(RED_PAYLOAD_PARAM, t);
+          continue;
+        }
+        answer = str::Format("rtpmap: invalid fmtp format: %s", fmtp_params.c_str());
+        ASSERT(false);
+        return false;
+      }
+      try {
+        if (kv[1] == "true" || kv[1] == "false") {
+          c.parameters.Add(kv[0], kv[1] == "true"); // boolean
+        } else if (kv[1].find('.') != std::string::npos) { 
+          try {
+            c.parameters.Add(kv[0], std::stod(kv[1])); // double
+          } catch (std::exception &) {
+            c.parameters.Add(kv[0], std::stoi(kv[1])); // int
+          }
+        } else {
+          c.parameters.Add(kv[0], std::stoi(kv[1])); // int
+        }
+      } catch (std::exception &) {
+        c.parameters.Add(kv[0], kv[1]); // string
+      }
+    }
+    return true;
+  }
   bool Parameters::Parse(
     const json &section, Capability &cap, std::string &answer,
     const std::map<std::string, std::string> &rid_scalability_mode_map
@@ -469,35 +552,8 @@ namespace rtp {
           c.clockRate = rateit->get<uint64_t>();
           auto fmit = fmtpmap.find(pt);
           if (fmit != fmtpmap.end()) {
-            for (auto t : str::Split(fmit->second, ";")) {
-              auto kv = str::Split(t, "=");
-              if (kv.size() != 2) {
-                kv = str::Split(t, "/");
-                if (kv.size() == 2) {
-                  // seems to be special case for RED payload fmtp, like 111/111.
-                  // TODO: but actually how to set value for c.parameters for the case?
-                  c.parameters.Add(RED_PAYLOAD_PARAM, t);
-                  continue;
-                }
-                answer = str::Format("rtpmap: invalid fmtp format: %s", fmit->second.c_str());
-                ASSERT(false);
-                return false;
-              }
-              try {
-                if (kv[1] == "true" || kv[1] == "false") {
-                  c.parameters.Add(kv[0], kv[1] == "true"); // boolean
-                } else if (kv[1].find('.') != std::string::npos) { 
-                  try {
-                    c.parameters.Add(kv[0], std::stod(kv[1])); // double
-                  } catch (std::exception &) {
-                    c.parameters.Add(kv[0], std::stoi(kv[1])); // int
-                  }
-                } else {
-                  c.parameters.Add(kv[0], std::stoi(kv[1])); // int
-                }
-              } catch (std::exception &) {
-                c.parameters.Add(kv[0], kv[1]); // string
-              }
+            if (!ParseFmtp(fmit->second, c, answer)) {
+              return false;
             }
           }
           auto sit = std::find(resilient_codecs.begin(), resilient_codecs.end(), codec);
