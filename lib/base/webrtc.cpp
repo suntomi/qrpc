@@ -1036,23 +1036,23 @@ void ConnectionFactory::Connection::OnFinalize() {
   auto reconnect_wait = OnShutdown();
   if (factory().is_client()) {
     auto &c = factory().to<Client>();
+    auto cc = dynamic_cast<Client::Connection*>(this);
+    if (cc == nullptr) {
+      QRPC_LOGJ(warn, {{"ev","reconnection cancel"},{"r","connection type mismatch"},{"uf",ufrag()}});
+      ASSERT(false);
+      return;
+    }
     auto &uf = ufrag();
     if (reconnect_wait > 0) {
       QRPC_LOGJ(info, {{"ev","start reconnect wait"},{"backoff",reconnect_wait},{"ufrag",uf}})
-      c.alarm_processor().Set([&c, uf = uf]() {
+      c.alarm_processor().Set([&c, uf = uf, fm = cc->factory_method()]() mutable {
         auto epit = c.endpoints().find(uf);
         if (epit != c.endpoints().end()) {
-          auto cc = std::dynamic_pointer_cast<Client::Connection>(c.FindFromUfrag(uf));
-          if (cc == nullptr) {
-            QRPC_LOGJ(warn, {{"ev","reconnection cancel"},{"r","connection not found"},{"uf",uf}});
-            ASSERT(false);
-            return qrpc_alarm_stop_rv();
-          }
           auto &ep = (*epit).second;
           QRPC_LOGJ(info, {{"ev","reconnection start"},{"uf",uf},
             {"ep",(ep.host + ":" + std::to_string(ep.port) + ep.path)}});
           // cc's factory_methods_ will move into new connection
-          if (!c.Connect(ep, std::move(cc->factory_method()))) {
+          if (!c.Connect(ep, std::move(fm))) {
             QRPC_LOGJ(warn, {{"ev","reconnection fails"},{"r","Connect() fails"},{"uf",uf}});
             ASSERT(false);
           }
