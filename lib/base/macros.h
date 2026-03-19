@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>  // For size_t.
+#include <typeinfo> // For typeid.
 
 // Put this in the declarations for a class to be uncopyable.
 #define DISALLOW_COPY(TypeName) \

@@ -7,6 +7,7 @@
 #include "base/loop.h"
 #include "base/io_processor.h"
 #include "base/macros.h"
+#include "base/type.h"
 #include "base/resolver.h"
 
 #include <openssl/ssl.h>
@@ -211,8 +212,8 @@ namespace base {
         inline bool is_listener() const { return is_listener_; }
         inline bool need_tls() const { return certpair_.has_value(); }
         inline SSL_CTX *tls_ctx() const { return tls_ctx_; }
-        template <class F> F &to() { return static_cast<F&>(*this); }
-        template <class F> const F &to() const { return static_cast<const F&>(*this); }
+        template <class F> F &to() {return base::type::cast_or_die<F>(*this); }
+        template <class F> const F &to() const { return base::type::cast_or_die<const F>(*this); }
         bool Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref = AF_INET);
         bool Connect(const std::string &host, int port, FactoryMethod m, int family_pref = AF_INET);
         static inline int AssignedPort(Fd fd) {

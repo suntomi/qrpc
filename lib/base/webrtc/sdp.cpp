@@ -12,7 +12,7 @@ namespace webrtc {
     const std::string &ufrag, const std::string &pwd, TransportProtocol proto,
     std::string &offer) {
     auto now = qrpc_time_now();
-    auto proto_name = TransportProtocol::UDP ? "UDP" : "TCP";
+    auto proto_name = proto == TransportProtocol::UDP ? "UDP" : "TCP";
     // string value to the str::Format should be converted to c string like str.c_str()
     // TODO: add sdp for audio and video
     offer = str::Format(R"sdp(v=0
@@ -148,9 +148,12 @@ a=max-message-size:%u
 
   std::string SDP::CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c) {
     std::string sdplines;
-    auto &l = c.factory().to<Listener>();
     ASSERT(proto == "UDP" || proto == "TCP");
-    auto nwport = proto == "UDP" ? l.udp_port() : l.tcp_port();
+    auto *listener = dynamic_cast<Listener *>(&c.factory());
+    uint16_t nwport = 9;
+    if (listener != nullptr) {
+      nwport = proto == "UDP" ? listener->udp_port() : listener->tcp_port();
+    }
     size_t idx = 0;
     for (auto &a : c.ice_candidate_addrs()) {
       sdplines += str::Format(

@@ -4,6 +4,7 @@
 #include "base/http.h"
 #include "base/id_factory.h"
 #include "base/session.h"
+#include "base/type.h"
 #include "base/media.h"
 #include "base/webrtc/ice.h"
 #include "base/rtp/handler.h"
@@ -463,8 +464,8 @@ namespace webrtc {
     Loop &loop() { return loop_; }
     const Config &config() const { return config_; }
     AlarmProcessor &alarm_processor() { return loop_.alarm_processor(); }
-    template <class F> inline F& to() { return reinterpret_cast<F &>(*this); }
-    template <class F> inline const F& to() const { return reinterpret_cast<const F &>(*this); }
+    template <class F> F& to() { return base::type::cast_or_die<F>(*this); }
+    template <class F> const F& to() const { return base::type::cast_or_die<const F>(*this); }
   public:
     virtual bool is_client() const = 0;
     virtual int Setup(const std::vector<Port> &ports) = 0;
