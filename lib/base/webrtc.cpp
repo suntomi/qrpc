@@ -1043,6 +1043,11 @@ void ConnectionFactory::Connection::OnFinalize() {
         auto epit = c.endpoints().find(uf);
         if (epit != c.endpoints().end()) {
           auto cc = std::dynamic_pointer_cast<Client::Connection>(c.FindFromUfrag(uf));
+          if (cc == nullptr) {
+            QRPC_LOGJ(warn, {{"ev","reconnection cancel"},{"r","connection not found"},{"uf",uf}});
+            ASSERT(false);
+            return qrpc_alarm_stop_rv();
+          }
           auto &ep = (*epit).second;
           QRPC_LOGJ(info, {{"ev","reconnection start"},{"uf",uf},
             {"ep",(ep.host + ":" + std::to_string(ep.port) + ep.path)}});
