@@ -35,7 +35,7 @@ int ConnectionFactory::Start(const std::vector<Port> &ports) {
     return r;
   }
   if (config().connection_timeout > 0) {
-    alarm_processor().Set(
+    alarm_id_ = alarm_processor().Set(
       [this]() { return this->CheckTimeout(); },
       qrpc_time_now() + config().connection_timeout
     );

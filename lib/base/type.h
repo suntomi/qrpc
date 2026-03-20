@@ -1,6 +1,7 @@
 #pragma once
 #include <stdlib.h>
 #include <type_traits>
+#include "base/logger.h"
 
 namespace base {
 namespace type {
