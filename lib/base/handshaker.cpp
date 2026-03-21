@@ -21,10 +21,10 @@ namespace base {
     // サーバーモードかクライアントモードか
     if (s.factory().is_listener()) {
       r = SSL_accept(ssl_);
-      QRPC_LOG(info, "SSL_accept: %d", r);
+      QRPC_LOGJ(debug, {{"ev", "SSL_accept"}, {"r", r}});
     } else {
       r = SSL_connect(ssl_);
-      QRPC_LOG(info, "SSL_connect: %d", r);
+      QRPC_LOGJ(debug, {{"ev", "SSL_connect"}, {"r", r}});
     }
     if (r == 1) {
       finish();
@@ -32,14 +32,14 @@ namespace base {
     }
     int ssl_err = SSL_get_error(ssl_, r);
     if (ssl_err == SSL_ERROR_WANT_READ) {
-      QRPC_LOG(info, "ssl want read");
+      QRPC_LOGJ(debug, {{"ev", "ssl want read"}});
       if ((r = s.factory().loop().Mod(fd, Loop::EV_READ)) < 0) {
         s.Close(QRPC_CLOSE_REASON_SYSCALL, r);
         return QRPC_ESYSCALL;
       }
       return QRPC_OK; // イベントループで待機
     } else if (ssl_err == SSL_ERROR_WANT_WRITE) {
-      QRPC_LOG(info, "ssl want write");
+      QRPC_LOGJ(debug, {{"ev", "ssl want write"}});
       if ((r = s.factory().loop().Mod(fd, Loop::EV_WRITE)) < 0) {
         s.Close(QRPC_CLOSE_REASON_SYSCALL, r);
         return QRPC_ESYSCALL;
