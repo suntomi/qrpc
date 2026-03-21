@@ -190,7 +190,7 @@ QRPC_THREADSAFE qrpc_connect_conf_t qrpc_connect_conf(qrpc_client_t cl, const ch
         .ip = nullptr, // auto detected
         .path = "qrpc",
         .in6 = false,
-        .proto = QRPC_EPPROTOCOL_ALL
+        .proto = QRPC_WEBRTC_ENDPOINT_PROTOCOL_ALL
       };
       break;
     case QRPC_TRANSPORT_WEBTRANSPORT:

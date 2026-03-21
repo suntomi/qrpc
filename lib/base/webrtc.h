@@ -48,10 +48,10 @@ namespace webrtc {
     typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
     struct Port {
       enum Protocol {
-        NONE = QRPC_EPPROTOCOL_NONE,
-        UDP = QRPC_EPPROTOCOL_UDP,
-        TCP = QRPC_EPPROTOCOL_TCP,
-        ALL = QRPC_EPPROTOCOL_ALL,
+        NONE = QRPC_WEBRTC_ENDPOINT_PROTOCOL_NONE,
+        UDP = QRPC_WEBRTC_ENDPOINT_PROTOCOL_UDP,
+        TCP = QRPC_WEBRTC_ENDPOINT_PROTOCOL_TCP,
+        ALL = QRPC_WEBRTC_ENDPOINT_PROTOCOL_ALL,
       };
       Protocol protocol;
       int port;

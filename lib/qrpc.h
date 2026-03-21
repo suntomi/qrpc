@@ -212,11 +212,12 @@ typedef struct {
 } qrpc_transport_config_t;
 
 // extra endpoint info for webrtc transport
+// which protocols can be used for webrtc transport protocol (UDP/TCP/BOTH(ALL))
 enum qrpc_webrtc_endpoint_protocol_t {
-  QRPC_EPPROTOCOL_NONE = 0,
-  QRPC_EPPROTOCOL_UDP = 1,
-  QRPC_EPPROTOCOL_TCP = 2,
-  QRPC_EPPROTOCOL_ALL = 3,
+  QRPC_WEBRTC_ENDPOINT_PROTOCOL_NONE = 0,
+  QRPC_WEBRTC_ENDPOINT_PROTOCOL_UDP = 1,
+  QRPC_WEBRTC_ENDPOINT_PROTOCOL_TCP = 2,
+  QRPC_WEBRTC_ENDPOINT_PROTOCOL_ALL = 3,
 };
 struct qrpc_webrtc_endpoint_tag {
   // WHIP propagate ip address
@@ -229,7 +230,7 @@ struct qrpc_webrtc_endpoint_tag {
   // default false
   bool in6;
   // whether protocol is used.
-  // default QRPC_EPPROTOCOL_ALL
+  // default QRPC_WEBRTC_ENDPOINT_PROTOCOL_ALL
   qrpc_webrtc_endpoint_protocol_t proto;
 };
 typedef qrpc_webrtc_endpoint_tag qrpc_webrtc_endpoint_t;
