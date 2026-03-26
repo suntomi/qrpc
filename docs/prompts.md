@@ -132,3 +132,64 @@ qrpc_conn_tはサーバー/クライアントの接続を共通で表すハン�
 lib/base/webrtc/sdp.cpp に SDP::CapSdpTextFromを実装してください。この関数はlib/qrpc.hに定義されているqrpc_media_config_tを受け取って、この構造体が表しているaudio/video sectionのSDPを生成します。
 
 ===================
+このレポジトリではmediasoupをベースとしたRTP/RTCPの処理を実装しています。サーバー(SFU)側の実装には特に問題はないです。
+クライアントを実装する場合、rtp packetを生成して接続先に送信する必要がありますが、mediasoupは基本的にSFUを実装しているため送信側の処理がありません。
+そのため、以下のような手段を取ろうと考えています。
+1. rtp::Handlerにproducerを生成する。これが送信されるrtp packetを扱う窓口となる。
+2. このproducerを自分自身(=base::webrtc::Client::Connection)でconsumeする。
+3. 送信したいrtp packetを、midやridを調整して1.で作られたproducerが処理するようにローカルで生成する。
+4. そのバイト列表現をHandler::ReceiveRtpPacketに渡す。
+5. 対応するrtp packetはproducerで処理され、consumerに渡される。consumerは自分自身のpeerにrtp packetを送信するはず。
+
+この実装で問題なく動作しそうかmediasoupのコードを確認してください。特に懸念しているのは、rtp packetを送信する場合にpeerからの要求に従って適宜rtcp packetを送る必要があると思いますが、mediasoupのproducerがそれを全て処理できるか、こちら側で何かしらの追加実装を行う必要があるかについて確認したいです。
+
+=====
+ありがとうございます。FIR/PILの対応を行うための実装は以下のように行おうと考えています。
+ConnectionFactory::Connection::SendRtcpPacket
+
+=====
+lib/tests/e2e/qrpc/client/main.cpp に lib/qrpc.h のAPIを使ったクライアントを作成してください。
+lib/qrpc.hのAPIが行う通信は
+
+
+.build/bazel-bin/lib/tests/e2e/core/client/e2e_client_native を動かした時に発生する以下のaddress sanitizerエラーを修正してください。
+e2e_client_native は lib/tests/e2e/core/client/native/main.cpp をbazelでビルドして生成され、BUILDファイルは lib/tests/e2e/core/client/BUILD です。
+
+======
+
+lib/tests/e2e/core/client/native/main.cpp のsdpのテキストは長く、ソースコード中に存在すると可読性に影響があるので別ファイルにしてください
+
+
+=======
+lib/base/session_base.h の SessionFactory::Connect がsslを使うかどうかは現在、SessionFactoryを作るときに渡されたConfigのMaybeCertPairの値で決定されます。
+しかし、理想的には、SessionFactory::Connect がSSLを必要とするかどうかはConnectごとに決定されるべきです。
+
+この問題を解決し、base::SessionFactoryのクライアントとサーバーとしての責務をより明確に分割するため以下のような修正を行います。
+- SessionFactoryから、TLS関連の処理やConnect()をなくす, SessionFactory::Configからsession timeout以外の設定をなくす
+- SessionFactory::SessionからClose()の再接続をなくす
+- 新たにClientSessionFactory, ListenerSessionFactoryをSessionFactoryを継承する形で作成する(session_base.hに実装)
+  - ClientSessionFactory::SessionはMaybeCertPariを持つが、ClientSessionFactory自身はtls_ctx_を持たない。現在のSessionFactory::Openもこちらのクラスのみが持つようにする
+    - SessionFactory::Session::Closeの再接続処理もClientSessionFactory::Closeに移動する
+    - SessionFactory::Config::resolverをClientSessionFactory::Config::resolverに移動
+  - ListenerSessionFactory::SessionはMaybeCertPairを持たない(おそらくSessionFactory::Sessionをそのまま使う)が、tls_ctx_とその初期化処理を持つ
+    - SessionFactory::Config::certpairはListenerSessionFactory::Configに移動
+- TcpClient, UdpClientはClientSessionFactory、TcpListener, UdpListenerはListenerSessionFactoryを継承する
+- ClientSessionFactory::Connect にはMaybeCertPairを渡せるようにする
+
+
+=======
+lib/tests/e2e/qrpc/server/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/server/main.cpp の base::webrtc::AdhocListener と同等の動作をするサーバーを作成してください。
+lib/tests/e2e/core/client/native/main.cpp の test_webrtc_client がパスするように実装する必要があります。
+
+もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。
+
+=======
+lib/tests/e2e/qrpc/client/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/client/native/main.cpp と同等の動作をするプログラムを作成してください。テストは lib/tests/e2e/qrpc/server/main.cpp に作成したサーバーに対して行います。
+
+もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。
+
+=======
+lib/tests/e2e/qrpc/client/main.cpp と lib/tests/e2e/qrpc/server/main.cpp　にqrpcのRTP実装である qrpc_media_XXXX の動作をテストするコードを追加してください。
+
+もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。
+
