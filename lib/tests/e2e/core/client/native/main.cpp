@@ -217,7 +217,7 @@ class TestUdpSession : public P {
 public:
     Handler &handler_;
 public:
-    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a, Handler &h) : P(f, fd, a), handler_(h) {}
+    TestUdpSession(UdpClientSessionFactory &f, Fd fd, const Address &a, Handler &h) : P(f, fd, a), handler_(h) {}
     int OnConnect() override { return handler_.Connect(*this, "udp"); }
     int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "udp", p, sz); }
     qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "udp"); }
@@ -226,7 +226,7 @@ class TestTcpSession : public TcpSession {
 public:
     Handler &handler_;
 public:
-    TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a, Handler &h) : TcpSession(f, fd, a), handler_(h)  {}
+    TestTcpSession(SessionFactory &f, Fd fd, const Address &a, Handler &h) : TcpSession(f, fd, a), handler_(h)  {}
     int OnConnect() override { return handler_.Connect(*this, "tcp"); }
     int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "tcp", p, sz); }
     qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "tcp"); }
@@ -263,9 +263,9 @@ bool test_session(Loop &l, F &f, int port) {
 bool reset_test_state(Loop &l, Resolver &r) {
     const char *error_msg = nullptr;
     AdhocHttpClient hc(l, r);
-    hc.Connect("localhost", 8888, [](HttpSession &s) {
+    hc.Connect("localhost", 8888, [](HttpClientSession &s) {
         return s.Request("GET", "/reset");
-    }, [&error_msg](HttpSession &s) {
+    }, [&error_msg](HttpClientSession &s) {
         if (s.fsm().rc() != HRC_OK) {
             logger::error({{"ev","wrong response"},{"rc",s.fsm().rc()}});
             error_msg = "wrong response";
@@ -290,7 +290,7 @@ bool test_tcp_session(Loop &l, Resolver &r) {
         return false;
     }
     TcpClient tf(l, r, qrpc_time_sec(1));
-    return test_session<TcpSessionFactory, TestTcpSession>(l, tf, 10001);
+    return test_session<TcpClientSessionFactory, TestTcpSession>(l, tf, 10001);
 }
 bool test_udp_session(Loop &l, Resolver &r, bool listen) {
     if (!reset_test_state(l, r)) {
@@ -305,19 +305,19 @@ bool test_udp_session(Loop &l, Resolver &r, bool listen) {
             DIE("fail to bind");
             return false;
         }
-        return test_session<UdpSessionFactory, TestUdpSession<UdpListener::UdpSession>>(l, uc, 10000);
+        return test_session<UdpListenerSessionFactory, TestUdpSession<UdpListener::UdpSession>>(l, uc, 10000);
     } else {
         auto uc = UdpClient(l, r, qrpc_time_sec(1));
-        return test_session<UdpSessionFactory, TestUdpSession<UdpClient::UdpSession>>(l, uc, 10000);
+        return test_session<UdpClientSessionFactory, TestUdpSession<UdpClient::UdpSession>>(l, uc, 10000);
     }
 }
 
 bool test_http_client(Loop &l, Resolver &r) {
     const char *error_msg = nullptr;
     AdhocHttpClient hc(l, r);
-    hc.Connect("localhost", 8888, [](HttpSession &s) {
+    hc.Connect("localhost", 8888, [](HttpClientSession &s) {
         return s.Request("GET", "/test");
-    }, [&error_msg](HttpSession &s) {
+    }, [&error_msg](HttpClientSession &s) {
         auto b = s.fsm().body();
         try {
             auto j = json::parse(b);

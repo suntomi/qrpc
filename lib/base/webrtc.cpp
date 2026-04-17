@@ -1831,7 +1831,7 @@ namespace client {
     const Client::Endpoint &endpoint() const { return ep_; }
     void SetUFrag(std::string &&ufrag) { ufrag_ = ufrag; }
   public:
-    base::TcpSession *HandleResponse(HttpSession &s) override {
+    TcpClient::TcpSession *HandleResponse(HttpClientSession &s) override {
       // in here, session that related with webrtc connection is not actively callbacked, 
       // so we can call CloseConnection
       const auto &uf = ufrag();
@@ -1872,7 +1872,7 @@ namespace client {
       }
       return nullptr;
     }
-    int SendRequest(HttpSession &s) override {
+    int SendRequest(HttpClientSession &s) override {
       int r;
       std::string sdp;
       if ((r = client_.Offer(ep_, ufrag_, pwd_, sdp)) < 0) {
@@ -1889,7 +1889,7 @@ namespace client {
       };
       return s.Request("POST", ep_.path.c_str(), h, 2, sdp_json_str.c_str(), sdp_json_str.length());
     }
-    void HandleClose(HttpSession &, const CloseReason &r) override {
+    void HandleClose(HttpClientSession &, const CloseReason &r) override {
       // in here, session that related with webrtc connection should not be actively callbacked, 
       // so we can call CloseConnection
       if (r.code != QRPC_CLOSE_REASON_LOCAL || r.detail_code != QRPC_EGOAWAY) {
@@ -2403,7 +2403,7 @@ bool Listener::Listen(int signaling_port, const Endpoint &ep) {
     logger::error({{"ev","fail to start server"},{"rc",r}});
     return false;
   }
-  router_.Route(std::regex(ep.path), [this](HttpSession &s, std::cmatch &) mutable {
+  router_.Route(std::regex(ep.path), [this](HttpListenerSession &s, std::cmatch &) mutable {
     int r;
     json response_json;
     if ((r = Accept(s.fsm().body(), response_json)) < 0) {

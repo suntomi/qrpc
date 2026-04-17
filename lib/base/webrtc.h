@@ -123,9 +123,9 @@ namespace webrtc {
     template <class PS>
     class TcpSessionTmpl : public PS {
     public:
-      TcpSessionTmpl(TcpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+      TcpSessionTmpl(SessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
         TcpSessionTmpl(f, fd, addr) { connection_ = c; }
-      TcpSessionTmpl(TcpSessionFactory &f, Fd fd, const Address &addr) :
+      TcpSessionTmpl(SessionFactory &f, Fd fd, const Address &addr) :
         PS(f, fd, addr), connection_() {}
       virtual ConnectionFactory &connection_factory() = 0;
       int OnRead(const char *p, size_t sz) override;
@@ -138,9 +138,9 @@ namespace webrtc {
     template <class PS>
     class UdpSessionTmpl : public PS {
     public:
-      UdpSessionTmpl(UdpSessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
+      UdpSessionTmpl(SessionFactory &f, Fd fd, const Address &addr, std::shared_ptr<Connection> c) :
         UdpSessionTmpl(f, fd, addr) { connection_ = c; }
-      UdpSessionTmpl(UdpSessionFactory &f, Fd fd, const Address &addr) :
+      UdpSessionTmpl(SessionFactory &f, Fd fd, const Address &addr) :
         PS(f, fd, addr), connection_() {}
       virtual ConnectionFactory &connection_factory() = 0;
       int OnRead(const char *p, size_t sz) override;
@@ -682,7 +682,7 @@ namespace webrtc {
   public:
     Client(Loop &l, Config &&config) :
       ConnectionFactory(l, std::move(config)),
-      http_client_(l, config.resolver, CertificatePair::Default()) {}
+      http_client_(l, config.resolver) {}
     Client(Loop &l, Config &config) :
       Client(l, std::move(config)) {}
     ~Client() override { Fin(); }

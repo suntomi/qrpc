@@ -49,7 +49,7 @@ int Handler::count_ = 0;
 class TestUdpSession : public UdpListener::UdpSession {
     Handler handler_;
 public:
-    TestUdpSession(UdpSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
+    TestUdpSession(UdpListenerSessionFactory &f, Fd fd, const Address &a) : UdpSession(f, fd, a) {}
     int OnConnect() override {
         return handler_.Connect(*this, "udp");
     }
@@ -59,7 +59,7 @@ public:
 class TestTcpSession : public TcpSession {
     Handler handler_;
 public:
-    TestTcpSession(TcpSessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
+    TestTcpSession(SessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
     int OnConnect() override {
         return handler_.Connect(*this, "tcp");
     }
@@ -177,7 +177,7 @@ int main(int argc, char *argv[]) {
         std::filesystem::path(__FILE__).parent_path()).string();
     auto htmlpath = rootpath + "/resources/client.html";
     w.http_router().
-    Route(std::regex("/"), [&htmlpath](HttpSession &s, std::cmatch &) {
+    Route(std::regex("/"), [&htmlpath](HttpListenerSession &s, std::cmatch &) {
         size_t htmlsz;
         auto html = Syscall::ReadFile(htmlpath, &htmlsz);
         if (html == nullptr) {
@@ -191,7 +191,7 @@ int main(int argc, char *argv[]) {
         s.Respond(HRC_OK, h, 2, html.get(), htmlsz);
         return nullptr;
     }).
-    Route(std::regex("/([^/]*)\\.([^/\?]*)?(.*)"), [&rootpath](HttpSession &s, std::cmatch &m) {
+    Route(std::regex("/([^/]*)\\.([^/\?]*)?(.*)"), [&rootpath](HttpListenerSession &s, std::cmatch &m) {
         size_t filesz;
         auto path = rootpath + "/resources/" + m[1].str() + "." + m[2].str();
         auto file = Syscall::ReadFile(path, &filesz);
@@ -219,7 +219,7 @@ int main(int argc, char *argv[]) {
         s.Respond(HRC_OK, h, 2, file.get(), filesz);
         return nullptr;
     }).
-    Route(std::regex("/test"), [](HttpSession &s, std::cmatch &) {
+    Route(std::regex("/test"), [](HttpListenerSession &s, std::cmatch &) {
         json j = {
             {"sdp", "hoge"}
         };
@@ -232,7 +232,7 @@ int main(int argc, char *argv[]) {
         s.Respond(HRC_OK, h, 2, body.c_str(), body.length());
 	    return nullptr;
     }).
-    Route(std::regex("/reset"), [](HttpSession &s, std::cmatch &) {
+    Route(std::regex("/reset"), [](HttpListenerSession &s, std::cmatch &) {
         HttpHeader h[] = {
             {.key = "Content-Type", .val = "application/text"},
             {.key = "Content-Length", .val = "5"}
@@ -241,7 +241,7 @@ int main(int argc, char *argv[]) {
         s.Respond(HRC_OK, h, 2, "reset", 5);
 	    return nullptr;
     }).
-    Route(std::regex("/ws"), [](HttpSession &s, std::cmatch &) {
+    Route(std::regex("/ws"), [](HttpListenerSession &s, std::cmatch &) {
         return WebSocketListener::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
             // echo server
             return ws.Send(p, sz);

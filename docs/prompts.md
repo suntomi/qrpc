@@ -164,17 +164,84 @@ lib/tests/e2e/core/client/native/main.cpp のsdpのテキストは長く、ソ�
 lib/base/session_base.h の SessionFactory::Connect がsslを使うかどうかは現在、SessionFactoryを作るときに渡されたConfigのMaybeCertPairの値で決定されます。
 しかし、理想的には、SessionFactory::Connect がSSLを必要とするかどうかはConnectごとに決定されるべきです。
 
-この問題を解決し、base::SessionFactoryのクライアントとサーバーとしての責務をより明確に分割するため以下のような修正を行います。
+この問題を解決し、base::SessionFactoryのクライアントとサーバーとしての責務をより明確に分割するためにはどのような修正を行うのが良いでしょうか？プランを教えてください。
 - SessionFactoryから、TLS関連の処理やConnect()をなくす, SessionFactory::Configからsession timeout以外の設定をなくす
 - SessionFactory::SessionからClose()の再接続をなくす
 - 新たにClientSessionFactory, ListenerSessionFactoryをSessionFactoryを継承する形で作成する(session_base.hに実装)
-  - ClientSessionFactory::SessionはMaybeCertPariを持つが、ClientSessionFactory自身はtls_ctx_を持たない。現在のSessionFactory::Openもこちらのクラスのみが持つようにする
+  - ClientSessionFactory::SessionはMaybeCertPairを持つが、ClientSessionFactory自身はtls_ctx_を持たない。現在のSessionFactory::Openもこちらのクラスのみが持つようにする
     - SessionFactory::Session::Closeの再接続処理もClientSessionFactory::Closeに移動する
     - SessionFactory::Config::resolverをClientSessionFactory::Config::resolverに移動
-  - ListenerSessionFactory::SessionはMaybeCertPairを持たない(おそらくSessionFactory::Sessionをそのまま使う)が、tls_ctx_とその初期化処理を持つ
+  - ListenerSessionFactory::SessionはMaybeCertPairを持たない(SessionFactory::Sessionをそのまま使う)が、tls_ctx_とその初期化処理を持つ
     - SessionFactory::Config::certpairはListenerSessionFactory::Configに移動
 - TcpClient, UdpClientはClientSessionFactory、TcpListener, UdpListenerはListenerSessionFactoryを継承する
 - ClientSessionFactory::Connect にはMaybeCertPairを渡せるようにする
+
+1. HttpClientのコンストラクタにcertpairを渡していますが、HttpClientではConnect()にcertpairを渡せるようにする必要があります。
+
+=======
+
+lib/base/session_base.h の SessionFactory::Connect は本来base::TcpClientやbase::UdpClientといったclient系のオブジェクトでしか使うことができません。
+この責務の分離をコード上でよりよく表現するために修正を行います。
+
+最初のステップは
+- 新たにClientSessionFactory, ListenerSessionFactoryをSessionFactoryを継承する形で作成する(session_base.hに実装)
+- TcpClient, UdpClientはClientSessionFactory、TcpListener, UdpListenerはListenerSessionFactoryを継承する
+です。
+
+SessionFactory::Connectはlistener系の派生クラス(TcpListener/UdpListener)では呼ぶことができない方が良いと考えます。
+そこで新たにClientSessionFactory, ListenerSessionFactoryをSessionFactoryを継承する形で作成し、SessionFactory::ConnectをClientSessionFactoryに移動させる修正を行いたいです。
+
+その場合はどのように実装しますか？
+
+TcpSessionFactory, UdpSessionFactoryを、継承するクラスを型引数として受け取るテンプレートクラスにして、ListenerSessionFactory, ClientSessionFactoryを与えることでListener/Client用のTcpSessionFactory, UdpSessionFactoryを生成させるのはどうですか
+
+TransportModeは、tlsが有効かどうか、とサーバーかクライアントか、という異なる属性が１つのenumで管理されているのが良くないと考えます。
+SessionFactory::Sessionに仮想関数is_listener()とneed_tls()を用意し、これらが
+- ListenerSessionFactoryで作られたSessionか、ClientSessionFactoryで作られたSessionか
+  - これはそれぞれのSessionFactoryでSessionFactory::Sessionを継承し、適切にoverrideすれば良い
+- tlsが有効か無効か
+  - ListenerSessionFactoryではConfigに有効なCertificatePair渡されたかどうか
+  - ClientSessionFactoryではConnectOptionでuse_tlsが指定されたかどうか
+を返せば良いのではないでしょうか？
+
+ConnectごとのConnectOptionsをsessionに渡す方法としては、FactoryMethodをラップするようにします。この前提で進めてください。
+
+ここまでの修正プランを docs/plans/per_connect_ssl_options.md にまとめてください。
+
+- ConnectOptionはConnectを持っているClientSessionFactoryが持っていれば良いのではないでしょうか
+- SessionFactory::Connectが残っています。ClientSessionFactoryにConnectを移動させてください
+- ResolverがSessionFactoryに残っています。デザインドキュメントの通り、ClientSessionFactory::Configに移動させてください
+
+- Connectに関係がないので、ConnectOptionsはSessionFactory::Sessionには不要ではないでしょうか。
+- SessionFactory::ConfigにcertpairやResolverが存在しています。これらはSessionFactory::Configには不要に見えます
+  - ResolverはClientSessionFactory::Configにあれば良いはずです
+  - certpairはListenerSessionFactory::Configにあれば良いはずです。
+
+Session::ApplyConnectOptionsはClientSessionFactory::Sessionに移動できると思います。そうすれば、Sessionにclient_tls_enabled_を持つ必要はなく、この変数は
+おそらくClientSessionFactory::Session::tls_enabled_のような変数に移動できます。
+
+http.hのHttpSessionですが、TcpSessionがTcpClientSessionとTcpListenerSessionに分かれたので、lib/base/session.hのTcpSessionTのような方針で、HttpSessionTを実装して継承元をTcpClientSessionとTcpListenerSessionのどちらでも指定できるようにし、HttpClientSessionとHttpListenerSessionを定義できるようにします。
+
+- HttpProtocolクラスを定義して、今のHttpSessionのOnRead/Sendとfsm_へのアクセサ以外のメンバ関数や型定義はそれに移動させる
+- HttpProtocolクラスにProcessRead(HttpFSM &fsm, const char *p, size_t sz)を実装し、今のHttpSession::OnReadを移設する
+- HttpSessionTはテンプレートパラメーターとして与えられたクラスと別にHttpProtocolクラスをmixinとして継承する
+- HttpSession::OnReadはHttpProtocol::ProcessRead(fsm_, p, sz)を呼ぶだけにする
+
+ProcessReadが要求するSessionの機能を全部見積もれていなかったため、仮想関数が大量に作られてしまいました。
+これは無駄に複雑なため、以下のようにしたいと思います。
+- virtual int HttpProtocol::OnFinishRead()を作成し、http.cpp:529-544の処理を return OnFinishRead()で置き換える。
+- HttpWritevはどのような時に呼ばれるか、を明確に表していないため、OnSendPayloadという名前にします。
+
+次にWebSocket側も同様に修正を行います。
+
+まずWebSocketProtocolクラスを作成し、WebSocketSession::State, opcode, Frameの定義を移動させてWebSocketSessionにmixinするようにしてください。
+
+現在のWebSocketSessionはHttpFSMにあたる部分がSessionの実装に混じってしまっていて見通しが悪いため、WebSocketFSMというクラスを作成し以下の部分を移動させます。
+
+- 状態を保持している全てのメンバ変数(m_ではじまっている)
+- WebSocketSessionの実装のうち、read_frameとhandshake、およびこれらの関数から呼び出されている全ての関数
+
+- WebSocketProtocolクラスを作成し、
 
 
 =======
@@ -191,5 +258,13 @@ lib/tests/e2e/qrpc/client/main.cpp に lib/qrpc.h で定義されたAPIを使っ
 =======
 lib/tests/e2e/qrpc/client/main.cpp と lib/tests/e2e/qrpc/server/main.cpp　にqrpcのRTP実装である qrpc_media_XXXX の動作をテストするコードを追加してください。
 
+
 もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。
+
+=======
+qrpcのベンチマークをlib/tests/e2e/benchに作成します。サーバーとクライアントは別プロセスとし、クライアントには引数を渡してクライアント数をコントロールできるようにします。
+
+=======
+qrpcの再接続テストをlib/tests/e2e/reconnに作成します。
+
 

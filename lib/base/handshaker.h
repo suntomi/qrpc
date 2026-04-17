@@ -64,7 +64,6 @@ namespace base {
       if (ssl_ != nullptr) { SSL_free(ssl_); }
     }
     SSL *ssl() { return ssl_; }
-    static SSL_CTX *ctx();
     int Handshake(Session &s, Fd fd, const IoProcessor::Event &ev) override;
     int Read(Session &s, char *p, size_t sz) override;
     int Write(Session &s, const char *p, size_t sz) override {

@@ -3,7 +3,7 @@
 
 namespace base {
   Handshaker *Handshaker::Create(Session &s) {    
-    if (s.factory().need_tls()) {
+    if (s.need_tls()) {
       return new TlsHandshaker(s);
     } else {
       return new PlainHandshaker(s);
@@ -11,7 +11,7 @@ namespace base {
   }
   TlsHandshaker::TlsHandshaker(Session &s) : Handshaker() {
     // create SSL object
-    ssl_ = SSL_new(dynamic_cast<TcpSession &>(s).tcp_session_factory().tls_ctx());
+    ssl_ = SSL_new(s.tls_ctx());
     if (ssl_ == nullptr) { logger::die({{"ev","SSL_new() fails"}}); }
     SSL_set_fd(ssl_, s.fd());
   }
@@ -19,7 +19,7 @@ namespace base {
     ASSERT(ssl_ != nullptr);
     int r;
     // サーバーモードかクライアントモードか
-    if (s.factory().is_listener()) {
+    if (s.is_listener()) {
       r = SSL_accept(ssl_);
       QRPC_LOGJ(debug, {{"ev", "SSL_accept"}, {"r", r}});
     } else {

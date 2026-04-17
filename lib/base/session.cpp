@@ -7,6 +7,56 @@ namespace base {
   typedef SessionFactory::FactoryMethod FactoryMethod;
   typedef SessionFactory::Session::CloseReason CloseReason;
 
+  namespace {
+    void EnsureTlsContextImpl(SSL_CTX *&tls_ctx, MaybeCertPair *certpair, bool is_listener) {
+      if (tls_ctx != nullptr) { return; }
+      char err_buf[256];
+      tls_ctx = SSL_CTX_new(TLS_method());
+      if (tls_ctx == nullptr) {
+        ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+        logger::die({{"ev", "Failed to create SSL context"}, {"err", err_buf}});
+      }
+      if (certpair != nullptr && certpair->has_value()) {
+        auto &cp = certpair->value();
+        if (is_listener) {
+          auto r = cp.TryAutoGen();
+          if (!r.empty()) {
+            logger::die({{"ev", "Failed to auto generate cert"}, {"err", r}});
+          }
+        }
+        if (!cp.cert.empty() && !cp.privkey.empty()) {
+          if (SSL_CTX_use_certificate_file(tls_ctx, cp.cert.c_str(), SSL_FILETYPE_PEM) <= 0) {
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            logger::die({{"ev", "Failed to load certificate"}, {"err", err_buf}});
+          }
+          if (SSL_CTX_use_PrivateKey_file(tls_ctx, cp.privkey.c_str(), SSL_FILETYPE_PEM) <= 0) {
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            logger::die({{"ev", "Failed to load private key"}, {"err", err_buf}});
+          }
+          if (SSL_CTX_check_private_key(tls_ctx) != 1) {
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            logger::die({{"ev", "Private key does not match the certificate"}, {"err", err_buf}});
+          }
+        }
+      }
+      SSL_CTX_set_options(tls_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 |
+                          SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+      const char* const PREFERRED_CIPHERS = "HIGH:!aNULL:!MD5:!RC4:!SSLv2:!SSLv3:!TLSv1:!TLSv1.1";
+      if (SSL_CTX_set_cipher_list(tls_ctx, PREFERRED_CIPHERS) != 1) {
+        ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+        logger::die({{"ev", "Failed to set cipher list"}, {"err", err_buf}});
+      }
+    }
+
+    void FinTlsContextImpl(SSL_CTX *&tls_ctx) {
+      if (tls_ctx != nullptr) {
+        SSL_CTX_free(tls_ctx);
+        tls_ctx = nullptr;
+      }
+    }
+
+  }
+
   std::string CertificatePair::TryAutoGen() {
     if (!need_autogen()) { return ""; }
     std::pair<std::string, std::string> cp;
@@ -41,13 +91,14 @@ namespace base {
   };
 
   struct SessionDnsQuery : public DnsQuery {
-    typedef SessionFactory::DnsErrorHandler ErrorHandler;
-    SessionFactory &factory_;
+    typedef ClientSessionFactory::DnsErrorHandler ErrorHandler;
+    ClientSessionFactory &factory_;
     FactoryMethod factory_method_;
     ErrorHandler error_handler_;
-    SessionDnsQuery(SessionFactory &f, FactoryMethod m, ErrorHandler eh) :
+    std::optional<ClientSessionFactory::ConnectOptions> connect_options_;
+    SessionDnsQuery(ClientSessionFactory &f, FactoryMethod m, ErrorHandler eh) :
       factory_(f), factory_method_(m), error_handler_(eh) {}
-    SessionDnsQuery(SessionFactory &f, FactoryMethod m) :
+    SessionDnsQuery(ClientSessionFactory &f, FactoryMethod m) :
       factory_(f), factory_method_(m), error_handler_(MakeDefault()) {}
     ErrorHandler MakeDefault() {
       return [this](int status) {
@@ -88,22 +139,34 @@ namespace base {
 
   SessionFactory::SessionFactory(SessionFactory &&rhs) :
     loop_(rhs.loop_),
-    resolver_(rhs.resolver_),
     alarm_processor_(rhs.alarm_processor_),
     factory_method_(std::move(rhs.factory_method_)),
     alarm_id_(AlarmProcessor::INVALID_ID),
-    certpair_(rhs.certpair_),
-    session_timeout_(rhs.session_timeout_),
-    is_listener_(rhs.is_listener_) {
+    session_timeout_(rhs.session_timeout_) {
     if (rhs.alarm_id_ != AlarmProcessor::INVALID_ID) {
       rhs.loop_.alarm_processor().Cancel(rhs.alarm_id_);
       rhs.alarm_id_ = AlarmProcessor::INVALID_ID;
     }
-    if (rhs.tls_ctx_ != nullptr) {
-      tls_ctx_ = rhs.tls_ctx_;
-      rhs.tls_ctx_ = nullptr;
-    }
     Init();
+  }
+  ClientSessionFactory::ClientSessionFactory(ClientSessionFactory &&rhs) :
+    SessionFactory(std::move(rhs)), resolver_(rhs.resolver_) {}
+  void ClientSessionFactory::Session::EnsureTlsContext() {
+      EnsureTlsContextImpl(tls_ctx_, &certpair_, false);
+  }
+  void ClientSessionFactory::Session::FinTlsContext() {
+      FinTlsContextImpl(tls_ctx_);
+  }
+  ListenerSessionFactory::ListenerSessionFactory(ListenerSessionFactory &&rhs) :
+    SessionFactory(std::move(rhs)), certpair_(rhs.certpair_), tls_ctx_(rhs.tls_ctx_) {
+    rhs.tls_ctx_ = nullptr;
+  }
+
+  void ListenerSessionFactory::EnsureTlsContext() {
+      EnsureTlsContextImpl(tls_ctx_, &certpair_, true);
+  }
+  void ListenerSessionFactory::FinTlsContext() {
+      FinTlsContextImpl(tls_ctx_);
   }
 
   void SessionFactory::Init() {
@@ -112,59 +175,15 @@ namespace base {
               [this]() { return this->CheckTimeout(); }, qrpc_time_now() + session_timeout()
           );
       }
-      if (!need_tls()) { return; }
-      auto &cp = certpair_.value();
-      if (is_listener()) {
-        auto r = cp.TryAutoGen();
-        if (!r.empty()) {
-          logger::die({{"ev", "Failed to auto generate cert"}, {"err", r}});
-        }
-      }
-      char err_buf[256];
-      tls_ctx_ = SSL_CTX_new(TLS_method());
-      if (tls_ctx_ == nullptr) {
-          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-          logger::die({{"ev", "Failed to create SSL context"}, {"err", err_buf}});
-      }
-      if (!cp.cert.empty() && !cp.privkey.empty()) {
-        // 証明書のロード
-        if (SSL_CTX_use_certificate_file(tls_ctx_, cp.cert.c_str(), SSL_FILETYPE_PEM) <= 0) {
-            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-            logger::die({{"ev", "Failed to load certificate"}, {"err", err_buf}});
-        }
-        // 秘密鍵のロード
-        if (SSL_CTX_use_PrivateKey_file(tls_ctx_, cp.privkey.c_str(), SSL_FILETYPE_PEM) <= 0) {
-            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-            logger::die({{"ev", "Failed to load private key"}, {"err", err_buf}});
-        }
-        // 秘密鍵と証明書の整合性確認
-        if (SSL_CTX_check_private_key(tls_ctx_) != 1) {
-            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-            logger::die({{"ev", "Private key does not match the certificate"}, {"err", err_buf}});
-        }
-      }
-      // 適切なTLSバージョンサポートを設定
-      SSL_CTX_set_options(tls_ctx_, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | 
-                          SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
-      // 強力な暗号スイートのみを許可
-      const char* const PREFERRED_CIPHERS = "HIGH:!aNULL:!MD5:!RC4:!SSLv2:!SSLv3:!TLSv1:!TLSv1.1";
-      if (SSL_CTX_set_cipher_list(tls_ctx_, PREFERRED_CIPHERS) != 1) {
-          ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-          logger::die({{"ev", "Failed to set cipher list"}, {"err", err_buf}});
-      }
   }
   void SessionFactory::Fin() {
       if (alarm_id_ != AlarmProcessor::INVALID_ID) {
           alarm_processor_.Cancel(alarm_id_);
           alarm_id_ = AlarmProcessor::INVALID_ID;
       }
-      if (tls_ctx_ != nullptr) {
-          SSL_CTX_free(tls_ctx_);
-          tls_ctx_ = nullptr;
-      }
   }  
 
-  bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref) {
+  bool ClientSessionFactory::Connect(const std::string &host, int port, FactoryMethod m, DnsErrorHandler eh, int family_pref) {
     auto q = new SessionDnsQuery(*this, m, eh);
     q->host_ = host;
     q->family_ = family_pref;
@@ -172,7 +191,7 @@ namespace base {
     resolver_.Resolve(q);
     return true;
   }
-  bool SessionFactory::Connect(const std::string &host, int port, FactoryMethod m, int family_pref) {
+  bool ClientSessionFactory::Connect(const std::string &host, int port, FactoryMethod m, int family_pref) {
     auto q = new SessionDnsQuery(*this, m);
     q->host_ = host;
     q->family_ = family_pref;
@@ -180,8 +199,44 @@ namespace base {
     resolver_.Resolve(q);
     return true;
   }
+  bool ClientSessionFactory::Connect(
+      const std::string &host, int port, FactoryMethod m, const ConnectOptions &opts,
+      DnsErrorHandler eh, int family_pref) {
+    FactoryMethod wrapped = [m, opts](Fd fd, const Address &a) -> SessionFactory::Session* {
+      auto s = m(fd, a);
+      auto *cs = dynamic_cast<ClientSessionFactory::Session *>(s);
+      ASSERT(cs != nullptr);
+      cs->ApplyConnectOptions(opts);
+      return s;
+    };
+    auto q = new SessionDnsQuery(*this, wrapped, eh);
+    q->host_ = host;
+    q->family_ = family_pref;
+    q->port_ = port;
+    q->connect_options_ = opts;
+    resolver_.Resolve(q);
+    return true;
+  }
+  bool ClientSessionFactory::Connect(
+      const std::string &host, int port, FactoryMethod m, const ConnectOptions &opts, int family_pref) {
+    FactoryMethod wrapped = [m, opts](Fd fd, const Address &a) -> SessionFactory::Session* {
+      auto s = m(fd, a);
+      auto *cs = dynamic_cast<ClientSessionFactory::Session *>(s);
+      ASSERT(cs != nullptr);
+      cs->ApplyConnectOptions(opts);
+      return s;
+    };
+    auto q = new SessionDnsQuery(*this, wrapped);
+    q->host_ = host;
+    q->family_ = family_pref;
+    q->port_ = port;
+    q->connect_options_ = opts;
+    resolver_.Resolve(q);
+    return true;
+  }
 
-  int UdpSessionFactory::UdpSession::Flush() {
+  template <class RoleFactory>
+  int UdpSessionFactoryT<RoleFactory>::UdpSession::Flush() {
     auto size = write_vecs_.size();
     if (size == 0) {
       return QRPC_OK; // nothing to flush
@@ -218,19 +273,19 @@ namespace base {
       }
       // TODO: batched sendto for sendmmsg environment
       struct msghdr h;
-      h.msg_name = const_cast<sockaddr *>(addr().sa());
-      h.msg_namelen = addr().salen();
+      h.msg_name = const_cast<sockaddr *>(this->addr().sa());
+      h.msg_namelen = this->addr().salen();
       h.msg_iov = &iov;
       h.msg_iovlen = 1;
       h.msg_control = nullptr;
       h.msg_controllen = 0;
-      if (Syscall::SendTo(fd_, &h) < 0) {
+      if (Syscall::SendTo(this->fd_, &h) < 0) {
         // reset with sent count (idx)
         Reset(idx);
         if (Syscall::IOMayBlocked(Syscall::Errno(), false)) {
             return size - idx;
         }
-        QRPC_LOGJ(error, {{"ev","SendTo fails"},{"fd",fd_},{"errno",Syscall::Errno()}});
+        QRPC_LOGJ(error, {{"ev","SendTo fails"},{"fd",this->fd_},{"errno",Syscall::Errno()}});
         ASSERT(false);
         return QRPC_ESYSCALL;
       }
@@ -239,6 +294,8 @@ namespace base {
   #endif
     return QRPC_OK;
   }
+  template int UdpSessionFactoryT<ClientSessionFactory>::UdpSession::Flush();
+  template int UdpSessionFactoryT<ListenerSessionFactory>::UdpSession::Flush();
 
   int UdpListener::Flush() {
     size_t n_writebuf = write_buffers_.Allocated();
@@ -310,7 +367,7 @@ namespace base {
   }
 
   UdpListener::UdpListener(UdpListener &&rhs) :
-    UdpSessionFactory(std::move(rhs)),
+    UdpListenerSessionFactory(std::move(rhs)),
     fd_(rhs.fd_),
     port_(rhs.port_),
     overflow_supported_(rhs.overflow_supported_),
@@ -345,7 +402,7 @@ namespace base {
       auto exists = sessions_.find(a);
       // this also acts as anchor that prevents deletion of session pointer
       // in Session::Close call
-      Session *s;
+      SessionFactory::Session *s;
       if (exists == sessions_.end()) {
         // use same fd of Listener
         s = Create(fd_, a, factory_method_);
