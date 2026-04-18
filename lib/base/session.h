@@ -129,8 +129,6 @@ namespace base {
     protected:
         std::map<Fd, SessionFactory::Session*> sessions_;
     };
-    template <class RoleFactory>
-    using TcpSessionFactory = TcpSessionFactoryT<RoleFactory>;
     class TcpClientSessionFactory : public TcpSessionFactoryT<ClientSessionFactory> {
     public:
         struct Config : public ClientSessionFactory::Config {
@@ -718,20 +716,20 @@ namespace base {
     };
     class AdhocUdpListener : public UdpListener {
     public:
-        class AdhocUdpSession : public UdpSession {
+        class Session : public UdpSession {
         public:
-            AdhocUdpSession(AdhocUdpListener &f, Fd fd, const Address &addr) : 
+            Session(AdhocUdpListener &f, Fd fd, const Address &addr) : 
                 UdpSession(f, fd, addr) {}
-            DISALLOW_COPY_AND_ASSIGN(AdhocUdpSession);
+            DISALLOW_COPY_AND_ASSIGN(Session);
             int OnRead(const char *p, size_t sz) override {
                 return factory().to<AdhocUdpListener>().handler()(*this, p, sz);
             }
         };
     public:
-        typedef std::function<int (AdhocUdpSession &, const char *, size_t)> Handler;
+        typedef std::function<int (AdhocUdpListener::Session &, const char *, size_t)> Handler;
         AdhocUdpListener(Loop &l, Handler h, const Config config = Config::Default()) :
             UdpListener(l, [this](Fd fd, const Address &a) {
-                return new AdhocUdpSession(*this, fd, a);
+                return new Session(*this, fd, a);
             }, config), handler_(h) {}
         AdhocUdpListener(AdhocUdpListener &&rhs) : UdpListener(std::move(rhs)), handler_(std::move(rhs.handler_)) {}
         DISALLOW_COPY_AND_ASSIGN(AdhocUdpListener);
@@ -739,7 +737,7 @@ namespace base {
     private:
        Handler handler_;
     };
-    typedef AdhocUdpListener::AdhocUdpSession AdhocUdpSession;
+    typedef AdhocUdpListener::Session AdhocUdpListenerSession;
     template <class S>
     class UdpListenerOf : public UdpListener {
     public:

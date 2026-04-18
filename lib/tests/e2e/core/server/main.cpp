@@ -56,10 +56,10 @@ public:
     int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "udp", p, sz); }
     qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "udp"); }
 };
-class TestTcpSession : public TcpSession {
+class TestTcpSession : public TcpListenerSession {
     Handler handler_;
 public:
-    TestTcpSession(SessionFactory &f, Fd fd, const Address &a) : TcpSession(f, fd, a) {}
+    TestTcpSession(SessionFactory &f, Fd fd, const Address &a) : TcpListenerSession(f, fd, a) {}
     int OnConnect() override {
         return handler_.Connect(*this, "tcp");
     }
@@ -116,9 +116,9 @@ int main(int argc, char *argv[]) {
             .max_outgoing_stream_size = 32, .initial_incoming_stream_size = 32,
             .send_buffer_size = 256 * 1024,
             .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
-            .http_timeout = qrpc_time_sec(5),
-            .shutdown_timeout = qrpc_time_sec(3),
             .connection_timeout = qrpc_time_sec(60),
+            .shutdown_timeout = qrpc_time_sec(3),
+            .http_timeout = qrpc_time_sec(5),
             .consent_check_interval = qrpc_time_sec(10),
             .fingerprint_algorithm = "sha-256",
         },
@@ -242,15 +242,15 @@ int main(int argc, char *argv[]) {
 	    return nullptr;
     }).
     Route(std::regex("/ws"), [](HttpListenerSession &s, std::cmatch &) {
-        return WebSocketListener::Upgrade(s, [](WebSocketSession &ws, const char *p, size_t sz) {
+        return WebSocketListener::Upgrade(s, [](WebSocketListenerSession &ws, const char *p, size_t sz) {
             // echo server
             return ws.Send(p, sz);
         });
     });
-    if (!w.Listen(8888, { .port = 11111, .ip = rtc_ip == nullptr ? "" : rtc_ip })) {
+    if (!w.Listen(8888, { .ip = rtc_ip == nullptr ? "" : rtc_ip, .port = 11111 })) {
         DIE("fail to listen webrtc");
     }
-    AdhocUdpListener us(l, [](AdhocUdpSession &s, const char *p, size_t sz) {
+    AdhocUdpListener us(l, [](AdhocUdpListenerSession &s, const char *p, size_t sz) {
         // echo udp
         logger::info({{"ev","recv packet"},{"a",s.addr().str()},{"pl", std::string(p, sz)}});
         return s.Send(p, sz);
@@ -264,9 +264,7 @@ int main(int argc, char *argv[]) {
     if (!tu.Listen(10000)) {
         DIE("fail to listen on UDP for test");
     }
-    TcpListener tt(l, [&tt](Fd fd, const Address &a) {
-        return new TestTcpSession(tt, fd, a);
-    });
+    TcpListenerOf<TestTcpSession> tt(l);
     if (!tt.Listen(10001)) {
         DIE("fail to listen on TCP for test");
     }

@@ -3,10 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(_MSC_VER)
+#if defined(OS_WIN)
 #include <malloc.h>
 #else
 #include <stdlib.h>
+#include <alloca.h>
 #endif
 
 #include "base/defs.h"
@@ -21,6 +22,15 @@ inline void AlignedFree(void* ptr) {
   _aligned_free(ptr);
 #else
   free(ptr);
+#endif
+}
+
+template <typename T>
+inline T *AllocStackBuffer(size_t sz) {
+#if defined(OS_WIN)
+  return static_cast<T *>(_alloca(sz * sizeof(T)));
+#else
+  return static_cast<T *>(alloca(sz * sizeof(T)));
 #endif
 }
 

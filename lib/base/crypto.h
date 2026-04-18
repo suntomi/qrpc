@@ -82,7 +82,7 @@ namespace base {
   namespace base64 {
     static const char kBase64Chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-    inline size_t buffsize(size_t len) {
+    constexpr inline size_t buffsize(size_t len) {
       return (len + 2) / 3 * 4 + 1;
     }
 

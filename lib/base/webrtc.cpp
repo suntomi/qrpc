@@ -24,6 +24,7 @@
 #include <srtp.h>
 
 #include <algorithm>
+#include <vector>
 
 namespace base {
 namespace webrtc {
@@ -1393,9 +1394,9 @@ int ConnectionFactory::Connection::Open(Stream &s) {
   int r;
   auto &c = s.config();
   DcepRequest req(c);
-  uint8_t buff[req.PayloadSize()];
+  uint8_t *buff = base::AllocStackBuffer<uint8_t>(req.PayloadSize());
   if ((r = sctp_association_->SendSctpMessage(
-      s.config().params, req.ToPaylod(buff, sizeof(buff)), req.PayloadSize(), PPID::WEBRTC_DCEP
+      s.config().params, req.ToPaylod(buff, req.PayloadSize()), req.PayloadSize(), PPID::WEBRTC_DCEP
   )) < 0) {
     logger::error({{"proto","sctp"},{"ev","fail to send DCEP OPEN"},{"stream_id",s.id()},{"rv",r}});
     return QRPC_EALLOC;
@@ -1632,9 +1633,9 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
     }
     // send dcep ack
     DcepResponse ack;
-    uint8_t buff[ack.PayloadSize()];
+    uint8_t *buff = base::AllocStackBuffer<uint8_t>(ack.PayloadSize());
     if ((r = sctpAssociation->SendSctpMessage(
-        s->config().params, ack.ToPaylod(buff, sizeof(buff)), ack.PayloadSize(), PPID::WEBRTC_DCEP
+        s->config().params, ack.ToPaylod(buff, ack.PayloadSize()), ack.PayloadSize(), PPID::WEBRTC_DCEP
     )) < 0) {
       logger::error({{"proto","sctp"},{"ev","fail to send DCEP ACK"},{"stream_id",streamId},{"rc",r}});
       s->Close(QRPC_CLOSE_REASON_LOCAL, r, "fail to send DCEP ACK");

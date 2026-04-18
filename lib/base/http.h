@@ -595,7 +595,7 @@ namespace base {
     template <class SessionBase>
     class WebSocketSessionT : public SessionBase, public WebSocketProtocol {
     public:
-        typedef TcpSessionFactory<typename SessionBase::Factory> Factory;
+        typedef TcpSessionFactoryT<typename SessionBase::Factory> Factory;
     protected:
         WebSocketFSM fsm_;
     public:
@@ -656,35 +656,34 @@ namespace base {
     };
     typedef WebSocketSessionT<TcpClientSession> WebSocketClientSession;
     typedef WebSocketSessionT<TcpListenerSession> WebSocketListenerSession;
-    typedef WebSocketListenerSession WebSocketSession;
-    class AdhocWebSocketSession : public WebSocketListenerSession {
-    public:
-        typedef std::function<int (WebSocketSession &, const char *, size_t)> RecvCallback;
-        AdhocWebSocketSession(Factory &f, Fd fd, const Address &addr, HttpFSM &fsm, RecvCallback cb) :
-            WebSocketListenerSession(f, fd, addr, fsm), cb_(cb) {}
-        ~AdhocWebSocketSession() {}
-        int OnRead(const char *p, size_t l) override {
-            return cb_(*this, p, l);
-        }
-    protected:
-        RecvCallback cb_;
-    };
 
 
     /******* WebSocketListener *******/
-    class WebSocketListener : public TcpListenerOf<WebSocketSession> {
+    class WebSocketListener : public TcpListenerOf<WebSocketListenerSession> {
     public:
+        class AdhocListenerSession : public WebSocketListenerSession {
+        public:
+            typedef std::function<int (WebSocketListenerSession &, const char *, size_t)> RecvCallback;
+            AdhocListenerSession(Factory &f, Fd fd, const Address &addr, HttpFSM &fsm, RecvCallback cb) :
+                WebSocketListenerSession(f, fd, addr, fsm), cb_(cb) {}
+            ~AdhocListenerSession() {}
+            int OnRead(const char *p, size_t l) override {
+                return cb_(*this, p, l);
+            }
+        protected:
+            RecvCallback cb_;
+        };
         // intend to being called from HttpServer::Callback;
         template <class WS>
-        static inline WebSocketSession *Upgrade(HttpListenerSession &s) {
-            static_assert(std::is_base_of<WebSocketSession, WS>(), "S must be a descendant of WebSocketSession");
+        static inline WebSocketListenerSession *Upgrade(HttpListenerSession &s) {
+            static_assert(std::is_base_of<WebSocketListenerSession, WS>(), "WS must be a descendant of WebSocketListenerSession");
             // ws will be created with established state
             auto ws = new WS(type::cast_or_die<WebSocketListenerSession::Factory>(s.tcp_session_factory()),
                 s.fd(), s.addr(), s.fsm());
             return SetupUpgrade(ws, s);
         }
-        static inline WebSocketSession *Upgrade(HttpListenerSession &s, AdhocWebSocketSession::RecvCallback cb) {
-            auto ws = new AdhocWebSocketSession(
+        static inline WebSocketListenerSession *Upgrade(HttpListenerSession &s, AdhocListenerSession::RecvCallback cb) {
+            auto ws = new AdhocListenerSession(
                 type::cast_or_die<WebSocketListenerSession::Factory>(s.tcp_session_factory()),
                 s.fd(), s.addr(), s.fsm(), cb
             );
@@ -693,7 +692,7 @@ namespace base {
         template <class WS>
         void Open(const std::string &host, int port) = delete;
     protected:
-        static inline WebSocketSession *SetupUpgrade(WebSocketSession *ws, HttpListenerSession &s) {
+        static inline WebSocketListenerSession *SetupUpgrade(WebSocketListenerSession *ws, HttpListenerSession &s) {
             int r;
             if ((r = ws->send_handshake_response()) < 0) {
                 ASSERT(r != QRPC_ESYSCALL);

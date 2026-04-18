@@ -99,7 +99,7 @@ static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_transport_type
           // webrtc's SCTP session timeout
           .connection_timeout = qrpc_time_sec(60),
           // http timeout, shutdown timeout
-          .http_timeout = qrpc_time_sec(5), .shutdown_timeout = qrpc_time_sec(3),
+          .shutdown_timeout = qrpc_time_sec(3), .http_timeout = qrpc_time_sec(5),
           // consent check interval
           .consent_check_interval = qrpc_time_sec(10),
           // fingerprint algorithm of DTLS
@@ -109,8 +109,8 @@ static inline qrpc_transport_config_t DefaultTransportConfig(qrpc_transport_type
         // rtp config
         .rtp = {
           .initial_outgoing_bitrate = 600000,
-          .max_incoming_bitrate = 0,
           .max_outgoing_bitrate = 0,
+          .max_incoming_bitrate = 0,
           .min_outgoing_bitrate = 0,
         }
       }
@@ -165,9 +165,9 @@ QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
     .dns = {
       .query_timeout = qrpc_time_sec(5),
       .poll_interval = qrpc_time_sec(10),
+      .use_dns = true, .use_hosts = true,
       .dns_hosts = nullptr,
       .n_dns_hosts = 0,
-      .use_dns = true, .use_hosts = true,
       .use_round_robin = false,
     },
     .max_nfd = 1024,
@@ -265,12 +265,12 @@ QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf() {
 QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv) {
   auto s = qrpc::Server::FromHandle(sv);
   qrpc_listen_conf_t conf = {
+    //transport config see DefaultTransportConfig for default configss
+    .transport = DefaultTransportConfig(s->transport_type()),
     //how meny sessions accepted per loop. default 1024
     .accept_per_loop = 0,
     //allocation hint about max session
     .max_session_hint = 0,
-    //transport config see DefaultTransportConfig for default configss
-    .transport = DefaultTransportConfig(s->transport_type()),
   };
   qrpc_closure_init_noop(conf.on_open, qrpc_on_server_conn_open_t);
   qrpc_closure_init_noop(conf.on_close, qrpc_on_server_conn_close_t);
@@ -393,8 +393,8 @@ QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn) {
 QRPC_THREADSAFE qrpc_stream_config_t qrpc_stream_conf(const char *name) {
   qrpc_stream_config_t conf = {
     .name = name,
-    .ordered = true,
     .stream_id = 0,
+    .ordered = true,
     .max_packet_lifetime = 0,
     .max_retransmits = 0,
   };
@@ -537,8 +537,8 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
   static qrpc_media_codec_t audio_codecs[] = {
     {
       .mime_type = "opus",
-      .payload_type = 111,
       .clock_rate = 48000,
+      .payload_type = 111,
       .channels = 2,
       .fmtp = "minptime=10;useinbandfec=1",
       .n_rtcp_fbs = bulkof(audio_rtcp_fbs),
@@ -568,8 +568,8 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
     // a=rtpmap:96 VP8/90000
     {
       .mime_type = "VP8",
-      .payload_type = 96,
       .clock_rate = 90000,
+      .payload_type = 96,
       .channels = 0,
       .fmtp = nullptr,
       .n_rtcp_fbs = bulkof(video_rtcp_fbs),
@@ -579,8 +579,8 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
     // a=fmtp:97 apt=96
     {
       .mime_type = "rtx",
-      .payload_type = 97,
       .clock_rate = 90000,
+      .payload_type = 97,
       .channels = 0,
       .fmtp = "apt=96",
       .n_rtcp_fbs = 0,

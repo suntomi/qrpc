@@ -84,13 +84,13 @@ namespace qrpc {
     qrpc_rpc_t ToHandle() { return { .s = 0, .p = this }; }
     static inline RPCStream *FromHandle(qrpc_rpc_t rpc) { return Stream::FromHandle(rpc)->As<RPCStream>(); }
     qrpc_time_t CheckTimeout();
-    inline void SendCommon(uint16_t type, qrpc_msgid_t msgid, const void *p, qrpc_size_t len) {
-      ASSERT(type > 0);
+    inline void SendCommon(int16_t type, qrpc_msgid_t msgid, const void *p, qrpc_size_t len) {
       //pack and send buffer
-      char buffer[HEADER_BUFFER_SIZE + LENGTH_BUFFER_SIZE + len];
+      auto buflen = HEADER_BUFFER_SIZE + LENGTH_BUFFER_SIZE + len;
+      char *buffer = base::AllocStackBuffer<char>(buflen);
       size_t ofs = 0;
-      ofs = base::HeaderCodec::Encode(static_cast<int16_t>(type), msgid, buffer, sizeof(buffer));
-      ofs += base::LengthCodec::Encode(len, buffer + ofs, sizeof(buffer) - ofs);
+      ofs = base::HeaderCodec::Encode(type, msgid, buffer, buflen);
+      ofs += base::LengthCodec::Encode(len, buffer + ofs, buflen - ofs);
       memcpy(buffer + ofs, p, len);
       Send(buffer, ofs + len);
     }

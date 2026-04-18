@@ -146,13 +146,7 @@ namespace qrpc {
   }
   void RPCStream::Notify(uint16_t type, const void *p, qrpc_size_t len) {
     ASSERT(type > 0);
-    //pack and send buffer
-    char buffer[HEADER_BUFFER_SIZE + LENGTH_BUFFER_SIZE + len];
-    size_t ofs = 0;
-    ofs = base::HeaderCodec::Encode(static_cast<int16_t>(type), 0, buffer, sizeof(buffer));
-    ofs += base::LengthCodec::Encode(len, buffer + ofs, sizeof(buffer) - ofs);
-    memcpy(buffer + ofs, p, len);
-    Send(buffer, ofs + len);
+    SendCommon(static_cast<int16_t>(type), 0, p, len);
   }
   void RPCStream::Call(uint16_t type, const void *p, qrpc_size_t len, qrpc_on_rpc_reply_t cb) {
     qrpc_msgid_t msgid = msgid_factory_.New();
@@ -166,11 +160,6 @@ namespace qrpc {
   }
   void RPCStream::Reply(qrpc_error_t result, qrpc_msgid_t msgid, const void *p, qrpc_size_t len) {
     ASSERT(result <= 0);
-    //pack and send buffer
-    char buffer[HEADER_BUFFER_SIZE + LENGTH_BUFFER_SIZE + len];
-    size_t ofs = base::HeaderCodec::Encode(result, msgid, buffer, sizeof(buffer));
-    ofs += base::LengthCodec::Encode(len, buffer + ofs, sizeof(buffer) - ofs);
-    memcpy(buffer + ofs, p, len);
-    Send(buffer, ofs + len);
+    SendCommon(result, msgid, p, len);
   }
 }

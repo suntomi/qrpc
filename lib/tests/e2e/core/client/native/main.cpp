@@ -27,8 +27,8 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
     const int MAX_RECONNECT = 2;
     base::webrtc::AdhocClient w(l, base::webrtc::Client::Config {
         .resolver = r,
-        .connection_timeout = qrpc_time_sec(10),
         .session_timeout = qrpc_time_sec(30),
+        .connection_timeout = qrpc_time_sec(10),
     }, [](base::webrtc::Client::Connection &c) -> int {
         logger::info({{"ev","webrtc connected"}});
         c.OpenStream({.label = "test"});
@@ -129,9 +129,9 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
             .initial_incoming_stream_size = 32,
             .send_buffer_size = 256 * 1024,
             .session_timeout = qrpc_time_sec(15), // udp session usally receives stun probing packet statically
-            .http_timeout = qrpc_time_sec(5),
-            .shutdown_timeout = qrpc_time_sec(3),
             .connection_timeout = qrpc_time_sec(60),
+            .shutdown_timeout = qrpc_time_sec(3),
+            .http_timeout = qrpc_time_sec(5),
             .consent_check_interval = qrpc_time_sec(10),
             .fingerprint_algorithm = "sha-256",
         },
@@ -217,27 +217,36 @@ class TestUdpSession : public P {
 public:
     Handler &handler_;
 public:
-    TestUdpSession(UdpClientSessionFactory &f, Fd fd, const Address &a, Handler &h) : P(f, fd, a), handler_(h) {}
+    TestUdpSession(SessionFactory &f, Fd fd, const Address &a, Handler &h) : P(f, fd, a), handler_(h) {}
     int OnConnect() override { return handler_.Connect(*this, "udp"); }
     int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "udp", p, sz); }
     qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "udp"); }
 };
-class TestTcpSession : public TcpSession {
+class TestTcpSession : public TcpClientSession {
 public:
     Handler &handler_;
 public:
-    TestTcpSession(SessionFactory &f, Fd fd, const Address &a, Handler &h) : TcpSession(f, fd, a), handler_(h)  {}
+    TestTcpSession(SessionFactory &f, Fd fd, const Address &a, Handler &h) : TcpClientSession(f, fd, a), handler_(h)  {}
     int OnConnect() override { return handler_.Connect(*this, "tcp"); }
     int OnRead(const char *p, size_t sz) override { return handler_.Read(*this, "tcp", p, sz); }
     qrpc_time_t OnShutdown() override { return handler_.Shutdown(*this, "tcp"); }
 };
 template<class F, class S>
 bool test_session(Loop &l, F &f, int port) {
+    auto open = [&f, port](Handler &h) {
+        if constexpr (std::is_base_of_v<ListenerSessionFactory, F>) {
+            return f.Open(Address("127.0.0.1", port), [&f, &h](Fd fd, const Address &a) {
+                return new S(f, fd, a, h);
+            }) != nullptr;
+        } else {
+            return f.Connect("localhost", port, [&f, &h](Fd fd, const Address &a) {
+                return new S(f, fd, a, h);
+            });
+        }
+    };
     Handler h;
     logger::error({{"ev","test normal connection"}});
-    f.Connect("localhost", port, [&f, &h](Fd fd, const Address &a) {
-        return new S(f, fd, a, h);
-    });
+    open(h);
     while (!h.finished()) {
         l.Poll();
     }
@@ -247,9 +256,7 @@ bool test_session(Loop &l, F &f, int port) {
     }
     logger::error({{"ev","test timeout connection"}});
     h.Reset("timeout");
-    f.Connect("localhost", port, [&f, &h](Fd fd, const Address &a) {
-        return new S(f, fd, a, h);
-    });
+    open(h);
     while (!h.finished()) {
         l.Poll();
     }
