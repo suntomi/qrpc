@@ -161,6 +161,7 @@ namespace base {
     };
     class TcpClient : public TcpClientSessionFactory {
     public:
+        // inherit parent constructorss
         using TcpClientSessionFactory::TcpClientSessionFactory;
         TcpClient(TcpClient &&rhs) : TcpClientSessionFactory(std::move(rhs)) {}
         DISALLOW_COPY_AND_ASSIGN(TcpClient);
@@ -452,7 +453,6 @@ namespace base {
         }, Config(r, session_timeout, batch_size, stream_write)) {}
         UdpClientSessionFactory(UdpClientSessionFactory &&rhs) : BaseFactory(std::move(rhs)) {}
         DISALLOW_COPY_AND_ASSIGN(UdpClientSessionFactory);
-        using ClientSessionFactory::Connect;
     };
     class UdpClient : public UdpClientSessionFactory {
     public:
@@ -513,6 +513,7 @@ namespace base {
             AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
         };
     public:
+        // inherit parent constructorss
         using UdpClientSessionFactory::UdpClientSessionFactory;
         UdpClient(UdpClient &&rhs) : UdpClientSessionFactory(std::move(rhs)), sessions_(std::move(rhs.sessions_)) {}
         ~UdpClient() noexcept override { Fin(); }
@@ -751,8 +752,8 @@ namespace base {
     };
     // external typedef
     typedef SessionFactory::Session Session;
-    typedef TcpSessionT<ClientSessionFactory::Session> TcpClientSession;
-    typedef TcpSessionT<ListenerSessionFactory::Session> TcpListenerSession;
-    typedef UdpSessionFactoryT<ClientSessionFactory>::UdpSession UdpClientSession;
-    typedef UdpSessionFactoryT<ListenerSessionFactory>::UdpSession UdpListenerSession;
+    typedef TcpClient::TcpSession TcpClientSession;
+    typedef TcpListener::TcpSession TcpListenerSession;
+    typedef UdpClient::UdpSession UdpClientSession;
+    typedef UdpListener::UdpSession UdpListenerSession;
 }
