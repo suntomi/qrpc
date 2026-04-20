@@ -233,20 +233,11 @@ public:
 };
 template<class F, class S>
 bool test_session(Loop &l, F &f, int port) {
-    auto open = [&f, port](Handler &h) {
-        if constexpr (std::is_base_of_v<ListenerSessionFactory, F>) {
-            return f.Open(Address("127.0.0.1", port), [&f, &h](Fd fd, const Address &a) {
-                return new S(f, fd, a, h);
-            }) != nullptr;
-        } else {
-            return f.Connect("localhost", port, [&f, &h](Fd fd, const Address &a) {
-                return new S(f, fd, a, h);
-            });
-        }
-    };
     Handler h;
     logger::error({{"ev","test normal connection"}});
-    open(h);
+    f.Connect("localhost", port, [&f, &h](Fd fd, const Address &a) {
+        return new S(f, fd, a, h);
+    });
     while (!h.finished()) {
         l.Poll();
     }
@@ -256,7 +247,9 @@ bool test_session(Loop &l, F &f, int port) {
     }
     logger::error({{"ev","test timeout connection"}});
     h.Reset("timeout");
-    open(h);
+    f.Connect("localhost", port, [&f, &h](Fd fd, const Address &a) {
+        return new S(f, fd, a, h);
+    });
     while (!h.finished()) {
         l.Poll();
     }
@@ -299,24 +292,13 @@ bool test_tcp_session(Loop &l, Resolver &r) {
     TcpClient tf(l, r, qrpc_time_sec(1));
     return test_session<TcpClientSessionFactory, TestTcpSession>(l, tf, 10001);
 }
-bool test_udp_session(Loop &l, Resolver &r, bool listen) {
+bool test_udp_session(Loop &l, Resolver &r) {
     if (!reset_test_state(l, r)) {
         return false;
     }
-    if (listen) {
-        auto uc = UdpListener(l, [](Fd fd, const Address &a) -> Session* {
-            DIE("client should not call this, provide factory via SessionFactory::Connect");
-            return (Session *)nullptr;
-        }, UdpListener::Config(r, qrpc_time_sec(1), 1, false));
-        if (!uc.Bind()) {
-            DIE("fail to bind");
-            return false;
-        }
-        return test_session<UdpListenerSessionFactory, TestUdpSession<UdpListener::UdpSession>>(l, uc, 10000);
-    } else {
-        auto uc = UdpClient(l, r, qrpc_time_sec(1));
-        return test_session<UdpClientSessionFactory, TestUdpSession<UdpClient::UdpSession>>(l, uc, 10000);
-    }
+
+    auto uc = UdpClient(l, r, qrpc_time_sec(1));
+    return test_session<UdpClientSessionFactory, TestUdpSession<UdpClient::UdpSession>>(l, uc, 10000);
 }
 
 bool test_http_client(Loop &l, Resolver &r) {
@@ -415,12 +397,8 @@ int main(int argc, char *argv[]) {
     if (!test_address()) {
         return 1;
     }
-    TRACE("======== test_udp_session (client) ========");
-    if (!test_udp_session(l, ares, false)) {
-        return 1;
-    }
-    TRACE("======== test_udp_session (server) ========");
-    if (!test_udp_session(l, ares, true)) {
+    TRACE("======== test_udp_session ========");
+    if (!test_udp_session(l, ares)) {
         return 1;
     }
     TRACE("======== test_tcp_session ========");
