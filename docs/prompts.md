@@ -241,8 +241,30 @@ ProcessReadが要求するSessionの機能を全部見積もれていなかっ�
 - 状態を保持している全てのメンバ変数(m_ではじまっている)
 - WebSocketSessionの実装のうち、read_frameとhandshake、およびこれらの関数から呼び出されている全ての関数
 
-- WebSocketProtocolクラスを作成し、
+そしてWebSocketSessionはWebSocketFSMをメンバ変数として持つようにし、handshakeとread_frameはWebSocketFSMのものを呼ぶようにしてください。
 
+- 作成されたコードを見るとHttpFSMはWebSocketFSMに含まれていてよさそうですので、移動させてください
+- WebSocketFSM::ControlFrameはWebSocketProtocolにあるべき定義なので、移動させてください。
+- WebSocketFSMの読み込み関数やWebSocketFSM::ControlFrame::drainにWebSocketSessionを渡していますが、WebSocketSessionは後でWebSocketSessionTとなるため、利用できません。呼び出している関数を見るとSessionで十分ですので変更してください。
+
+ではWebSocketSessionをWebSocketSessionTとして、TcpClientSession/TcpListenerSessionの両方を継承クラスとして受け取れるようにしてください。今WebSocketSessionはTcpSessionFactoryを受け取っていますが、これは以下のようにして、正しいFactoryを受け取れるようにします。
+
+1. ClientSessionFactory::SessionとListenerSessionFactory::SessionにFactoryという型定義を追加する。
+  - ClientSessionFactory::Session では、typedef ClientSessionFactory Factory;
+  - ListenerSessionFactory::Session では、typedef ListenerSessionFactory Factory;
+2. WebSocketSessionFactoryでは、以下のような定義をする
+  - typedef TcpSessionFactory<typename SessionBase::Factory> Factory;
+3. WebSocketSessionのコンストラクタでは上のFactoryを受け取るようにする
+
+
+=======
+
+lib/tests/e2e/core/run.sh に lib/tests/e2e/core/suites 以下のテストスイートを実行するテストランナーを作成します。
+以下のような手順で動作します。
+
+1. .build/bazel-bin/lib/tests/e2e/core/server/e2e_server　を lib/tests/tools/debugger.sh の with_dbgで起動する。
+2. この際.  .build/bazel-bin/lib/tests/e2e/core/server/e2e_server の pidを調べて記憶しておき、trapでrun.shが終了する際にはシャットダウンするようにする(kill -TERM $PID)
+3. suites以下のスクリプトを全部実行する。0以外でexitした場合にも処理を打ち切らず、最後に失敗したスクリプト名のリストを表示する
 
 =======
 lib/tests/e2e/qrpc/server/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/server/main.cpp の base::webrtc::AdhocListener と同等の動作をするサーバーを作成してください。

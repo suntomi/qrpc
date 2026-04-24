@@ -31,7 +31,7 @@ test() {
     if [ "$command" != "$response" ]; then
       path=${CWD}/ws-error-${len}.txt
       echo "${command}" > ${path}
-      echo "${response}" > ${path}
+      echo "${response}" >> ${path}
       echo "Unexpected response: see ${path}" >&2
       break
     fi
