@@ -542,6 +542,9 @@ namespace webrtc {
 		{
 		case RTC::StunPacket::Class::SUCCESS_RESPONSE:
 			{
+				// IceProber sends client-side Binding requests directly, so successful
+				// responses must also promote the session into the valid/selected set.
+				HandleSession(session, false, false, 0u);
 				// QRPC_LOG(debug, "STUN Binding Success Response processed");
 				this->listener->OnIceServerSuccessResponded(this, response, session);
 				break;

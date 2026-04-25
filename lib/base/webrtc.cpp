@@ -28,6 +28,11 @@
 
 namespace base {
 namespace webrtc {
+namespace {
+std::string GenerateClientCname() {
+  return random::word(12);
+}
+}
 
 // ConnectionFactory
 int ConnectionFactory::Start(const std::vector<Port> &ports) {
@@ -1842,7 +1847,24 @@ namespace client {
         client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, s.fsm().rc(), "signaling server error");
         return nullptr;
       }
-      SDP sdp(s.fsm().body());
+      std::string answer_sdp;
+      try {
+        auto body = json::parse(s.fsm().body());
+        auto it = body.find("sdp");
+        if (it == body.end() || !it->is_string()) {
+          logger::error({{"ev","signaling server returns invalid response body"},
+            {"body",body.dump()},{"ufrag",uf}});
+          client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "invalid signaling response");
+          return nullptr;
+        }
+        answer_sdp = it->get<std::string>();
+      } catch (const std::exception &e) {
+        logger::error({{"ev","fail to parse signaling server response"},
+          {"reason",e.what()},{"body",s.fsm().body()},{"ufrag",uf}});
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "fail to parse signaling response");
+        return nullptr;
+      }
+      SDP sdp(answer_sdp);
       auto c = client_.FindFromUfrag(uf);
       if (c == nullptr) {
         // may timeout
@@ -1881,11 +1903,15 @@ namespace client {
         return QRPC_ESYSCALL;
       }
       SetUFrag(std::move(ufrag_));
-      json sdp_json = {{"sdp", sdp}};
+      json sdp_json = {
+        {"sdp", sdp},
+        {"cname", client_.cname()},
+        {"capability", client_.capability_sdp()}
+      };
       std::string sdp_json_str = sdp_json.dump(), 
         sdp_json_len_str = std::to_string(sdp_json_str.length());
       HttpHeader h[] = {
-          {.key = "Content-Type", .val = "application/sdp"},
+          {.key = "Content-Type", .val = "application/json"},
           {.key = "Content-Length", .val = sdp_json_len_str.c_str()}
       };
       return s.Request("POST", ep_.path.c_str(), h, 2, sdp_json_str.c_str(), sdp_json_str.length());
@@ -1979,6 +2005,18 @@ namespace client {
     ) {}
   };
 }
+
+Client::Client(Loop &l, Config &&config) :
+  ConnectionFactory(l, ConnectionFactory::Config(config)),
+  client_config_(std::move(config)),
+  cname_(client_config_.media_config.cname ? client_config_.media_config.cname : GenerateClientCname()),
+  capability_sdp_(SDP::CapSdpFrom(client_config_.media_config)),
+  http_client_(l, client_config_.resolver) {
+  client_config_.ifaddrs = ConnectionFactory::config().ifaddrs;
+}
+
+Client::Client(Loop &l, Config &config) :
+  Client(l, std::move(config)) {}
 
 // Client
 int Client::Connection::OnMediaSyscallAck(
@@ -2331,6 +2369,7 @@ bool Client::Connect(const Endpoint &ep, FactoryMethod &&fm) {
       logger::error({{"ev","derive transport config failed"}});
       return QRPC_EINVAL;
     }
+    cc->SetCname(cname());
   }
   // set factory method to connection, so that it can be used on reconnection
   std::dynamic_pointer_cast<Connection>(c)->SetFactoryMethod(std::move(fm));

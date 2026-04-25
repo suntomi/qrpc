@@ -12,7 +12,7 @@ namespace webrtc {
     const std::string &ufrag, const std::string &pwd, TransportProtocol proto,
     std::string &offer) {
     auto now = qrpc_time_now();
-    auto proto_name = proto == TransportProtocol::UDP ? "UDP" : "TCP";
+    auto proto_name = proto == TransportProtocol::TCP ? "TCP" : "UDP";
     // string value to the str::Format should be converted to c string like str.c_str()
     // TODO: add sdp for audio and video
     offer = str::Format(R"sdp(v=0
@@ -422,7 +422,7 @@ a=msid-semantic: WMS
     ASSERT(!proto.empty());
     return GenerateAnswer(c, proto, section_params, answer);
   }
-  std::string SDP::MediaSectionFrom(const char *type, const qrpc_media_params_t &params) {
+  std::string SDP::MediaSectionFrom(const char *type, const qrpc_media_params_t &params, const char *mid) {
     if (params.n_codecs == 0) {
       return "";
     }
@@ -434,6 +434,9 @@ a=msid-semantic: WMS
     // m= line: m=<type> 9 UDP/TLS/RTP/SAVPF <payloads>
     std::string section = str::Format("m=%s 9 UDP/TLS/RTP/SAVPF%s\n", type, payloads.c_str());
     section += "c=IN IP4 0.0.0.0\n";
+    if (mid != nullptr) {
+      section += str::Format("a=mid:%s\n", mid);
+    }
     // a=rtpmap, a=fmtp, a=rtcp-fb for each codec
     for (qrpc_size_t i = 0; i < params.n_codecs; i++) {
       const auto &codec = params.codecs[i];
@@ -465,9 +468,9 @@ a=msid-semantic: WMS
   std::string SDP::CapSdpFrom(const qrpc_media_config_t &config) {
     std::string sdp;
     // generate audio section
-    sdp += MediaSectionFrom("audio", config.audio_cap);
+    sdp += MediaSectionFrom("audio", config.audio_cap, "0");
     // generate video section
-    sdp += MediaSectionFrom("video", config.video_cap);
+    sdp += MediaSectionFrom("video", config.video_cap, "1");
     return sdp;
   }
 } // namespace webrtc

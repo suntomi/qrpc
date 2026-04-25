@@ -622,6 +622,7 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
     },
   };
   return {
+    .cname = nullptr,
     .audio_cap = {
       .n_codecs = bulkof(audio_codecs),
       .codecs = audio_codecs,

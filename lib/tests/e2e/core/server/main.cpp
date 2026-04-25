@@ -102,10 +102,9 @@ int main(int argc, char *argv[]) {
         DIE("fail to setup signal handler");
     }
     auto rtc_ip = std::getenv("QRPC_E2E_SFU_IP");
-    base::webrtc::AdhocListener w(l, base::webrtc::AdhocListener::Config {
-        .session_timeout = qrpc_time_sec(120),
-        .connection_timeout = qrpc_time_sec(60),
-    }, base::webrtc::Listener::TransportConfig {
+    base::webrtc::AdhocListener w(l, base::webrtc::AdhocListener::Config(
+        qrpc_time_sec(120), qrpc_time_sec(60)
+    ), base::webrtc::Listener::TransportConfig {
         .rtp = {
             .initial_outgoing_bitrate = 10000000,
             .max_outgoing_bitrate = 100000000,

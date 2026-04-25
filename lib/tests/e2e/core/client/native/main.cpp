@@ -25,11 +25,10 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
     int closed = 0;
     bool secure = false;
     const int MAX_RECONNECT = 2;
-    base::webrtc::AdhocClient w(l, base::webrtc::Client::Config {
-        .resolver = r,
-        .session_timeout = qrpc_time_sec(30),
-        .connection_timeout = qrpc_time_sec(10),
-    }, [](base::webrtc::Client::Connection &c) -> int {
+    auto client_config = base::webrtc::Client::Config::From(
+        r, qrpc_time_sec(30), qrpc_time_sec(10));
+    base::webrtc::AdhocClient w(l, std::move(client_config), [](base::webrtc::Client::Connection &c) -> int {
+        // connection::onopen
         logger::info({{"ev","webrtc connected"}});
         c.OpenStream({.label = "test"});
         c.OpenStream({.label = "test3"});
@@ -38,6 +37,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
         base::webrtc::Client::Connection &,
         const base::webrtc::ConnectionFactory::CloseReason &reason
     ) -> qrpc_time_t {
+        // connection::onclose
         logger::info({{"ev","webrtc closed"},{"code",reason.code},{"detail_code",reason.detail_code},{"msg",reason.msg}});
         if (reason.code == QRPC_CLOSE_REASON_PROTOCOL) {
             error_msg = "protocol error:" + reason.msg;
@@ -51,6 +51,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
             return qrpc_alarm_stop_rv();
         }
     }, [&error_msg](Stream &s, const char *p, size_t sz) -> int {
+        // stream::onread
         auto pl = std::string(p, sz);
         auto resp = json::parse(pl);
         logger::info({{"ev","recv data"},{"l",s.label()},{"sid",s.id()},{"pl", pl}});
@@ -88,6 +89,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
         }
         return QRPC_OK;
     }, [&closed, &testctx, &test3ctx](Stream &s) -> int {
+        // stream::onopen
         logger::info({{"ev","stream opened"},{"l",s.label()},{"sid",s.id()}});
         if (s.label() == "test") {
             s.SetContext(&testctx);
@@ -103,6 +105,7 @@ bool test_webrtc_client(Loop &l, Resolver &r) {
         ASSERT(false);
         return QRPC_OK;
     }, [&error_msg](Stream &s, const Stream::CloseReason &reason) {
+        // stream::onclose
         logger::info({{"ev","stream closed"},{"l",s.label()},{"sid",s.id()}});
         if (s.label() == "test") {
             s.connection().OpenStream({.label = "test2"});

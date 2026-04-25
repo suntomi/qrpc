@@ -72,27 +72,25 @@ namespace webrtc {
     };    
     struct Config  {
       Resolver &resolver{NopResolver::Instance()};
-      qrpc_time_t session_timeout, connection_timeout;
+      qrpc_time_t session_timeout{0}, connection_timeout{0};
       bool in6{false}; // bind to IPv6 if true, otherwise IPv4
       // derived by other settings
       std::vector<std::string> ifaddrs;
     public:
+      Config() = default;
+      Config(Resolver &resolver, qrpc_time_t session_timeout, qrpc_time_t connection_timeout, bool in6 = false) :
+        resolver(resolver), session_timeout(session_timeout), connection_timeout(connection_timeout), in6(in6) {}
+      Config(qrpc_time_t session_timeout, qrpc_time_t connection_timeout) :
+        Config(NopResolver::Instance(), session_timeout, connection_timeout) {}
       int Derive();
       // TODO: add certpair as its argument
       static Config From(
         Resolver &resolver, qrpc_time_t session_timeout, qrpc_time_t connection_timeout) {
-        Config c;
-        c.resolver = resolver;
-        c.session_timeout = session_timeout;
-        c.connection_timeout = connection_timeout;
-        return c;
+        return Config(resolver, session_timeout, connection_timeout);
       }
       static Config From(
         qrpc_time_t session_timeout, qrpc_time_t connection_timeout) {
-        Config c;
-        c.session_timeout = session_timeout;
-        c.connection_timeout = connection_timeout;
-        return c;
+        return Config(session_timeout, connection_timeout);
       }
     };
     struct TransportConfig {
@@ -572,6 +570,23 @@ namespace webrtc {
   // Client
   class Client : public ConnectionFactory {
   public:
+    struct Config : public ConnectionFactory::Config {
+      qrpc_media_config_t media_config;
+    public:
+      Config() : ConnectionFactory::Config(), media_config(qrpc_media_config()) {}
+      Config(Resolver &resolver, qrpc_time_t session_timeout, qrpc_time_t connection_timeout) :
+        ConnectionFactory::Config(resolver, session_timeout, connection_timeout), media_config(qrpc_media_config()) {}
+      Config(qrpc_time_t session_timeout, qrpc_time_t connection_timeout) :
+        ConnectionFactory::Config(session_timeout, connection_timeout), media_config(qrpc_media_config()) {}
+      static Config From(
+        Resolver &resolver, qrpc_time_t session_timeout, qrpc_time_t connection_timeout) {
+        return Config(resolver, session_timeout, connection_timeout);
+      }
+      static Config From(
+        qrpc_time_t session_timeout, qrpc_time_t connection_timeout) {
+        return Config(session_timeout, connection_timeout);
+      }
+    };
     class TcpClient : public base::TcpClient {
     public:
       TcpClient(ConnectionFactory &cf) :
@@ -680,13 +695,13 @@ namespace webrtc {
       StreamFactory stream_factory_;
     };
   public:
-    Client(Loop &l, Config &&config) :
-      ConnectionFactory(l, std::move(config)),
-      http_client_(l, config.resolver) {}
-    Client(Loop &l, Config &config) :
-      Client(l, std::move(config)) {}
+    Client(Loop &l, Config &&config);
+    Client(Loop &l, Config &config);
     ~Client() override { Fin(); }
   public:
+    const Config &config() const { return client_config_; }
+    const std::string &cname() const { return cname_; }
+    const std::string &capability_sdp() const { return capability_sdp_; }
     std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
     IdFactory<qrpc_msgid_t> &msgid_factory() { return msgid_factory_; }
   public:
@@ -721,6 +736,9 @@ namespace webrtc {
       }
     }  
   protected:
+    Config client_config_;
+    std::string cname_;
+    std::string capability_sdp_;
     HttpClient http_client_;
     IdFactory<qrpc_msgid_t> msgid_factory_;
     std::map<IceUFrag, Endpoint> endpoints_;

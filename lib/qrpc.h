@@ -842,6 +842,7 @@ typedef struct {
 } qrpc_media_consume_config_t;
 
 typedef struct {
+  const char *cname;
   // client capabilities
   qrpc_media_params_t audio_cap, video_cap;
 } qrpc_media_config_t;
