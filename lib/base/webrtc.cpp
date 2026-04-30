@@ -1231,7 +1231,7 @@ int ConnectionFactory::Connection::OnDtlsDataReceived(Session *session, const ui
   if (
     dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTING ||
     dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED) {
-    // logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"}});
+    logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"},{"len",sz},{"pl",str::HexDump(p, std::min((size_t)16, sz))}});
     dtls_transport_->ProcessDtlsData(p, sz);
   } else {
     logger::warn({
@@ -1399,7 +1399,7 @@ int ConnectionFactory::Connection::Open(Stream &s) {
   int r;
   auto &c = s.config();
   DcepRequest req(c);
-  uint8_t *buff = base::AllocStackBuffer<uint8_t>(req.PayloadSize());
+  uint8_t *buff = ALLOC_STACK_BUFFER(uint8_t, req.PayloadSize());
   if ((r = sctp_association_->SendSctpMessage(
       s.config().params, req.ToPaylod(buff, req.PayloadSize()), req.PayloadSize(), PPID::WEBRTC_DCEP
   )) < 0) {
@@ -1557,6 +1557,7 @@ void ConnectionFactory::Connection::OnDtlsTransportSendData(
 void ConnectionFactory::Connection::OnDtlsTransportApplicationDataReceived(
   const RTC::DtlsTransport*, const uint8_t* data, size_t len) {
   TRACK();
+  logger::info({{"ev","sctp data received"},{"len",len},{"pl",str::HexDump(data, std::min(len, (size_t)16))}});
   sctp_association_->ProcessSctpData(data, len);
 }
 
@@ -1638,7 +1639,7 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
     }
     // send dcep ack
     DcepResponse ack;
-    uint8_t *buff = base::AllocStackBuffer<uint8_t>(ack.PayloadSize());
+    uint8_t *buff = ALLOC_STACK_BUFFER(uint8_t, ack.PayloadSize());
     if ((r = sctpAssociation->SendSctpMessage(
         s->config().params, ack.ToPaylod(buff, ack.PayloadSize()), ack.PayloadSize(), PPID::WEBRTC_DCEP
     )) < 0) {
@@ -1655,6 +1656,11 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       return;
     }
   } break;
+  default: {
+    logger::error({{"proto","sctp"},{"ev","unknown control message received"},{"sid",streamId},{"type",*msg}});
+    ASSERT(false);
+    return;
+  }
   }
 }
 void ConnectionFactory::Connection::OnSctpAssociationMessageReceived(

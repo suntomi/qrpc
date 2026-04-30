@@ -87,7 +87,7 @@ namespace qrpc {
     inline void SendCommon(int16_t type, qrpc_msgid_t msgid, const void *p, qrpc_size_t len) {
       //pack and send buffer
       auto buflen = HEADER_BUFFER_SIZE + LENGTH_BUFFER_SIZE + len;
-      char *buffer = base::AllocStackBuffer<char>(buflen);
+      char *buffer = ALLOC_STACK_BUFFER(char, buflen);
       size_t ofs = 0;
       ofs = base::HeaderCodec::Encode(type, msgid, buffer, buflen);
       ofs += base::LengthCodec::Encode(len, buffer + ofs, buflen - ofs);
