@@ -431,6 +431,7 @@ static std::map<std::string, logger::level> syscall_log_levels = {
 int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
   auto pl = std::string(p, sz);
   try {
+    auto &c = dynamic_cast<Connection &>(connection());
     auto data = json::parse(pl);
     auto fnit = data.find("fn");
     if (fnit == data.end()) {
@@ -440,11 +441,50 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
     const auto &fn = fnit->get<std::string>();
     const auto mit = data.find("msgid");
     if (mit == data.end()) {
-      QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
+      const auto ait = data.find("args");
+      if (ait == data.end()) {
+        QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no value for key 'args'"},{"pl",pl}});
+        ASSERT(false);
+        return QRPC_OK;
+      }
+      // notifications (called from other peer)
+      if (fn == "close") {
+        QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
+        c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
+      } else if (fn == "remote_pause" || fn == "remote_resume") {
+        auto &h = c.rtp_handler();
+        const auto pit = ait->find("path");
+        if (pit != ait->end()) {
+          std::string error;
+          auto r = (fn == "remote_pause") ?
+            h.Pause(pit->get<std::string>(), error) :
+            h.Resume(pit->get<std::string>(), error);
+          if (!r) {
+            QRPC_LOGJ(error, {
+              {"ev","fail to control stream"},
+              {"control",fn},{"path",pit->get<std::string>()},
+              {"cname",c.cname()},{"error",error}
+            });
+            ASSERT(false);
+          }
+        } else {
+          QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no value for key 'path'"},{"pl",pl}});
+          ASSERT(false);
+        }
+      } else if (fn == "ping") {
+        const auto pit = ait->find("path");
+        if (pit != ait->end()) {
+          return QRPC_OK;
+        } else {
+          QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no value for key 'path'"},{"pl",pl}});
+          ASSERT(false);
+        }
+      } else {
+        QRPC_LOGJ(warn, {{"ev","unknown syscall"},{"fn",fn}});
+      }
       return QRPC_OK;
     }
     const auto msgid = mit->get<uint64_t>();
-    auto &c = dynamic_cast<Connection &>(connection());
     auto scllvit = syscall_log_levels.find(fn);
     if (scllvit != syscall_log_levels.end()) {
       QRPC_LOGVJ(scllvit->second, {{"ev","recv syscall"},{"pl",data}});
@@ -452,180 +492,174 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       QRPC_LOGJ(info, {{"ev","recv syscall"},{"pl",data}});
     }
     try {
-      if (fn == "close") {
-        QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
-        c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
-        Respond("close_ack",msgid,{});
-      } else {
-        const auto ait = data.find("args");
-        if (ait == data.end()) {
-          RAISE("no value for key 'args'");
+      const auto ait = data.find("args");
+      if (ait == data.end()) {
+        RAISE("no value for key 'args'");
+      }
+      const auto &args = ait->get<std::map<std::string,json>>();
+      if (fn == "remote_answer") {
+        // remote_answer receives answer information per mid
+        const auto mmit = args.find("midMap");
+        if (mmit == args.end()) {
+          RAISE("no value for key 'midMap'");
         }
-        const auto &args = ait->get<std::map<std::string,json>>();
-        if (fn == "remote_answer") {
-          // remote_answer receives answer information per mid
-          const auto mmit = args.find("midMap");
-          if (mmit == args.end()) {
-            RAISE("no value for key 'midMap'");
-          }
-          for (const auto &kv : mmit->second.get<std::map<std::string,json>>()) {
-            const auto &mid = kv.first;
-            const auto &answer = kv.second;
-            std::string error;
-            if (!c.rtp_handler().ApplyAnswer(mid, answer, error)) {
-              RAISE(error);
-            }
-          }
-          Respond("remote_answer_ack",msgid,{});
-        } else if (fn == "produce") {
-          const auto sdpit = args.find("sdp");
-          if (sdpit == args.end()) {
-            RAISE("no value for key 'sdp'");
-          }
-          const auto mpmit = args.find("midPathMap");
-          if (mpmit == args.end()) {
-            RAISE("no value for key 'midPathMap'");
-          }
-          SDP::MediaContext context;
-          auto &options_map = context.options_map;
-          const auto oit = args.find("options");
-          if (oit != args.end()) {
-            QRPC_LOGJ(info, {{"ev","produce options"},{"options",oit->second}});
-            const auto &opts = oit->second.get<std::map<std::string,json>>();
-            const auto v = opts.find("video");
-            if (v != opts.end()) {
-              options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
-            }
-            const auto a = opts.find("audio");
-            if (a != opts.end()) {
-              options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
-            }
-          }
-          const auto rtpit = args.find("rtp");
-          if (rtpit != args.end()) {
-            const auto rsmit = rtpit->second.find("ridScalabilityModeMap");
-            if (rsmit != rtpit->second.end()) {
-              context.rid_scalability_mode_map = rsmit->get<std::map<std::string,std::string>>();
-            } else {
-              ASSERT(false);
-            }
-          }
-          SDP sdp(sdpit->second.get<std::string>());
-          std::string answer;
-          if (!sdp.Answer(mpmit->second.get<std::map<std::string,std::string>>(), c, answer, &context)) {
-            RAISE("fail to produce");
-          }
-          if (!c.rtp_enabled()) {
-            RAISE("nothing produced");
-          }
-          json status_map;
-          for (const auto &kv : context.created_producers) {
-            status_map[kv.first] = kv.second->status().ToJson();
-          }
-          Respond("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
-        } else if (fn == "publish_stream") {
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          const auto stit = args.find("stop");
-          auto stop = stit != args.end() && stit->second.get<bool>();
-          if (stop) {
-            if (!c.rtp_enabled()) {
-              RAISE("nothing published");
-            }
-            if (!c.UnpublishStream(pit->second.get<std::string>())) {
-              RAISE("fail to publish");
-            }
-          } else {
-            if (!c.PublishStream(pit->second.get<std::string>())) {
-              RAISE("fail to publish");
-            }
-          }
-          Respond("publish_stream_ack",msgid,{});
-        } else if (fn == "consume") {
-          QRPC_LOGJ(info, {{"ev","consume request"},{"args",args}});
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          std::map<rtp::Parameters::MediaKind, ControlOptions> options_map;
-          bool sync = false;
-          const auto oit = args.find("options");
-          if (oit != args.end()) {
-            QRPC_LOGJ(info, {{"ev","consume options"},{"options",oit->second}});
-            const auto &opts = oit->second.get<std::map<std::string,json>>();
-            const auto v = opts.find("video");
-            if (v != opts.end()) {
-              options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
-            }
-            const auto a = opts.find("audio");
-            if (a != opts.end()) {
-              options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
-            }
-            const auto syncit = opts.find("sync");
-            if (syncit != opts.end()) {
-              sync = syncit->second.get<bool>();
-            }
-          }
-          auto path = pit->second.get<std::string>();
-          std::string sdp;
-          std::map<std::string,rtp::Consumer*> created_consumers;
-          if (!c.PrepareConsume(path, options_map, sync, sdp, created_consumers)) {
-            RAISE("fail to prepare consume");
-          }
-          json status_map;
-          for (const auto &kv : created_consumers) {
-            auto st = rtp::ConsumerFactory::StatusFrom(kv.second);
-            status_map[kv.first] = st.ToJson();
-          }
-          Respond("consume_ack",msgid,{
-            {"status_map",status_map},{"sdp",sdp},
-            {"mid_media_path_map",c.rtp_handler().mid_media_path_map()}
-          });
-        } else if (fn == "pause") {
-          if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          std::string reason;
-          if (!c.rtp_handler().Pause(pit->second.get<std::string>(), reason)) {
-            RAISE("fail to pause track:" + reason);
-          }
-          Respond("pause_ack",msgid,{});
-        } else if (fn == "resume") {
-          if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          std::string reason;
-          if (!c.rtp_handler().Resume(pit->second.get<std::string>(), reason)) {
-            RAISE("fail to pause track:" + reason);
-          }
-          Respond("resume_ack",msgid,{});
-        } else if (fn == "ping") {
+        for (const auto &kv : mmit->second.get<std::map<std::string,json>>()) {
+          const auto &mid = kv.first;
+          const auto &answer = kv.second;
           std::string error;
-          if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
-          if (!c.rtp_handler().Ping(error)) {
-            RAISE("fail to ping:" + error);
+          if (!c.rtp_handler().ApplyAnswer(mid, answer, error)) {
+            RAISE(error);
           }
-          Respond("ping_ack",msgid,{},logger::level::trace);
-        } else if (fn == "close_media") {
-          std::string sdp_or_error;
-          std::vector<std::string> closed_paths;
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          if (!c.CloseMedia(pit->second.get<std::string>(), closed_paths, sdp_or_error)) {
-            RAISE("fail to close media:" + sdp_or_error);
-          }
-          Respond("close_media_ack",msgid,{{"paths",closed_paths},{"sdp",sdp_or_error}});
-        } else {
-          RAISE("syscall is not supported");
         }
+        Respond("remote_answer_ack",msgid,{});
+      } else if (fn == "produce") {
+        const auto sdpit = args.find("sdp");
+        if (sdpit == args.end()) {
+          RAISE("no value for key 'sdp'");
+        }
+        const auto mpmit = args.find("midPathMap");
+        if (mpmit == args.end()) {
+          RAISE("no value for key 'midPathMap'");
+        }
+        SDP::MediaContext context;
+        auto &options_map = context.options_map;
+        const auto oit = args.find("options");
+        if (oit != args.end()) {
+          QRPC_LOGJ(info, {{"ev","produce options"},{"options",oit->second}});
+          const auto &opts = oit->second.get<std::map<std::string,json>>();
+          const auto v = opts.find("video");
+          if (v != opts.end()) {
+            options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
+          }
+          const auto a = opts.find("audio");
+          if (a != opts.end()) {
+            options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
+          }
+        }
+        const auto rtpit = args.find("rtp");
+        if (rtpit != args.end()) {
+          const auto rsmit = rtpit->second.find("ridScalabilityModeMap");
+          if (rsmit != rtpit->second.end()) {
+            context.rid_scalability_mode_map = rsmit->get<std::map<std::string,std::string>>();
+          } else {
+            ASSERT(false);
+          }
+        }
+        SDP sdp(sdpit->second.get<std::string>());
+        std::string answer;
+        if (!sdp.Answer(mpmit->second.get<std::map<std::string,std::string>>(), c, answer, &context)) {
+          RAISE("fail to produce");
+        }
+        if (!c.rtp_enabled()) {
+          RAISE("nothing produced");
+        }
+        json status_map;
+        for (const auto &kv : context.created_producers) {
+          status_map[kv.first] = kv.second->status().ToJson();
+        }
+        Respond("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
+      } else if (fn == "publish_stream") {
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        const auto stit = args.find("stop");
+        auto stop = stit != args.end() && stit->second.get<bool>();
+        if (stop) {
+          if (!c.rtp_enabled()) {
+            RAISE("nothing published");
+          }
+          if (!c.UnpublishStream(pit->second.get<std::string>())) {
+            RAISE("fail to publish");
+          }
+        } else {
+          if (!c.PublishStream(pit->second.get<std::string>())) {
+            RAISE("fail to publish");
+          }
+        }
+        Respond("publish_stream_ack",msgid,{});
+      } else if (fn == "consume") {
+        QRPC_LOGJ(info, {{"ev","consume request"},{"args",args}});
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        std::map<rtp::Parameters::MediaKind, ControlOptions> options_map;
+        bool sync = false;
+        const auto oit = args.find("options");
+        if (oit != args.end()) {
+          QRPC_LOGJ(info, {{"ev","consume options"},{"options",oit->second}});
+          const auto &opts = oit->second.get<std::map<std::string,json>>();
+          const auto v = opts.find("video");
+          if (v != opts.end()) {
+            options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
+          }
+          const auto a = opts.find("audio");
+          if (a != opts.end()) {
+            options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
+          }
+          const auto syncit = opts.find("sync");
+          if (syncit != opts.end()) {
+            sync = syncit->second.get<bool>();
+          }
+        }
+        auto path = pit->second.get<std::string>();
+        std::string sdp;
+        std::map<std::string,rtp::Consumer*> created_consumers;
+        if (!c.PrepareConsume(path, options_map, sync, sdp, created_consumers)) {
+          RAISE("fail to prepare consume");
+        }
+        json status_map;
+        for (const auto &kv : created_consumers) {
+          auto st = rtp::ConsumerFactory::StatusFrom(kv.second);
+          status_map[kv.first] = st.ToJson();
+        }
+        Respond("consume_ack",msgid,{
+          {"status_map",status_map},{"sdp",sdp},
+          {"mid_media_path_map",c.rtp_handler().mid_media_path_map()}
+        });
+      } else if (fn == "pause") {
+        if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        std::string reason;
+        if (!c.rtp_handler().Pause(pit->second.get<std::string>(), reason)) {
+          RAISE("fail to pause track:" + reason);
+        }
+        Respond("pause_ack",msgid,{});
+      } else if (fn == "resume") {
+        if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        std::string reason;
+        if (!c.rtp_handler().Resume(pit->second.get<std::string>(), reason)) {
+          RAISE("fail to pause track:" + reason);
+        }
+        Respond("resume_ack",msgid,{});
+      } else if (fn == "ping") {
+        std::string error;
+        if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
+        if (!c.rtp_handler().Ping(error)) {
+          RAISE("fail to ping:" + error);
+        }
+        Respond("ping_ack",msgid,{},logger::level::trace);
+      } else if (fn == "close_media") {
+        std::string sdp_or_error;
+        std::vector<std::string> closed_paths;
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        if (!c.CloseMedia(pit->second.get<std::string>(), closed_paths, sdp_or_error)) {
+          RAISE("fail to close media:" + sdp_or_error);
+        }
+        Respond("close_media_ack",msgid,{{"paths",closed_paths},{"sdp",sdp_or_error}});
+      } else {
+        RAISE("syscall is not supported");
       }
     } catch (const std::exception& error) {
       RAISE(error.what());
@@ -1231,7 +1265,7 @@ int ConnectionFactory::Connection::OnDtlsDataReceived(Session *session, const ui
   if (
     dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTING ||
     dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED) {
-    logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"},{"len",sz},{"pl",str::HexDump(p, std::min((size_t)16, sz))}});
+    // logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"},{"len",sz},{"pl",str::HexDump(p, std::min((size_t)16, sz))}});
     dtls_transport_->ProcessDtlsData(p, sz);
   } else {
     logger::warn({
@@ -1557,7 +1591,7 @@ void ConnectionFactory::Connection::OnDtlsTransportSendData(
 void ConnectionFactory::Connection::OnDtlsTransportApplicationDataReceived(
   const RTC::DtlsTransport*, const uint8_t* data, size_t len) {
   TRACK();
-  logger::info({{"ev","sctp data received"},{"len",len},{"pl",str::HexDump(data, std::min(len, (size_t)16))}});
+  // logger::info({{"ev","sctp data received"},{"len",len},{"pl",str::HexDump(data, std::min(len, (size_t)16))}});
   sctp_association_->ProcessSctpData(data, len);
 }
 
