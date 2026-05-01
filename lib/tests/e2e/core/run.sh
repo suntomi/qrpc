@@ -10,8 +10,6 @@ SUITES_DIR="${CWD}/suites"
 
 source "${ROOT}/lib/tests/tools/debugger.sh"
 
-SERVER_PID=""
-DEBUGGER_PID=""
 FAILED_SUITES=()
 REQUESTED_SUITE="${1}"
 SUITE_ARGS=("${@:2}")
@@ -20,44 +18,7 @@ if [ "${REQUESTED_SUITE}" = "native" ] && [ "${#SUITE_ARGS[@]}" -gt 0 ] && [ "${
   SERVER_BIN="${QRPC_SERVER_BIN}"
 fi
 
-cleanup() {
-  echo "cleaning up... (server pid=${SERVER_PID}, debugger pid=${DEBUGGER_PID})"
-  SERVER_PID=$(pgrep -f -x "${SERVER_BIN}" | head -n 1 || true)
-  if [ -n "${SERVER_PID}" ] && kill -0 "${SERVER_PID}" 2>/dev/null; then
-    echo "terminating server (pid=${SERVER_PID})..."
-    kill -TERM "${SERVER_PID}" 2>/dev/null || true
-  fi
-  if [ -n "${DEBUGGER_PID}" ] && kill -0 "${DEBUGGER_PID}" 2>/dev/null; then
-    echo "terminating debugger (pid=${DEBUGGER_PID})..."
-    wait "${DEBUGGER_PID}" 2>/dev/null || true
-  fi
-}
-
-trap cleanup EXIT
-
-with_dbg "${SERVER_BIN}" \
-  > >(sed $'s/^/\033[32m[e2e_server] /; s/$/\033[0m/') \
-  2> >(sed $'s/^/\033[32m[e2e_server] /; s/$/\033[0m/' >&2) &
-DEBUGGER_PID=$!
-
-echo "waiting for server to start..."
-for _ in {1..50}; do
-  SERVER_PID=$(pgrep -f -x "${SERVER_BIN}" | head -n 1 || true)
-  if [ -n "${SERVER_PID}" ]; then
-    break
-  fi
-  if ! kill -0 "${DEBUGGER_PID}" 2>/dev/null; then
-    echo "failed to launch ${SERVER_BIN}"
-    exit 1
-  fi
-  sleep 0.5
-done
-
-if [ -z "${SERVER_PID}" ]; then
-  echo "failed to find server pid for ${SERVER_BIN}"
-  exit 1
-fi
-echo "server pid = ${SERVER_PID}"
+setup_server "${SERVER_BIN}"
 
 while IFS= read -r suite; do
   suite_name=$(basename "${suite}" .sh)
