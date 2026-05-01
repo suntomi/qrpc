@@ -469,8 +469,9 @@ QRPC_DECL_CLOSURE(void, qrpc_on_media_state_change_t, void *, qrpc_media_t, cons
 //media stream packet received. return false to unsubscribe media stream.
 QRPC_DECL_CLOSURE(bool, qrpc_on_media_consume_t, void *, qrpc_media_t, const void *, qrpc_size_t);
 //media stream packet need to produce to send remote peer. return pointer for packet,
-//and fill second argument of closuresizes of packet. if nullptr returned, producer closed
-//if packet size is zero, packet is not sent. last argument is timestamp of last call of this closure.
+//the memory for packet owned by callee and have to be available until next call of this callback.
+//and fill second argument of closure with size of packet. if nullptr returned, producer closed
+//if packet size is zero, packet is not sent. last argument is context of produced packet.
 QRPC_DECL_CLOSURE(void *, qrpc_on_media_produce_t, void *, qrpc_size_t*, const qrpc_media_produce_context_t*);
 
 /* alarm */
@@ -870,7 +871,7 @@ typedef struct {
   };
 } qrpc_media_control_t;
 // generate default configs
-// client main config
+// media main config
 QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config();
 // produce config
 QRPC_THREADSAFE qrpc_media_produce_config_t qrpc_media_produce_config(const char *path);

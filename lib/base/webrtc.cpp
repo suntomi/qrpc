@@ -499,7 +499,11 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         RAISE("no value for key 'args'");
       }
       const auto &args = ait->get<std::map<std::string,json>>();
-      if (fn == "remote_answer") {
+      if (fn == "close") {
+        QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
+        c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
+        Respond("close_ack",msgid,{});
+      } else if (fn == "remote_answer") {
         // remote_answer receives answer information per mid
         const auto mmit = args.find("midMap");
         if (mmit == args.end()) {
@@ -660,6 +664,8 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
           RAISE("fail to close media:" + sdp_or_error);
         }
         Respond("close_media_ack",msgid,{{"paths",closed_paths},{"sdp",sdp_or_error}});
+      } else if (str::EndsWith(fn, "_ack")) {
+        // ignore ack 
       } else {
         RAISE("syscall is not supported");
       }
@@ -672,16 +678,25 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
   return QRPC_OK;
 }
 int ConnectionFactory::SyscallStream::Call(const char *fn) {
-  return Send({{"fn",fn}});
+  qrpc_msgid_t msgid;
+  return Call(fn, msgid, json::object());
 }
 int ConnectionFactory::SyscallStream::Call(const char *fn, const json &j) {
-  return Send({{"fn",fn},{"args",j}});
+  qrpc_msgid_t msgid;
+  return Call(fn, msgid, j);
 }
-int ConnectionFactory::SyscallStream::Call(const char *fn, uint32_t msgid, const json &j) {
+int ConnectionFactory::SyscallStream::Call(const char *fn, qrpc_msgid_t &msgid, const json &j) {
+  msgid = msgid_factory_.New();
   return Send({{"fn",fn},{"msgid",msgid},{"args",j}});
 }
+int ConnectionFactory::SyscallStream::Notify(const char *fn) {
+  return Notify(fn, json::object());
+}
+int ConnectionFactory::SyscallStream::Notify(const char *fn, const json &j) {
+  return Send({{"fn",fn},{"args",j}});
+}
 
-int ConnectionFactory::SyscallStream::Respond(const char *fn, uint32_t msgid, const json &j, logger::level llv) {
+int ConnectionFactory::SyscallStream::Respond(const char *fn, qrpc_msgid_t msgid, const json &j, logger::level llv) {
   QRPC_LOGVJ(llv, {{"ev","syscall response"},{"fn",fn},{"msgid",msgid},{"args",j}})
   return Send({{"fn",fn},{"msgid",msgid},{"args",j}});
 }
@@ -2172,8 +2187,7 @@ int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
       }
     }
   }
-  auto msgid = factory().to<Client>().msgid_factory().New();
-  return Call("produce", msgid, {
+  return Call("produce", {
     // TODO: if does not worked without application section, add dummy one
     {"sdp", SDP::MediaSectionFrom("audio", c.audio.params) + SDP::MediaSectionFrom("video", c.video.params)},
     {"initOptions", {{"video", {{"pause", c.video.paused}}},{"audio", {{"pause", c.audio.paused}}}}},
@@ -2220,8 +2234,7 @@ int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
   });
 }
 int Client::Connection::CloseMedia(const std::string &path) {
-  auto msgid = factory().to<Client>().msgid_factory().New();
-  return Call("close_media", msgid, {
+  return Call("close_media", {
     {"path", path}
   }, [this, path](qrpc_error_t result, const std::map<std::string,json> &args) {
     if (result < 0) {
@@ -2242,10 +2255,9 @@ int Client::Connection::CloseMedia(const std::string &path) {
   });
 }
 int Client::Connection::WatchMedia(const qrpc_media_consume_config_t &c) {
-  auto msgid = factory().to<Client>().msgid_factory().New();
   // find media_stream_configs() so that config for c.path already exists
   auto sync = media_stream_configs().FindSlotByPath(c.path) != nullptr;
-  return Call("consume", msgid, {
+  return Call("consume", {
     {"path", c.path},
     {"initOptions", {{"sync", sync},{"audio", {{"pause", c.audio.paused}}},{"video", {{"pause", c.video.paused}}}}}
   }, [this](qrpc_error_t result, const std::map<std::string,json> &args) {

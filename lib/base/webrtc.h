@@ -156,10 +156,14 @@ namespace webrtc {
         AdhocStream(c, config, Handler(Nop()), ConnectHandler(Nop()), ShutdownHandler(Nop())) {}
       ~SyscallStream() {}
       int OnRead(const char *p, size_t sz) override;
-      int Respond(const char *fn, uint32_t msgid, const json &j, logger::level llv = logger::level::info);
-      int Call(const char *fn, uint32_t msgid, const json &j);
+      int Respond(const char *fn, qrpc_msgid_t msgid, const json &j, logger::level llv = logger::level::info);
+      int Call(const char *fn, qrpc_msgid_t &msgid, const json &j);
       int Call(const char *fn, const json &j);
       int Call(const char *fn);
+      int Notify(const char *fn, const json &j);
+      int Notify(const char *fn);
+    protected:
+      IdFactory<qrpc_msgid_t> msgid_factory_;
     };
     class SubscriberStream : public Stream {
     public:
@@ -641,7 +645,7 @@ namespace webrtc {
       void EntrySyscall(qrpc_msgid_t msgid, SyscallAckCallback &&cb, qrpc_time_t timeout) {
         inflight_syscalls_[msgid] = InflightSyscall{ .callback = std::move(cb), .timestamp = qrpc_time_now() + timeout };
       }
-      int Call(const std::string &fn, qrpc_msgid_t msgid, const json &args,
+      int Call(const std::string &fn, const json &args,
         SyscallAckCallback &&cb, qrpc_time_t timeout = qrpc_time_sec(5)) {
         if (syscall_ == nullptr) {
           syscall_ = std::dynamic_pointer_cast<SyscallStream>(OpenStream({
@@ -650,6 +654,7 @@ namespace webrtc {
             return std::make_shared<SyscallStream>(conn, config);
           }));
         }
+        qrpc_msgid_t msgid;
         auto r = syscall_->Call(fn.c_str(), msgid, args);
         if (r < 0) {
           QRPC_LOGJ(error, {{"ev","fail to send produce syscall"},{"rc",r}});
@@ -704,7 +709,6 @@ namespace webrtc {
     const std::string &cname() const { return cname_; }
     const std::string &capability_sdp() const { return capability_sdp_; }
     std::map<IceUFrag, Endpoint> &endpoints() { return endpoints_; }
-    IdFactory<qrpc_msgid_t> &msgid_factory() { return msgid_factory_; }
   public:
     bool Connect(const Endpoint &ep, FactoryMethod &&fm);
     void Close(BaseConnection &c) { ScheduleClose(dynamic_cast<Connection &>(c), QRPC_CLOSE_REASON_LOCAL); }
@@ -741,7 +745,6 @@ namespace webrtc {
     std::string cname_;
     std::string capability_sdp_;
     HttpClient http_client_;
-    IdFactory<qrpc_msgid_t> msgid_factory_;
     std::map<IceUFrag, Endpoint> endpoints_;
     std::vector<TcpClient> tcp_clients_;
     std::vector<UdpClient> udp_clients_;
