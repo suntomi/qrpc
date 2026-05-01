@@ -106,7 +106,7 @@ namespace webrtc {
     public:
       static TransportConfig From(const qrpc_transport_config_t &conf) {
         TransportConfig c;
-        if (conf.proto != QRPC_TRANSPORT_WEBTRANSPORT) {
+        if (conf.proto != QRPC_TRANSPORT_WEBRTC) {
           logger::die({{"ev","need webrtc config"},{"proto", conf.proto}});
         }
         auto &webrtc = conf.webrtc;

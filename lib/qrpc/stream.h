@@ -32,7 +32,7 @@ namespace qrpc {
     int OnRead(const char *p, size_t sz) override;
     int OnConnect() override { return qrpc_closure_call(handler_.on_stream_open, this->ToHandle(), &ctx_); }
     void OnShutdown() override { qrpc_closure_call(handler_.on_stream_close, this->ToHandle()); }
-    qrpc_stream_t ToHandle() { return { .s = 0, .p = this }; }
+    qrpc_stream_t ToHandle() { return { .s = this->serial_, .p = this }; }
   private:
     qrpc_stream_handler_t handler_;
     std::string parse_buffer_;
@@ -45,7 +45,7 @@ namespace qrpc {
     int OnRead(const char *p, size_t sz) override;
     int OnConnect() override { return qrpc_closure_call(handler_.on_stream_open, this->ToHandle(), &ctx_); }
     void OnShutdown() override { return qrpc_closure_call(handler_.on_stream_close, this->ToHandle()); }
-    qrpc_stream_t ToHandle() { return { .s = 0, .p = this }; }
+    qrpc_stream_t ToHandle() { return { .s = this->serial_, .p = this }; }
   private:
     qrpc_stream_handler_t handler_;
   };
@@ -81,7 +81,7 @@ namespace qrpc {
     void Reply(qrpc_error_t result, qrpc_msgid_t msgid, const void *p, qrpc_size_t len);
     void Close(const CloseReason &r) override;
   public:
-    qrpc_rpc_t ToHandle() { return { .s = 0, .p = this }; }
+    qrpc_rpc_t ToHandle() { return { .s = this->serial_, .p = this }; }
     static inline RPCStream *FromHandle(qrpc_rpc_t rpc) { return Stream::FromHandle(rpc)->As<RPCStream>(); }
     qrpc_time_t CheckTimeout();
     inline void SendCommon(int16_t type, qrpc_msgid_t msgid, const void *p, qrpc_size_t len) {

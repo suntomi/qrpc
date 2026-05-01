@@ -490,6 +490,11 @@ typedef struct {
   qrpc_on_stream_record_t on_stream_record;
   qrpc_on_stream_open_t on_stream_open;
   qrpc_on_stream_close_t on_stream_close;
+  // If stream_reader is empty, qrpc uses a length-prefixed coded stream.
+  // If stream_reader is set, qrpc uses a raw stream and forwards each
+  // transport-delivered message to on_stream_record as-is.
+  // This is useful for WebRTC data channels, whose record boundaries are
+  // already preserved by SCTP.
   qrpc_stream_reader_t stream_reader;
   qrpc_stream_writer_t stream_writer;
 } qrpc_stream_handler_t;
@@ -690,7 +695,7 @@ typedef struct {
 } qrpc_listen_conf_t;
 
 // get default qrpc_server_conf_t
-QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf(const qrpc_svconf_t *conf);
+QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf();
 // get default qrpc_listen_conf_t
 QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv);
 //create server which has n_worker of workers

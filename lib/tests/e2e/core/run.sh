@@ -5,6 +5,7 @@ set -uo pipefail
 CWD=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "${CWD}/../../../.." && pwd)
 SERVER_BIN="${ROOT}/.build/bazel-bin/lib/tests/e2e/core/server/e2e_server"
+QRPC_SERVER_BIN="${ROOT}/.build/bazel-bin/lib/tests/e2e/qrpc/server/e2e_qrpc_server"
 SUITES_DIR="${CWD}/suites"
 
 source "${ROOT}/lib/tests/tools/debugger.sh"
@@ -14,6 +15,10 @@ DEBUGGER_PID=""
 FAILED_SUITES=()
 REQUESTED_SUITE="${1}"
 SUITE_ARGS=("${@:2}")
+
+if [ "${REQUESTED_SUITE}" = "native" ] && [ "${#SUITE_ARGS[@]}" -gt 0 ] && [ "${SUITE_ARGS[0]}" = "webrtc_client" ]; then
+  SERVER_BIN="${QRPC_SERVER_BIN}"
+fi
 
 cleanup() {
   echo "cleaning up... (server pid=${SERVER_PID}, debugger pid=${DEBUGGER_PID})"

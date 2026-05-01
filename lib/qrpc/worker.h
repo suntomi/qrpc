@@ -20,11 +20,12 @@ public:
   typedef moodycamel::ConcurrentQueue<Task> TaskQueue;
 private:
   static thread_local Server *server_;
+  Server *owner_;
   Loop loop_;
   std::thread thread_; // actually runs event loop
 public:
   Worker(Server &server) : 
-    loop_(), thread_() { SetThreadLocal(server); }
+    owner_(&server), loop_(), thread_() {}
   void Run(int max_nfd);
   std::vector<std::unique_ptr<Listener>> Listen();
   inline void Start(int max_nfd) {
@@ -37,8 +38,8 @@ public:
   void SetThreadLocal(Server &server);
 
   //accessor
-  inline const Server &server() const { return *server_; }
-  inline Server &server() { return *server_; }
+  inline const Server &server() const { return *owner_; }
+  inline Server &server() { return *owner_; }
   inline Loop &loop() { return loop_; }
   inline std::thread::id thread_id() const { return thread_.get_id(); }
   static TaskQueue &queue(PartitionId id);

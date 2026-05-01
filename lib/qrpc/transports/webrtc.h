@@ -50,7 +50,7 @@ namespace webrtc {
       Connection(cf, dtls_role), on_open_(config.on_open), on_close_(config.on_close), ctx_(nullptr) {}
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { 
-      qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), &ctx_);
+      qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), close_reason_->code == QRPC_CLOSE_REASON_REMOTE);
       return qrpc_alarm_stop_rv();
     }
     void *context() override { return ctx_; }
@@ -114,7 +114,9 @@ namespace webrtc {
         }), config_(conf), on_open_(conf.on_open), on_close_(conf.on_close), on_finalize_(conf.on_finalize) {}
     ~ClientConnection() override { qrpc_closure_call(on_finalize_, ToHandle()); }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
-    qrpc_time_t OnShutdown() override { return qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), &ctx_); }
+    qrpc_time_t OnShutdown() override {
+      return qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), close_reason_->code == QRPC_CLOSE_REASON_REMOTE);
+    }
     void *context() override { return ctx_; }
     std::shared_ptr<base::Media> media_factory(const std::string &path) override;
   protected:

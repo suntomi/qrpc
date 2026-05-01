@@ -502,7 +502,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       if (fn == "close") {
         QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
         c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
-        Respond("close_ack",msgid,{});
+        Respond("close_ack",msgid,json::object());
       } else if (fn == "remote_answer") {
         // remote_answer receives answer information per mid
         const auto mmit = args.find("midMap");
@@ -517,7 +517,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             RAISE(error);
           }
         }
-        Respond("remote_answer_ack",msgid,{});
+        Respond("remote_answer_ack",msgid,json::object());
       } else if (fn == "produce") {
         const auto sdpit = args.find("sdp");
         if (sdpit == args.end()) {
@@ -583,7 +583,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
             RAISE("fail to publish");
           }
         }
-        Respond("publish_stream_ack",msgid,{});
+        Respond("publish_stream_ack",msgid,json::object());
       } else if (fn == "consume") {
         QRPC_LOGJ(info, {{"ev","consume request"},{"args",args}});
         const auto pit = args.find("path");
@@ -634,7 +634,7 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         if (!c.rtp_handler().Pause(pit->second.get<std::string>(), reason)) {
           RAISE("fail to pause track:" + reason);
         }
-        Respond("pause_ack",msgid,{});
+        Respond("pause_ack",msgid,json::object());
       } else if (fn == "resume") {
         if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
         const auto pit = args.find("path");
@@ -645,14 +645,14 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
         if (!c.rtp_handler().Resume(pit->second.get<std::string>(), reason)) {
           RAISE("fail to pause track:" + reason);
         }
-        Respond("resume_ack",msgid,{});
+        Respond("resume_ack",msgid,json::object());
       } else if (fn == "ping") {
         std::string error;
         if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
         if (!c.rtp_handler().Ping(error)) {
           RAISE("fail to ping:" + error);
         }
-        Respond("ping_ack",msgid,{},logger::level::trace);
+        Respond("ping_ack",msgid,json::object(),logger::level::trace);
       } else if (fn == "close_media") {
         std::string sdp_or_error;
         std::vector<std::string> closed_paths;
