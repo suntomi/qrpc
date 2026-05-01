@@ -441,17 +441,19 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
     const auto &fn = fnit->get<std::string>();
     const auto mit = data.find("msgid");
     if (mit == data.end()) {
+      // notifications (called from other peer)
+      if (fn == "close") {
+        QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
+        c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
+        return QRPC_OK;
+      }
       const auto ait = data.find("args");
       if (ait == data.end()) {
         QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no value for key 'args'"},{"pl",pl}});
         ASSERT(false);
         return QRPC_OK;
       }
-      // notifications (called from other peer)
-      if (fn == "close") {
-        QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
-        c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
-      } else if (fn == "remote_pause" || fn == "remote_resume") {
+      if (fn == "remote_pause" || fn == "remote_resume") {
         auto &h = c.rtp_handler();
         const auto pit = ait->find("path");
         if (pit != ait->end()) {
@@ -1120,16 +1122,19 @@ void ConnectionFactory::Connection::Close() {
   if (syscall_ == nullptr) {
     syscall_ = std::dynamic_pointer_cast<SyscallStream>(OpenStream({
       .label = Stream::SYSCALL_NAME
-    }, [this](const Stream::Config &config, base::Connection &conn) {
-      return std::make_shared<SyscallStream>(conn, config, [this](Stream &s) {
-        this->closed_ = true;
+    }, [](const Stream::Config &config, base::Connection &conn) {
+      return std::make_shared<SyscallStream>(conn, config, [](Stream &s) {
         QRPC_LOGJ(info, {{"ev","server syscall stream opened"},{"sid",s.id()}});
-        return s.Send({{"fn","close"}});
+        return QRPC_OK;
       });
     }));
-  } else {
-    syscall_->Call("close");
   }
+  // here, still DCEP handshake may not be done, but we want to send close message to peer as soon as possible. 
+  // below payload received immediately after DATA_CHANNEL_OPEN received by peer, and processed as usual.
+  // if we need to wait handshake done, we can move this call to above closure.
+  syscall_->Call("close");
+  // we schedule connection close now, do not wait for peer to process above payload.
+  factory().ScheduleClose(*this, QRPC_CLOSE_REASON_LOCAL, 0, "closed by local");
 }
 void ConnectionFactory::Connection::Reset() {
   logger::die({{"ev","not implemented"}});

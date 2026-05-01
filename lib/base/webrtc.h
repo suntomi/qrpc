@@ -487,6 +487,7 @@ namespace webrtc {
         // wait for sending all buffered data to peer
         if (c.sctp_association_->GetSctpBufferedAmount() > 0) {
           if (c.start_shutdown_ + c.webrtc_params().shutdown_timeout > qrpc_time_now()) {
+            // QRPC_LOGJ(info, {{"ev","wait for SCTP buffered data"},{"cname",c.cname()},{"buffered_amount",c.sctp_association_->GetSctpBufferedAmount()}});
             return qrpc_time_now();
           } // if shutdown_timeout duration passed, force close the connection
         }
