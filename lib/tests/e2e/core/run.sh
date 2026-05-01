@@ -12,7 +12,8 @@ source "${ROOT}/lib/tests/tools/debugger.sh"
 SERVER_PID=""
 DEBUGGER_PID=""
 FAILED_SUITES=()
-REQUESTED_SUITE="${1:-}"
+REQUESTED_SUITE="${1}"
+SUITE_ARGS=("${@:2}")
 
 cleanup() {
   echo "cleaning up... (server pid=${SERVER_PID}, debugger pid=${DEBUGGER_PID})"
@@ -59,7 +60,7 @@ while IFS= read -r suite; do
     continue
   fi
   echo "running $(basename "${suite}")"
-  if ! bash "${suite}"; then
+  if ! bash "${suite}" "${SUITE_ARGS[@]}"; then
     FAILED_SUITES+=("$(basename "${suite}")")
   fi
 done < <(find "${SUITES_DIR}" -maxdepth 1 -type f -name '*.sh' | sort)

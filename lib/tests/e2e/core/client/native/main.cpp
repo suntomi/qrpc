@@ -8,6 +8,10 @@
 #include "base/webrtc/sdp.h"
 #include "json.hpp"
 #include "test_sdp_data.h"
+#include <algorithm>
+#include <cstring>
+#include <functional>
+#include <vector>
 
 using json = nlohmann::json;
 using namespace base;
@@ -388,29 +392,38 @@ int main(int argc, char *argv[]) {
     })) {
         DIE("fail to setup signal handler");
     }
-    TRACE("======== test_sdp ========");
-    if (!test_sdp()) {
-        return 1;
+
+    struct TestSuite {
+        const char *name;
+        std::function<bool()> run;
+    };
+    std::vector<TestSuite> suites = {
+        {"sdp", []() { return test_sdp(); }},
+        {"webrtc_client", [&l, &ares]() { return test_webrtc_client(l, ares); }},
+        {"address", []() { return test_address(); }},
+        {"udp_session", [&l, &ares]() { return test_udp_session(l, ares); }},
+        {"tcp_session", [&l, &ares]() { return test_tcp_session(l, ares); }},
+        {"http_client", [&l, &ares]() { return test_http_client(l, ares); }},
+    };
+
+    const char *requested_suite = argc > 1 ? argv[1] : nullptr;
+    if (requested_suite != nullptr) {
+        auto it = std::find_if(suites.begin(), suites.end(), [requested_suite](const auto &suite) {
+            return strcmp(suite.name, requested_suite) == 0;
+        });
+        if (it == suites.end()) {
+            logger::error({{"ev","unknown test suite"},{"suite",requested_suite}});
+            return 1;
+        }
+        TRACE("======== test_%s ========", it->name);
+        return it->run() ? 0 : 1;
     }
-    TRACE("======== test_webrtc_client ========");
-    if (!test_webrtc_client(l, ares)) {
-        return 1;
-    }
-    TRACE("======== test_address ========");
-    if (!test_address()) {
-        return 1;
-    }
-    TRACE("======== test_udp_session ========");
-    if (!test_udp_session(l, ares)) {
-        return 1;
-    }
-    TRACE("======== test_tcp_session ========");
-    if (!test_tcp_session(l, ares)) {
-        return 1;
-    }
-    TRACE("======== test_http_client ========");
-    if (!test_http_client(l, ares)) {
-        return 1;
+
+    for (const auto &suite : suites) {
+        TRACE("======== test_%s ========", suite.name);
+        if (!suite.run()) {
+            return 1;
+        }
     }
     return 0;
 }

@@ -267,6 +267,33 @@ lib/tests/e2e/core/run.sh に lib/tests/e2e/core/suites 以下のテストスイ
 3. suites以下のスクリプトを全部実行する。0以外でexitした場合にも処理を打ち切らず、最後に失敗したスクリプト名のリストを表示する
 
 =======
+
+原則として native clientは lib/web/ts/src/client.ts に準拠した動作をすべきなので、cnameだけではなく、capabilityも送る必要があります。いくつか仕様上決めるべき点があると思うので列挙します。
+
+- cname, capabilityを保持する場所
+  - SDP::CapSdpFrom(qrpc_media_config_t &)があるので、capabilityはqrpc_media_config_tの形で持っておけば良さそう
+  - cnameもqrpc_media_config_tに追加する
+- webrtc::Client::Configはwebrtc::ConnectionFactory::Configを継承して、qrpc_media_config_tを保持できるようにする
+
+qrpc_media_config_tの値を使って、必要なペイロードをwebrtc::Clientが送るwhipリクエストのペイロードに追加してください。
+
+=======
+今 SyscallStream のCall系関数にはmsgidを必要とするものがあり、そのmsgidは外から渡されています。しかし、msgidは一意でなければならず、外部から渡すと一意性が維持されない不具合を生む可能性があります。したがって、以下のように修正します。
+
+- Clientが持っている IdFactory<qrpc_msgid_t> msgid_factory_; をSyscallStreamに移動させ、msgidが必要なSyscallStreamの関数が呼ばれる場合、msgid_factory_から自分でmsgidを生成して使うようにする
+
+=======
+lib/tests/e2e/core/client/native/main.cpp でqrpcのrtpの動作を確認するテストを作成してください。以下のようなテストケースが必要です。
+- test_webrtc_clientのような形でtest_rtp_clientを作成します。
+- test_rtp_clientは２つのbase::webrtc::Clientを作成し、サーバーとの接続をそれぞれ行います。
+  - １つのConnectionはbase::webrtc::Client::Connection::OpenMediaを行います。
+    - qrpc_on_media_produce_tを実装する必要があります。著作権フリーの動画ファイルをダウンロードして、そのファイルを読み出して送信するような実装にしてください。ファイルが終端に達したら、先頭から再送信します。
+  - もう一つのConnectionはbase::webrtc::Client::Connection::WatchMediaを行います。
+    - 受け取ったrtpパケットから動画ファイルを生成して保存します。
+
+
+
+=======
 lib/tests/e2e/qrpc/server/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/server/main.cpp の base::webrtc::AdhocListener と同等の動作をするサーバーを作成してください。
 lib/tests/e2e/core/client/native/main.cpp の test_webrtc_client がパスするように実装する必要があります。
 
