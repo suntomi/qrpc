@@ -213,6 +213,7 @@ QRPC_THREADSAFE void qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_co
     c->Enqueue([c, conf]() {
       c->Connect(*conf);
     });
+    return;
   }
   //we are not smart aleck and wanna use ipv4 if possible
   c->Connect(*conf);
@@ -224,6 +225,7 @@ QRPC_THREADSAFE void qrpc_client_resolve(qrpc_client_t cl, int family_pref, cons
     c->Enqueue([c, family_pref, host, cb]() {
       c->Resolve(family_pref, host, cb);
     });
+    return;
   }
   c->Resolve(family_pref, hostname, cb);
 }
@@ -232,12 +234,12 @@ QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
   c->Close();
   delete c;
 }
-QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl) {
+QRPC_THREADSAFE void qrpc_client_poll(qrpc_client_t cl) {
   auto c = qrpc::Client::FromHandle(cl);
   if (UNLIKELY(c->GetPartitionId() != base::Loop::g_partition_id())) {
     logger::die({{"ev","qrpc_client_poll called from non-owner thread"},});
   }
-  qrpc::Client::FromHandle(cl)->Poll();
+  c->Poll();
 }
 QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srclen, char *dst, qrpc_size_t dstlen) {
   if (AsyncResolver::NtoP(src, srclen, dst, dstlen) < 0) {

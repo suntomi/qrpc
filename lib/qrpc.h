@@ -638,7 +638,7 @@ QRPC_THREADSAFE qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf);
 // return false on error.
 QRPC_THREADSAFE void qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_conf_t *conf);
 // do actual network IO. need to call periodically
-QRPC_BOOTSTRAP void qrpc_client_poll(qrpc_client_t cl);
+QRPC_THREADSAFE void qrpc_client_poll(qrpc_client_t cl);
 // close connections and destroy client object. after call this, do not call qrpc_client_* API.
 QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl);
 // resolve host. qrpc_client_t need to be polled by qrpc_client_poll to work correctly

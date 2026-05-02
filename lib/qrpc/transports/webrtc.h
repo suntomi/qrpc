@@ -134,7 +134,7 @@ namespace webrtc {
       OpenOrDie(config.max_nfd, config.poll_timeout_ns),
       base::webrtc::Client::Config::From(
         resolver_.InitOrDie(AsyncResolver::Config::From(config.dns)), config.session_timeout, config.connect_timeout
-      )) {}
+      )), queue_(), partition_id_(base::Loop::g_partition_id()) {}
     void Close(base::Connection &c) override { transport_.Close(c); }
     bool Connect(const qrpc_connect_conf_t &c) override {
       return transport_.Connect(
@@ -151,17 +151,16 @@ namespace webrtc {
     }
     void Close() override { transport_.Fin(); }
     void Enqueue(Worker::Task &&t) override { queue_.enqueue(std::move(t)); }
-    base::Serial::PartitionId GetPartitionId() const override {
-      return base::Loop::g_partition_id();
-    }
-    virtual void Resolve(int family_pref, const std::string &host, qrpc_on_resolve_host_t cb) override {
-
+    base::Serial::PartitionId GetPartitionId() const override { return partition_id_; }
+    void Resolve(int family_pref, const std::string &host, qrpc_on_resolve_host_t cb) override {
+      ASSERT(false);
     }
   private:
     AsyncResolver resolver_;
     qrpc_clconf_t config_;
     base::webrtc::Client transport_;
     Worker::TaskQueue queue_;
+    base::Serial::PartitionId partition_id_;
   };
 }
 }
