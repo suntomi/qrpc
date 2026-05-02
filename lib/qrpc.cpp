@@ -164,7 +164,7 @@ QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
     //dns config
     .dns = {
       .query_timeout = qrpc_time_sec(5),
-      .poll_interval = qrpc_time_sec(10),
+      .poll_interval = qrpc_time_msec(10),
       .use_dns = true, .use_hosts = true,
       .dns_hosts = nullptr,
       .n_dns_hosts = 0,
