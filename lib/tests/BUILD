@@ -19,5 +19,6 @@ filegroup(
   name = "qrpc",
   srcs = [
     "//lib/tests/e2e/qrpc/server:e2e_qrpc_server",
+    "//lib/tests/e2e/qrpc/client:e2e_qrpc_client",
   ],
 )
