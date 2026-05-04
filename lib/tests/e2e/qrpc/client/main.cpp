@@ -26,19 +26,7 @@ void SendJson(qrpc_stream_t stream, const json& payload) {
   qrpc_stream_send(stream, body.data(), body.size());
 }
 
-bool OnStreamOpen(void* arg, qrpc_stream_t stream, void**) {
-  auto* state = static_cast<ClientState*>(arg);
-  if (state == nullptr) {
-    return false;
-  }
-  return true;
-}
-
 void OnStreamCloseNoop(void*, qrpc_stream_t) {}
-
-void* RawReaderNoop(void*, qrpc_stream_t, const char*, qrpc_size_t, int*) {
-  return nullptr;
-}
 
 bool OnTestOpen(void* arg, qrpc_stream_t stream, void**) {
   auto* state = static_cast<ClientState*>(arg);
@@ -153,7 +141,7 @@ void OnRecvRecord(void* arg, qrpc_stream_t stream, const void* data, qrpc_size_t
   }
 }
 
-qrpc_stream_handler_t MakeRawStreamHandler(
+qrpc_stream_handler_t MakeStreamHandler(
   ClientState* state,
   qrpc_on_stream_open_t_proc open_cb,
   qrpc_on_stream_record_t_proc record_cb,
@@ -163,8 +151,6 @@ qrpc_stream_handler_t MakeRawStreamHandler(
   qrpc_closure_init(handler.on_stream_open, open_cb, state);
   qrpc_closure_init(handler.on_stream_close, close_cb, state);
   qrpc_closure_init(handler.on_stream_record, record_cb, state);
-  qrpc_closure_init(handler.stream_reader, RawReaderNoop, state);
-  qrpc_closure_init_noop(handler.stream_writer, qrpc_stream_writer_t);
   return handler;
 }
 
@@ -178,19 +164,19 @@ qrpc_handler_entry_t* StreamRouter(void* arg, const char* label, qrpc_conn_t) {
   if (!initialized) {
     test_handler = {
       .type = STREAM,
-      .stream = MakeRawStreamHandler(state, OnTestOpen, OnTestRecord, OnTestClose),
+      .stream = MakeStreamHandler(state, OnTestOpen, OnTestRecord, OnTestClose),
     };
     test2_handler = {
       .type = STREAM,
-      .stream = MakeRawStreamHandler(state, OnTest2Open, OnTest2Record, OnStreamCloseNoop),
+      .stream = MakeStreamHandler(state, OnTest2Open, OnTest2Record, OnStreamCloseNoop),
     };
     test3_handler = {
       .type = STREAM,
-      .stream = MakeRawStreamHandler(state, OnTest3Open, OnTest3Record, OnTest3Close),
+      .stream = MakeStreamHandler(state, OnTest3Open, OnTest3Record, OnTest3Close),
     };
     recv_handler = {
       .type = STREAM,
-      .stream = MakeRawStreamHandler(state, OnRecvOpen, OnRecvRecord, OnStreamCloseNoop),
+      .stream = MakeStreamHandler(state, OnRecvOpen, OnRecvRecord, OnStreamCloseNoop),
     };
     initialized = true;
   }

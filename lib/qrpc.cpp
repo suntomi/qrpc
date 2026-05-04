@@ -446,13 +446,13 @@ QRPC_CLOSURECALL qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s) {
 //
 // --------------------------
 #define RPC_OP(__proc, ...) OP_RAW(do { \
-  auto __r = qrpc::RPCStream::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  auto __r = qrpc::RPCBase::FromHandle(GET_FIRST(__VA_ARGS__)); \
   if (__r != nullptr) { \
     __proc; \
   } \
 } while(0), __VA_ARGS__)
 #define RPC_BYTES_OP(__proc, ...) BYTES_OP(do { \
-  auto __r = qrpc::RPCStream::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  auto __r = qrpc::RPCBase::FromHandle(GET_FIRST(__VA_ARGS__)); \
   if (__r != nullptr) { \
     __proc; \
   } \
@@ -501,11 +501,11 @@ QRPC_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *d
   );
 }
 QRPC_CLOSURECALL void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen) {
-  auto r = qrpc::RPCStream::FromHandle(rpc);
+  auto r = qrpc::RPCBase::FromHandle(rpc);
   r->Reply(QRPC_OK, msgid, static_cast<const char *>(data), datalen);
 }
 QRPC_CLOSURECALL void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, qrpc_error_t error, const void *data, qrpc_size_t datalen) {
-  auto r = qrpc::RPCStream::FromHandle(rpc);
+  auto r = qrpc::RPCBase::FromHandle(rpc);
   r->Reply(error, msgid, static_cast<const char *>(data), datalen);
 }
 QRPC_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb) {

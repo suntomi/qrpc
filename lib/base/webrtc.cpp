@@ -1726,7 +1726,7 @@ void ConnectionFactory::Connection::OnSctpAssociationMessageReceived(
   // TODO: callback app
   auto it = streams_.find(streamId);
   if (it == streams_.end()) {
-    logger::debug({{"ev","SCTP message received for unknown stream, ignoring it"},{"sid",streamId}});
+    logger::debug({{"ev","SCTP message received for unknown stream"},{"sid",streamId}});
     return;
   }
   int r;

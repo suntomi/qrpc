@@ -25,17 +25,18 @@ namespace webrtc {
   static inline Stream *NewStream(
     const Stream::Config &c, base::Connection &conn, const qrpc_handler_entry_t &he
   ) {
-    Stream *s;
     switch (he.type) {
     case qrpc_handler_type_t::STREAM: {
-      if (qrpc_closure_is_empty(he.stream.stream_reader)) {
-        return new CodedByteStream(conn, c, he.stream);
-      } else {
-        return new RawByteStream(conn, c, he.stream); 
+      if (conn.has_message_boundary()) {
+        return new ByteStream(conn, c, he.stream);
       }
+      return new CodedByteStream(conn, c, he.stream);
     } break;
     case qrpc_handler_type_t::RPC: {
-      return new RPCStream(conn, c, he.rpc, conn.alarm_processor());
+      if (conn.has_message_boundary()) {
+        return new RPCStream(conn, c, he.rpc, conn.alarm_processor());
+      }
+      return new CodedRPCStream(conn, c, he.rpc, conn.alarm_processor());
     } break;
     default:
       ASSERT(false);

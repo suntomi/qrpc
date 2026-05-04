@@ -295,14 +295,48 @@ lib/tests/e2e/core/client/native/main.cpp でqrpcのrtpの動作を確認する�
 
 =======
 lib/tests/e2e/qrpc/server/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/server/main.cpp の base::webrtc::AdhocListener と同等の動作をするサーバーを作成してください。
-lib/tests/e2e/core/client/native/main.cpp の test_webrtc_client がパスするように実装する必要があります。
+
+bash lib/tests/e2e/core/run.sh native webrtc_client がexit 0で終了するように実装する必要があります。
 
 もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。
 
 =======
-lib/tests/e2e/qrpc/client/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/client/native/main.cpp と同等の動作をするプログラムを作成してください。テストは lib/tests/e2e/qrpc/server/main.cpp に作成したサーバーに対して行います。
+lib/tests/e2e/core/run.sh のサーバーを起動する部分と、trapでサーバーをシャットダウンさせる部分を他のスクリプトでも使いたいので lib/tests/tools/debugger.sh に setup_server() のような関数として移動させてください。
 
-もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。
+=======
+lib/tests/e2e/qrpc/client/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/client/native/main.cpp と同等の動作をするプログラムを作成してください。テストは lib/tests/e2e/qrpc/run.sh が成功するかどうかで行います。
+lib/tests/e2e/qrpc/run.sh は作成したばかりなので不具合があれば修正してください。
+
+また、もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。
+
+10,000,000,000
+
+=======
+qrpc_stream_handler_t::stream_reader, stream_writerを廃止します。理由は現在のtransportプロトコルであるsctp自身が送信したバイト列の単位でレコード境界を定義しているためです。
+
+まず、どのような修正が必要か調べてください。
+
+=======
+lib/qrpc/stream.qrpc.cppにおいて、CodedByteStreamを廃止しましたが、これを残すようにしようと思います。
+理由は、transportがTCPのようにメッセージ境界を持たない実装になるケースにも将来的に対応したいからです。
+
+以下のようにします。
+- lib/base/conn.h のインターフェイスに virtual bool has_message_boundary() const = 0;を追加する
+- lib/base/webrtc.h では return trueとして実装する
+- lib/qrpc/transports/webrtc.h では has_message_boundary() のtrue/falseに基づいて、以下のようにStreamを作る
+  - has_message_boundary() == true && type: STREAM => ByteStream
+  - has_message_boundary() == false && type: STREAM => CodedByteStream
+  - has_message_boundary() == true && type: RPC => RPCStream
+  - has_message_boundary() == false && type: STREAM => CodedRPCStream
+
+=======
+
+lib/ext/mediasoup/worker/src/RTC/SctpAssociation.cpp は、分割されたsctpメッセージを保持するためのバッファが１つしかない(this->messageBuffer)ため、以下の問題があります。
+
+- sctp streamが複数存在し、それぞれのstream上でのメッセージが分割された際に、両方のメッセージの受信を正しく扱えない(破棄されてしまう可能性がある)
+- unorderedなsctp streamが存在する場合に、後のメッセージが前のメッセージの受信完了前に届いてしまうと前のメッセージが破棄されてしまう
+
+これを防ぐためにSctpAssociationのmessageBufferをstreamIdとSSNのペアごとに保持するようにし、それぞれeorを受信したときに OnSctpAssociationMessageReceived をコールバックするようにしてください。ppid == 50のケースは別に扱い、OnSctpWebRtcDataChannelControlDataReceived を呼び出すようにします。
 
 =======
 lib/tests/e2e/qrpc/client/main.cpp と lib/tests/e2e/qrpc/server/main.cpp　にqrpcのRTP実装である qrpc_media_XXXX の動作をテストするコードを追加してください。

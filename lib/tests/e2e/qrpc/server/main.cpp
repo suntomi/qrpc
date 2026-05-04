@@ -49,10 +49,6 @@ bool OnStreamOpen(void*, qrpc_stream_t, void**) {
 
 void OnStreamClose(void*, qrpc_stream_t) {}
 
-void* RawReaderNoop(void*, qrpc_stream_t, const char*, qrpc_size_t, int*) {
-  return nullptr;
-}
-
 void OnTestRecord(void*, qrpc_stream_t stream, const void* data, qrpc_size_t datalen) {
   try {
     auto req = json::parse(std::string(static_cast<const char*>(data), datalen));
@@ -109,36 +105,34 @@ void OnRecvRecord(void*, qrpc_stream_t stream, const void* data, qrpc_size_t dat
 
 void OnIgnoreRecord(void*, qrpc_stream_t, const void*, qrpc_size_t) {}
 
-qrpc_stream_handler_t MakeRawStreamHandler(qrpc_on_stream_record_t_proc record_cb) {
+qrpc_stream_handler_t MakeStreamHandler(qrpc_on_stream_record_t_proc record_cb) {
   qrpc_stream_handler_t handler{};
   qrpc_closure_init(handler.on_stream_open, OnStreamOpen, nullptr);
   qrpc_closure_init(handler.on_stream_close, OnStreamClose, nullptr);
   qrpc_closure_init(handler.on_stream_record, record_cb, nullptr);
-  qrpc_closure_init(handler.stream_reader, RawReaderNoop, nullptr);
-  qrpc_closure_init_noop(handler.stream_writer, qrpc_stream_writer_t);
   return handler;
 }
 
 qrpc_handler_entry_t* StreamRouter(void*, const char* label, qrpc_conn_t) {
   static qrpc_handler_entry_t test_handler{
     .type = STREAM,
-    .stream = MakeRawStreamHandler(OnTestRecord),
+    .stream = MakeStreamHandler(OnTestRecord),
   };
   static qrpc_handler_entry_t test2_handler{
     .type = STREAM,
-    .stream = MakeRawStreamHandler(OnTest2Record),
+    .stream = MakeStreamHandler(OnTest2Record),
   };
   static qrpc_handler_entry_t test3_handler{
     .type = STREAM,
-    .stream = MakeRawStreamHandler(OnTest3Record),
+    .stream = MakeStreamHandler(OnTest3Record),
   };
   static qrpc_handler_entry_t recv_handler{
     .type = STREAM,
-    .stream = MakeRawStreamHandler(OnRecvRecord),
+    .stream = MakeStreamHandler(OnRecvRecord),
   };
   static qrpc_handler_entry_t ignore_handler{
     .type = STREAM,
-    .stream = MakeRawStreamHandler(OnIgnoreRecord),
+    .stream = MakeStreamHandler(OnIgnoreRecord),
   };
 
   if (std::strcmp(label, "test") == 0) {

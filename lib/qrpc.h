@@ -431,11 +431,6 @@ QRPC_DECL_CLOSURE(bool, qrpc_on_stream_open_t, void *, qrpc_stream_t, void**);
 //stream closed. after this called, qrpc_stream_t which given to this function will be invalid.
 QRPC_DECL_CLOSURE(void, qrpc_on_stream_close_t, void *, qrpc_stream_t);
 
-QRPC_DECL_CLOSURE(void*, qrpc_stream_reader_t, void *, qrpc_stream_t, const char *, qrpc_size_t, int *);
-//need to return pointer to serialized byte array via last argument. 
-//memory for byte array owned by callee and have to be available until next call of this callback.
-QRPC_DECL_CLOSURE(qrpc_size_t, qrpc_stream_writer_t, void *, qrpc_stream_t, const void *, qrpc_size_t, void **);
-
 QRPC_DECL_CLOSURE(void, qrpc_on_stream_record_t, void *, qrpc_stream_t, const void *, qrpc_size_t);
 
 QRPC_DECL_CLOSURE(void, qrpc_on_stream_task_t, void *, qrpc_stream_t);
@@ -490,13 +485,10 @@ typedef struct {
   qrpc_on_stream_record_t on_stream_record;
   qrpc_on_stream_open_t on_stream_open;
   qrpc_on_stream_close_t on_stream_close;
-  // If stream_reader is empty, qrpc uses a length-prefixed coded stream.
-  // If stream_reader is set, qrpc uses a raw stream and forwards each
-  // transport-delivered message to on_stream_record as-is.
-  // This is useful for WebRTC data channels, whose record boundaries are
-  // already preserved by SCTP.
-  qrpc_stream_reader_t stream_reader;
-  qrpc_stream_writer_t stream_writer;
+  // If the transport preserves message boundaries, qrpc forwards each
+  // transport-delivered record to on_stream_record as-is.
+  // If the transport is byte-stream based, qrpc adds internal length framing
+  // so that each qrpc_stream_send() call is delivered as one on_stream_record.
 } qrpc_stream_handler_t;
 
 typedef struct {
