@@ -59,7 +59,9 @@ void OnTestRecord(void* arg, qrpc_stream_t stream, const void* data, qrpc_size_t
       return;
     }
     if (count < 2) {
-      std::fprintf(stderr, "[qrpc-e2e-client] Data channel latency(%lld)\n", static_cast<long long>(now - ts));
+      QLOG(INFO, "Data channel latency", {
+        QLOG_INT("latency", static_cast<uint64_t>(now - ts))
+      });
       SendJson(stream, {
         {"hello", state->texts[count + 1]},
         {"count", count + 1},
@@ -277,6 +279,6 @@ int main() {
   if (state.error == "success") {
     return 0;
   }
-  std::fprintf(stderr, "[qrpc-e2e-client] %s\n", state.error.c_str());
+  QLOG(ERROR, "client failed", { QLOG_STR("error", state.error.c_str()) });
   return 1;
 }

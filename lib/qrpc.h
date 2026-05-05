@@ -1016,18 +1016,20 @@ typedef struct {
   } value;
 } qrpc_logparam_t;
 
-//logging macro. usage:
+//logging macro. Pass a qrpc_logparam_t[] initializer as the variadic argument,
+//so you can pass one or more QLOG_* entries in one call.
 //  QLOG(lv, msg, {
 //    QLOG_STR("key1", "value1"),
 //    QLOG_INT("key2", 123),
-//    QLOG_FLOAT("key3", 1.23)
+//    QLOG_FLOAT("key3", 1.23),
+//    QLOG_BOOL("key4", true)
 //  });
 #define QLOG_FLOAT(__k, __d) { .key = __k, .type = QRPC_LOG_DECIMAL, .value = { .d = __d } }
 #define QLOG_INT(__k, __n) { .key = __k, .type = QRPC_LOG_INTEGER, .value = { .n = __n } }
 #define QLOG_BOOL(__k, __b) { .key = __k, .type = QRPC_LOG_BOOLEAN, .value = { .b = __b } }
 #define QLOG_STR(__k, __s) { .key = __k, .type = QRPC_LOG_STRING, .value = { .s = __s } }
-#define QLOG(__lv, __mag, __params_array) { \
-  qrpc_logparam_t __params[] = __params_array; \
+#define QLOG(__lv, __mag, ...) { \
+  qrpc_logparam_t __params[] = __VA_ARGS__; \
   qrpc_log(QRPC_LOGLV_##__lv, __mag, __params, sizeof(__params) / sizeof(qrpc_logparam_t)); \
 }
 

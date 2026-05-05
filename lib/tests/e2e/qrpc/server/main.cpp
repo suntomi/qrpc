@@ -6,7 +6,6 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
-#include <cstdio>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -33,14 +32,13 @@ int OnConnOpen(void*, qrpc_conn_t, void**) {
 }
 
 void OnConnClose(void*, qrpc_conn_t, const qrpc_close_reason_t* reason, bool remote) {
-  std::fprintf(
-    stderr,
-    "[qrpc-e2e-server] connection closed code=%d remote=%d detail=%lld msg=%.*s\n",
-    static_cast<int>(reason->code),
-    remote ? 1 : 0,
-    static_cast<long long>(reason->detail_code),
-    static_cast<int>(reason->msglen),
-    reason->msg != nullptr ? reason->msg : "");
+  const char* msg = reason->msg != nullptr ? reason->msg : "";
+  QLOG(INFO, "OnConnClose", {
+    QLOG_INT("code", static_cast<uint64_t>(reason->code)),
+    QLOG_BOOL("remote", remote),
+    QLOG_INT("detail", static_cast<uint64_t>(reason->detail_code)),
+    QLOG_STR("msg", msg)
+  });
 }
 
 bool OnStreamOpen(void*, qrpc_stream_t, void**) {
@@ -60,7 +58,7 @@ void OnTestRecord(void*, qrpc_stream_t stream, const void* data, qrpc_size_t dat
       {"count", req.at("count").get<uint64_t>()},
     });
   } catch (const std::exception& e) {
-    std::fprintf(stderr, "[qrpc-e2e-server] test stream parse error: %s\n", e.what());
+    QLOG(ERROR, "OnTestRecord parse error", { QLOG_STR("what", e.what()) });
     qrpc_stream_close(stream);
   }
 }
@@ -73,7 +71,7 @@ void OnTest2Record(void*, qrpc_stream_t stream, const void* data, qrpc_size_t da
     auto conf = qrpc_stream_conf(req.at("streamName").get_ref<const std::string&>().c_str());
     qrpc_conn_stream(qrpc_stream_conn(stream), &conf, nullptr);
   } catch (const std::exception& e) {
-    std::fprintf(stderr, "[qrpc-e2e-server] test2 stream parse error: %s\n", e.what());
+    QLOG(ERROR, "OnTest2Record parse error", { QLOG_STR("what", e.what()) });
     qrpc_stream_close(stream);
   }
 }
@@ -90,7 +88,7 @@ void OnTest3Record(void*, qrpc_stream_t stream, const void* data, qrpc_size_t da
       SendJson(stream, {{"count", count}});
     }
   } catch (const std::exception& e) {
-    std::fprintf(stderr, "[qrpc-e2e-server] test3 stream parse error: %s\n", e.what());
+    QLOG(ERROR, "OnTest3Record parse error", { QLOG_STR("what", e.what()) });
     qrpc_stream_close(stream);
   }
 }
@@ -106,7 +104,7 @@ void OnRecvRecord(void*, qrpc_stream_t stream, const void* data, qrpc_size_t dat
       SendJson(stream, {{"msg", "byebye"}});
     }
   } catch (const std::exception& e) {
-    std::fprintf(stderr, "[qrpc-e2e-server] recv stream parse error: %s\n", e.what());
+    QLOG(ERROR, "OnRecvRecord parse error", { QLOG_STR("what", e.what()) });
     qrpc_conn_close(qrpc_stream_conn(stream));
   }
 }
@@ -204,7 +202,7 @@ int main() {
   };
 
   if (qrpc_server_listen(server, &conf) < 0) {
-    std::fprintf(stderr, "[qrpc-e2e-server] failed to listen\n");
+    QLOG(ERROR, "failed to listen", { QLOG_INT("port", static_cast<uint64_t>(conf.port)) });
     qrpc_server_join(server);
     return 1;
   }
