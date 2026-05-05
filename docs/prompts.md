@@ -323,11 +323,22 @@ lib/qrpc/stream.qrpc.cppにおいて、CodedByteStreamを廃止しましたが�
 以下のようにします。
 - lib/base/conn.h のインターフェイスに virtual bool has_message_boundary() const = 0;を追加する
 - lib/base/webrtc.h では return trueとして実装する
-- lib/qrpc/transports/webrtc.h では has_message_boundary() のtrue/falseに基づいて、以下のようにStreamを作る
+- lib/qrpc/transports/webrtc.hのNewStream では has_message_boundary() のtrue/falseに基づいて、以下のようにStreamを作る
   - has_message_boundary() == true && type: STREAM => ByteStream
   - has_message_boundary() == false && type: STREAM => CodedByteStream
   - has_message_boundary() == true && type: RPC => RPCStream
   - has_message_boundary() == false && type: STREAM => CodedRPCStream
+- ByteStream => 今のByteStream
+- RPCStream => 現在のRPCStreamから、base::LengthCodec::Decodeと長さが足りない場合のバッファリング処理を除く
+- CodedByteStream => 削除したCodedByteStreamと同じもの
+- CodedRPCStream => CodedByteStreamで１レコードが得られた後、そこにbase::HeaderCodec::Decodeとそれ以降の処理を追加したもの(長さが足りない場合のバッファリングを除く)
+
+=======
+
+CodedByteStream::OnRead, CodedRPCStream::OnRead ですが、p, szが十分な長さの場合、parse_bufferにappendせずにそのままコールバックにポインタを渡すことができるはずです。このライブラリは小さなパケットを大量に送るようなユースケースが多いため、レコード教会で与えられた
+
+- base::HeaderCodec::Decodeで得られた長さに残りのバッファ長が足りない時のみparsed_buffer_にappendする
+- CodedXXXStream::OnReadが呼ばれたときにparsed_buffer_.size() > 0 なら、p, szをappendし、
 
 =======
 

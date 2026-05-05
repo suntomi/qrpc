@@ -1,6 +1,28 @@
 #include "qrpc/stream.h"
 
 namespace qrpc {
+  namespace {
+    template <class F>
+    inline int ConsumeCodedRecords(const char *p, size_t sz, F &&on_record, size_t &consumed) {
+      consumed = 0;
+      while (consumed < sz) {
+        qrpc_size_t reclen = 0;
+        auto read_ofs = base::LengthCodec::Decode(&reclen, p + consumed, sz - consumed);
+        if (read_ofs == 0) {
+          auto remain = sz - consumed;
+          return (remain > Stream::LENGTH_BUFFER_SIZE) ? QRPC_EINVAL : QRPC_EAGAIN;
+        }
+        auto total = static_cast<size_t>(read_ofs) + static_cast<size_t>(reclen);
+        if (total > (sz - consumed)) {
+          return QRPC_EAGAIN;
+        }
+        on_record(p + consumed + read_ofs, reclen);
+        consumed += total;
+      }
+      return QRPC_OK;
+    }
+  }
+
   // ByteStream
   int ByteStream::OnRead(const char *p, size_t sz) {
     qrpc_closure_call(handler_.on_stream_record, this->ToHandle(), p, sz); return QRPC_OK; 
@@ -15,19 +37,30 @@ namespace qrpc {
     return Stream::Send(buffer, ofs + sz);
   }
   int CodedByteStream::OnRead(const char *p, size_t sz) {
-    parse_buffer_.append(p, sz);
-    const char *pstr = parse_buffer_.c_str();
-    size_t plen = parse_buffer_.length();
-    qrpc_size_t reclen = 0, read_ofs = base::LengthCodec::Decode(&reclen, pstr, plen);
-    while (read_ofs > 0 && (reclen + read_ofs) <= plen) {
-      qrpc_closure_call(handler_.on_stream_record, this->ToHandle(), pstr + read_ofs, reclen);
-      parse_buffer_.erase(0, reclen + read_ofs);
-      pstr = parse_buffer_.c_str();
-      plen = parse_buffer_.length();
-      read_ofs = base::LengthCodec::Decode(&reclen, pstr, plen);
+    auto on_record = [this](const char *record, qrpc_size_t reclen) {
+      qrpc_closure_call(handler_.on_stream_record, this->ToHandle(), record, reclen);
+    };
+    size_t consumed = 0;
+    if (parse_buffer_.empty()) {
+      auto rv = ConsumeCodedRecords(p, sz, on_record, consumed);
+      if (rv == QRPC_OK) {
+        return QRPC_OK;
+      }
+      if (rv == QRPC_EINVAL) {
+        this->Close(QRPC_CLOSE_REASON_PROTOCOL, 0, "broken payload");
+        return rv;
+      }
+      parse_buffer_.append(p + consumed, sz - consumed);
+      return QRPC_OK;
     }
-    if (read_ofs == 0 && plen > LENGTH_BUFFER_SIZE) {
+    parse_buffer_.append(p, sz);
+    auto rv = ConsumeCodedRecords(parse_buffer_.data(), parse_buffer_.size(), on_record, consumed);
+    if (consumed > 0) {
+      parse_buffer_.erase(0, consumed);
+    }
+    if (rv == QRPC_EINVAL) {
       this->Close(QRPC_CLOSE_REASON_PROTOCOL, 0, "broken payload");
+      return rv;
     }
     return QRPC_OK;
   }
@@ -122,20 +155,30 @@ namespace qrpc {
     Send(buffer, ofs + len);
   }
   int CodedRPCStream::OnRead(const char *p, size_t sz) {
-    parse_buffer_.append(p, sz);
-    const char *pstr = parse_buffer_.c_str();
-    size_t plen = parse_buffer_.length();
-    qrpc_size_t reclen = 0, read_ofs = base::LengthCodec::Decode(&reclen, pstr, plen);
-    while (read_ofs > 0 && (reclen + read_ofs) <= plen) {
-      ProcessRecord(pstr + read_ofs, reclen);
-      parse_buffer_.erase(0, reclen + read_ofs);
-      pstr = parse_buffer_.c_str();
-      plen = parse_buffer_.length();
-      read_ofs = base::LengthCodec::Decode(&reclen, pstr, plen);
+    auto on_record = [this](const char *record, qrpc_size_t reclen) {
+      ProcessRecord(record, reclen);
+    };
+    size_t consumed = 0;
+    if (parse_buffer_.empty()) {
+      auto rv = ConsumeCodedRecords(p, sz, on_record, consumed);
+      if (rv == QRPC_OK) {
+        return QRPC_OK;
+      }
+      if (rv == QRPC_EINVAL) {
+        Stream::Close({ .code = QRPC_CLOSE_REASON_PROTOCOL, .detail_code = 0, .msg = "broken rpc payload" });
+        return rv;
+      }
+      parse_buffer_.append(p + consumed, sz - consumed);
+      return QRPC_OK;
     }
-    if (read_ofs == 0 && plen > LENGTH_BUFFER_SIZE) {
+    parse_buffer_.append(p, sz);
+    auto rv = ConsumeCodedRecords(parse_buffer_.data(), parse_buffer_.size(), on_record, consumed);
+    if (consumed > 0) {
+      parse_buffer_.erase(0, consumed);
+    }
+    if (rv == QRPC_EINVAL) {
       Stream::Close({ .code = QRPC_CLOSE_REASON_PROTOCOL, .detail_code = 0, .msg = "broken rpc payload" });
-      return QRPC_EINVAL;
+      return rv;
     }
     return QRPC_OK;
   }
