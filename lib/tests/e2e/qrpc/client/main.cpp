@@ -42,7 +42,9 @@ void OnTestRecord(void* arg, qrpc_stream_t stream, const void* data, qrpc_size_t
   auto* state = static_cast<ClientState*>(arg);
   try {
     auto now = qrpc_time_now();
-    auto resp = json::parse(std::string(static_cast<const char*>(data), datalen));
+    auto payload = std::string(static_cast<const char*>(data), datalen);
+    QLOG(INFO, "OnTestRecord", { QLOG_STR("payload", payload.c_str()) });
+    auto resp = json::parse(payload);
     auto hello = resp.at("hello").get<std::string>();
     auto count = resp.at("count").get<uint64_t>();
     auto ts = resp.at("ts").get<qrpc_time_t>();
@@ -88,6 +90,7 @@ bool OnTest2Open(void*, qrpc_stream_t stream, void**) {
 
 void OnTest2Record(void* arg, qrpc_stream_t, const void*, qrpc_size_t) {
   auto* state = static_cast<ClientState*>(arg);
+  QLOG(INFO, "OnTest2Record", { QLOG_STR("payload", "unexpected callback") });
   state->error = "test2.onread should not be called";
 }
 
@@ -101,7 +104,9 @@ bool OnTest3Open(void* arg, qrpc_stream_t stream, void**) {
 void OnTest3Record(void* arg, qrpc_stream_t stream, const void* data, qrpc_size_t datalen) {
   auto* state = static_cast<ClientState*>(arg);
   try {
-    auto resp = json::parse(std::string(static_cast<const char*>(data), datalen));
+    auto payload = std::string(static_cast<const char*>(data), datalen);
+    QLOG(INFO, "OnTest3Record", { QLOG_STR("payload", payload.c_str()) });
+    auto resp = json::parse(payload);
     auto count = resp.at("count").get<uint64_t>();
     state->test3_count = static_cast<int>(count + 1);
     SendJson(stream, {{"count", state->test3_count}});
@@ -127,7 +132,9 @@ bool OnRecvOpen(void* arg, qrpc_stream_t stream, void**) {
 void OnRecvRecord(void* arg, qrpc_stream_t stream, const void* data, qrpc_size_t datalen) {
   auto* state = static_cast<ClientState*>(arg);
   try {
-    auto resp = json::parse(std::string(static_cast<const char*>(data), datalen));
+    auto payload = std::string(static_cast<const char*>(data), datalen);
+    QLOG(INFO, "OnRecvRecord", { QLOG_STR("payload", payload.c_str()) });
+    auto resp = json::parse(payload);
     auto msg = resp.at("msg").get<std::string>();
     if (msg != "byebye") {
       state->error = "Data channel3 message msg wrong";

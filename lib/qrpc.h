@@ -1016,6 +1016,21 @@ typedef struct {
   } value;
 } qrpc_logparam_t;
 
+//logging macro. usage:
+//  QLOG(lv, msg, {
+//    QLOG_STR("key1", "value1"),
+//    QLOG_INT("key2", 123),
+//    QLOG_FLOAT("key3", 1.23)
+//  });
+#define QLOG_FLOAT(__k, __d) { .key = __k, .type = QRPC_LOG_DECIMAL, .value = { .d = __d } }
+#define QLOG_INT(__k, __n) { .key = __k, .type = QRPC_LOG_INTEGER, .value = { .n = __n } }
+#define QLOG_BOOL(__k, __b) { .key = __k, .type = QRPC_LOG_BOOLEAN, .value = { .b = __b } }
+#define QLOG_STR(__k, __s) { .key = __k, .type = QRPC_LOG_STRING, .value = { .s = __s } }
+#define QLOG(__lv, __mag, __params_array) { \
+  qrpc_logparam_t __params[] = __params_array; \
+  qrpc_log(QRPC_LOGLV_##__lv, __mag, __params, sizeof(__params) / sizeof(qrpc_logparam_t)); \
+}
+
 QRPC_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf);
 //write JSON structured log output. 
 QRPC_THREADSAFE void qrpc_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params);

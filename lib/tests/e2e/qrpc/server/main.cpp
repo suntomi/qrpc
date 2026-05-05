@@ -51,7 +51,9 @@ void OnStreamClose(void*, qrpc_stream_t) {}
 
 void OnTestRecord(void*, qrpc_stream_t stream, const void* data, qrpc_size_t datalen) {
   try {
-    auto req = json::parse(std::string(static_cast<const char*>(data), datalen));
+    auto payload = std::string(static_cast<const char*>(data), datalen);
+    QLOG(INFO, "OnTestRecord", { QLOG_STR("payload", payload.c_str()) });
+    auto req = json::parse(payload);
     SendJson(stream, {
       {"hello", std::string("test:") + req.at("hello").get<std::string>()},
       {"ts", req.at("ts").get<uint64_t>()},
@@ -65,7 +67,9 @@ void OnTestRecord(void*, qrpc_stream_t stream, const void* data, qrpc_size_t dat
 
 void OnTest2Record(void*, qrpc_stream_t stream, const void* data, qrpc_size_t datalen) {
   try {
-    auto req = json::parse(std::string(static_cast<const char*>(data), datalen));
+    auto payload = std::string(static_cast<const char*>(data), datalen);
+    QLOG(INFO, "OnTest2Record", { QLOG_STR("payload", payload.c_str()) });
+    auto req = json::parse(payload);
     auto conf = qrpc_stream_conf(req.at("streamName").get_ref<const std::string&>().c_str());
     qrpc_conn_stream(qrpc_stream_conn(stream), &conf, nullptr);
   } catch (const std::exception& e) {
@@ -76,7 +80,9 @@ void OnTest2Record(void*, qrpc_stream_t stream, const void* data, qrpc_size_t da
 
 void OnTest3Record(void*, qrpc_stream_t stream, const void* data, qrpc_size_t datalen) {
   try {
-    auto req = json::parse(std::string(static_cast<const char*>(data), datalen));
+    auto payload = std::string(static_cast<const char*>(data), datalen);
+    QLOG(INFO, "OnTest3Record", { QLOG_STR("payload", payload.c_str()) });
+    auto req = json::parse(payload);
     auto count = req.at("count").get<uint64_t>();
     if (count >= 2) {
       qrpc_stream_close(stream);
@@ -91,7 +97,9 @@ void OnTest3Record(void*, qrpc_stream_t stream, const void* data, qrpc_size_t da
 
 void OnRecvRecord(void*, qrpc_stream_t stream, const void* data, qrpc_size_t datalen) {
   try {
-    auto req = json::parse(std::string(static_cast<const char*>(data), datalen));
+    auto payload = std::string(static_cast<const char*>(data), datalen);
+    QLOG(INFO, "OnRecvRecord", { QLOG_STR("payload", payload.c_str()) });
+    auto req = json::parse(payload);
     if (req.at("die").get<bool>()) {
       qrpc_conn_close(qrpc_stream_conn(stream));
     } else {
