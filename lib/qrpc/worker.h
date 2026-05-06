@@ -8,13 +8,14 @@
 #include "base/serial.h"
 #include "qrpc/base.h"
 #include "qrpc/listener.h"
+#include "qrpc/loop.h"
 
 namespace qrpc {
 class Server;
 class Dispatcher;
 class Worker {
 public:
-  typedef base::Loop Loop;
+  typedef qrpc::Loop Loop;
   typedef base::Serial::PartitionId PartitionId;
   typedef std::function<void()> Task;
   typedef moodycamel::ConcurrentQueue<Task> TaskQueue;

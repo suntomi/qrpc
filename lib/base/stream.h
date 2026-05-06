@@ -69,21 +69,10 @@ namespace base {
     template <class T> void SetContext(T *t) { config_.context = t;}
     void SetReset() { reset_ = 1; }
     void SetPublished(bool on) { published_ = (on ? 1 : 0); }
-    static inline Stream *FromHandle(qrpc_stream_t st) { return FromPair(st.p, st.s); }
-    static inline Stream *FromHandle(qrpc_rpc_t rpc) { return FromPair(rpc.p, rpc.s); }
     template <class T>  T *As() { return dynamic_cast<T *>(this); }
-  private:
-    static inline Stream *FromPair(const void *p, const qrpc_serial_t &s) {
-      auto st = reinterpret_cast<Stream *>(const_cast<void *>(p));
-      if (st->serial_ != Serial(&s)) {
-        return nullptr;
-      }
-      return st;
-    }
   protected:
     Connection &conn_;
     Config config_;
-    Serial serial_;
     std::unique_ptr<CloseReason> close_reason_;
     uint8_t binary_payload_, reset_{0}, published_{0};
   };

@@ -204,7 +204,7 @@ namespace webrtc {
       std::shared_ptr<Stream> published_stream_;
     };
   public: // connections
-    class Connection : public base::Connection, 
+    class Connection : public virtual base::Connection, 
                        public IceServer::Listener,
                        public RTC::DtlsTransport::Listener,
                        public RTC::SctpAssociation::Listener,
@@ -213,7 +213,7 @@ namespace webrtc {
       friend class ConnectionFactory;
     public:
       Connection(ConnectionFactory &sv, RTC::DtlsTransport::Role dtls_role) :
-        factory_(sv), serial_(sv.loop().partition_id()), last_active_(qrpc_time_now()), dtls_role_(dtls_role) {
+        factory_(sv), last_active_(qrpc_time_now()), dtls_role_(dtls_role) {
           // https://datatracker.ietf.org/doc/html/rfc8832#name-data_channel_open-message
           switch (dtls_role) {
             case RTC::DtlsTransport::Role::CLIENT:
@@ -253,7 +253,6 @@ namespace webrtc {
       }
       bool has_message_boundary() const override { return true; }
       AlarmProcessor &alarm_processor() override { return factory().alarm_processor(); }
-      const Serial &serial() const override { return serial_; }
       bool is_client() const override { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
       void *context() override { return nullptr; }
       int ControlMedia(const std::string &path, const qrpc_media_control_t &control) override  {
@@ -434,11 +433,10 @@ namespace webrtc {
       const rtp::Handler::Config &GetRtpConfig() const override { return transport_config().rtp; }
       bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) override;
       std::shared_ptr<base::Media> media_factory(const std::string &path) override {
-        return std::make_shared<base::Media>(path, *this, serial().partition_id());
+        return std::make_shared<base::Media>(path, *this);
       }
     protected:
       ConnectionFactory &factory_;
-      base::Serial serial_;
       qrpc_time_t last_active_, start_shutdown_{0};
       std::unique_ptr<IceServer> ice_server_; // ICE
       std::unique_ptr<IceProber> ice_prober_; // ICE(client)

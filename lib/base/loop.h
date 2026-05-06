@@ -7,7 +7,6 @@
 #include "base/io_processor.h"
 #include "base/string.h"
 #include "base/timer.h"
-#include "base/serial.h"
 
 namespace base {
 class Loop : public LoopImpl, IoProcessor {
@@ -17,8 +16,6 @@ class Loop : public LoopImpl, IoProcessor {
   TimerScheduler timer_;
   int max_nfd_{-1};
   LoopImpl::Timeout timeout_; // not initailized in constructor.
-  Serial::PartitionId partition_id_;
-  static thread_local Serial::PartitionId g_partition_id_;
 public:
   static const int kMinimumProcessorArraySize = 16;
   typedef LoopImpl::Event Event;
@@ -27,16 +24,8 @@ public:
   template <class T> T *ProcessorAt(int fd) { return (T *)processors_[fd]; }
   inline AlarmProcessor &alarm_processor() { return timer_; }
   inline Fd fd() const { return LoopImpl::fd(); }
-  inline Serial::PartitionId partition_id() const { return partition_id_; }
-  static inline Serial::PartitionId g_partition_id() { return g_partition_id_; }
-  inline void SetParitionId(Serial::PartitionId id) { partition_id_ = id; }
-  void EnsurePartitionId();
   // NOTE: we assume the thread which call Open and Poll is same.
-  // if you hand over Loop object to other thread than calling Open,
-  // be sure that change partition_id_ using SetParitionId
   inline int Open(int max_nfd, uint64_t timeout_ns = 1000 * 1000) {
-    EnsurePartitionId();
-    ASSERT(partition_id() != 0);
     if (max_nfd < kMinimumProcessorArraySize) {
       max_nfd = kMinimumProcessorArraySize;
     }
@@ -113,7 +102,6 @@ public:
     }
   }
   inline void Poll() {
-    ASSERT(g_partition_id() == partition_id());
     Event list[max_nfd_];
     int n_list = LoopImpl::Wait(list, max_nfd_, timeout_);
     for (int i = 0; i < n_list; i++) {

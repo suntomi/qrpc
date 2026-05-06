@@ -6,7 +6,9 @@
 
 #include "qrpc/base.h"
 #include "qrpc/client.h"
+#include "qrpc/conn.h"
 #include "qrpc/listener.h"
+#include "qrpc/loop.h"
 #include "qrpc/server.h"
 #include "qrpc/stream.h"
 #include "qrpc/media.h"
@@ -45,10 +47,13 @@ namespace webrtc {
   }
 
   // webrtc::ServerConnection
-  class ServerConnection : public base::webrtc::Listener::Connection {
+  class ServerConnection : public qrpc::ConnectionImplT<base::webrtc::Listener::Connection> {
   public:
     ServerConnection(ConnectionFactory &cf, DtlsTransport::Role dtls_role, const qrpc_listen_conf_t &config) :
-      Connection(cf, dtls_role), on_open_(config.on_open), on_close_(config.on_close), ctx_(nullptr) {}
+      qrpc::ConnectionImplT<base::webrtc::Listener::Connection>(
+        dynamic_cast<qrpc::Loop &>(cf.loop()).partition_id(), cf, dtls_role
+      ),
+      on_open_(config.on_open), on_close_(config.on_close), ctx_(nullptr) {}
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { 
       qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), close_reason_->code == QRPC_CLOSE_REASON_REMOTE);
@@ -101,10 +106,14 @@ namespace webrtc {
   };
 
     // webrtc::ClientConnection
-  class ClientConnection : public base::webrtc::Client::Connection {
+  class ClientConnection : public qrpc::ConnectionImplT<base::webrtc::Client::Connection> {
   public:
-    ClientConnection(ConnectionFactory &cf, DtlsTransport::Role dtls_role, const qrpc_connect_conf_t &conf) :
-      Connection(cf, dtls_role, base::webrtc::Client::TransportConfig::From(conf.transport), 
+    ClientConnection(
+      ConnectionFactory &cf, DtlsTransport::Role dtls_role,
+      base::Serial::PartitionId pid, const qrpc_connect_conf_t &conf
+    ) :
+      qrpc::ConnectionImplT<base::webrtc::Client::Connection>(
+        pid, cf, dtls_role, base::webrtc::Client::TransportConfig::From(conf.transport), 
         [this](const Stream::Config &c, base::Connection &conn) {
           auto &cc = dynamic_cast<ClientConnection &>(conn);
           auto he = qrpc_closure_call(config_.stream_router, c.label.c_str(), cc.ToHandle());
@@ -112,7 +121,9 @@ namespace webrtc {
             logger::die({{"ev","no handler found"},{"label",c.label},{"ptr",base::str::dptr(&conn)}});
           }
           return std::shared_ptr<Stream>(qrpc::webrtc::NewStream(c, conn, *he));
-        }), config_(conf), on_open_(conf.on_open), on_close_(conf.on_close), on_finalize_(conf.on_finalize) {}
+        }
+      ),
+      config_(conf), on_open_(conf.on_open), on_close_(conf.on_close), on_finalize_(conf.on_finalize) {}
     ~ClientConnection() override { qrpc_closure_call(on_finalize_, ToHandle()); }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override {
@@ -129,19 +140,19 @@ namespace webrtc {
   };
 
   // webrtc::Client
-  class Client : public Loop, public ClientInterface {
+  class Client : public qrpc::Loop, public ClientInterface {
   public:
     Client(const qrpc_clconf_t &config) : Loop(), resolver_(*this), config_(config), transport_(
       OpenOrDie(config.max_nfd, config.poll_timeout_ns),
       base::webrtc::Client::Config::From(
         resolver_.InitOrDie(AsyncResolver::Config::From(config.dns)), config.session_timeout, config.connect_timeout
-      )), queue_(), partition_id_(base::Loop::g_partition_id()) {}
+      )), queue_(), partition_id_(qrpc::Loop::g_partition_id()) {}
     void Close(base::Connection &c) override { transport_.Close(c); }
     bool Connect(const qrpc_connect_conf_t &c) override {
       return transport_.Connect(
         base::webrtc::Client::Endpoint::From(c.ep),
-        [conf = c](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
-          return new ClientConnection(cf, role, conf);
+        [conf = c, pid = partition_id_](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
+          return new ClientConnection(cf, role, pid, conf);
         }
       );
     }

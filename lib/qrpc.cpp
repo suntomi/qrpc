@@ -12,6 +12,8 @@
 using json = nlohmann::json;
 
 #include "qrpc/base.h"
+#include "qrpc/conn.h"
+#include "qrpc/loop.h"
 #include "qrpc/transport.h"
 
 #if defined(QRPC_THREADSAFE)
@@ -209,7 +211,7 @@ QRPC_THREADSAFE qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf) {
 }
 QRPC_THREADSAFE void qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_conf_t *conf) {
   auto c = qrpc::Client::FromHandle(cl);
-  if (c->GetPartitionId() != base::Loop::g_partition_id()) {
+  if (c->GetPartitionId() != qrpc::Loop::g_partition_id()) {
     c->Enqueue([c, conf]() {
       c->Connect(*conf);
     });
@@ -220,7 +222,7 @@ QRPC_THREADSAFE void qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_co
 }
 QRPC_THREADSAFE void qrpc_client_resolve(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb) {
   auto c = qrpc::Client::FromHandle(cl);
-  if (c->GetPartitionId() != base::Loop::g_partition_id()) {
+  if (c->GetPartitionId() != qrpc::Loop::g_partition_id()) {
     std::string host = hostname;
     c->Enqueue([c, family_pref, host, cb]() {
       c->Resolve(family_pref, host, cb);
@@ -236,7 +238,7 @@ QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
 }
 QRPC_THREADSAFE void qrpc_client_poll(qrpc_client_t cl) {
   auto c = qrpc::Client::FromHandle(cl);
-  if (UNLIKELY(c->GetPartitionId() != base::Loop::g_partition_id())) {
+  if (UNLIKELY(c->GetPartitionId() != qrpc::Loop::g_partition_id())) {
     logger::die({{"ev","qrpc_client_poll called from non-owner thread"},});
   }
   c->Poll();
@@ -311,7 +313,7 @@ QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv) {
 #define OP_RAW(__proc, ...) do { \
   auto __h = GET_FIRST(__VA_ARGS__); \
   auto partition_id = base::Serial::GetPartitionId(__h.s); \
-  if (partition_id != base::Loop::g_partition_id()) { \
+  if (partition_id != qrpc::Loop::g_partition_id()) { \
     Worker::queue(partition_id).enqueue([__VA_ARGS__]() { \
       __proc; \
     }); \
@@ -320,7 +322,7 @@ QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv) {
   } \
 } while (0)
 #define CONN_OP(__proc, ...) OP_RAW(do { \
-  auto __c = base::Connection::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  auto __c = qrpc::Connection::FromHandle(GET_FIRST(__VA_ARGS__)); \
   if (__c != nullptr) { \
     __proc; \
   } \
@@ -339,17 +341,17 @@ QRPC_THREADSAFE void qrpc_conn_task(qrpc_conn_t conn, qrpc_on_conn_task_t cb) {
   OP_RAW(qrpc_closure_call(cb, conn);, conn, cb);
 }
 QRPC_CLOSURECALL bool qrpc_conn_is_client(qrpc_conn_t conn) {
-  auto c = base::Connection::FromHandle(conn);
+  auto c = qrpc::Connection::FromHandle(conn);
   if (c != nullptr) {
     return c->is_client();
   }
   return false;
 }
 QRPC_CLOSURECALL bool qrpc_conn_is_valid(qrpc_conn_t conn) {
-  return base::Connection::FromHandle(conn) != nullptr;
+  return qrpc::Connection::FromHandle(conn) != nullptr;
 }
 QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn) {
-  auto c = base::Connection::FromHandle(conn);
+  auto c = qrpc::Connection::FromHandle(conn);
   if (c != nullptr) {
     return c->context();
   }
@@ -364,7 +366,7 @@ QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn) {
 //
 // --------------------------
 #define STREAM_OP(__proc, ...) OP_RAW(do { \
-  auto __s = base::Stream::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  auto __s = qrpc::Stream::FromHandle(GET_FIRST(__VA_ARGS__)); \
   if (__s != nullptr) { \
     __proc; \
   } \
@@ -376,7 +378,7 @@ QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn) {
   auto __ptr = GET_SECOND(__VA_ARGS__); \
   auto __size = GET_THIRD(__VA_ARGS__); \
   auto partition_id = base::Serial::GetPartitionId(__h.s); \
-  if (partition_id != base::Loop::g_partition_id()) { \
+  if (partition_id != qrpc::Loop::g_partition_id()) { \
     GET_SECOND(__VA_ARGS__) = base::Syscall::Memdup(__ptr, __size); \
     Worker::queue(partition_id).enqueue([__VA_ARGS__]() { \
       __proc; \
@@ -387,7 +389,7 @@ QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn) {
   } \
 } while (0)
 #define STREAM_BYTES_OP(__proc, ...) BYTES_OP(do { \
-  auto __s = base::Stream::FromHandle(GET_FIRST(__VA_ARGS__)); \
+  auto __s = qrpc::Stream::FromHandle(GET_FIRST(__VA_ARGS__)); \
   if (__s != nullptr) { \
     __proc; \
   } \
@@ -407,13 +409,13 @@ QRPC_THREADSAFE void qrpc_conn_stream(qrpc_conn_t conn, const qrpc_stream_config
   CONN_OP(__c->OpenStream(base::Stream::Config::From(cf, ctx));, conn, cf, ctx);
 }
 QRPC_CLOSURECALL qrpc_conn_t qrpc_stream_conn(qrpc_stream_t s) {
-  return base::Stream::FromHandle(s)->connection().ToHandle();
+  return dynamic_cast<qrpc::Connection &>(qrpc::Stream::FromHandle(s)->connection()).ToHandle();
 }
 QRPC_CLOSURECALL qrpc_alarm_t qrpc_stream_alarm(qrpc_stream_t s) {
-  return base::Stream::FromHandle(s)->connection().alarm_processor().ToHandle();
+  return qrpc::Stream::FromHandle(s)->connection().alarm_processor().ToHandle();
 }
 QRPC_CLOSURECALL bool qrpc_stream_is_valid(qrpc_stream_t s) {
-  return base::Stream::FromHandle(s) != nullptr;
+  return qrpc::Stream::FromHandle(s) != nullptr;
 }
 QRPC_THREADSAFE void qrpc_stream_validate(qrpc_stream_t s, qrpc_on_stream_validate_t cb) {
   OP_RAW(qrpc_closure_call(cb, s, qrpc_stream_is_valid(s)), s, cb);
@@ -432,10 +434,10 @@ QRPC_THREADSAFE void qrpc_stream_task(qrpc_stream_t s, qrpc_on_stream_task_t cb)
   STREAM_OP(qrpc_closure_call(cb, s), s, cb);
 }
 QRPC_CLOSURECALL void *qrpc_stream_ctx(qrpc_stream_t s) {
-  return base::Stream::FromHandle(s)->context_ptr();
+  return qrpc::Stream::FromHandle(s)->context_ptr();
 }
 QRPC_CLOSURECALL qrpc_sid_t qrpc_stream_sid(qrpc_stream_t s) {
-  return base::Stream::FromHandle(s)->id();
+  return qrpc::Stream::FromHandle(s)->id();
 }
 
 
@@ -463,13 +465,13 @@ QRPC_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const qrpc_stream_config_t
   CONN_OP(__c->OpenStream(base::Stream::Config::From(cf, ctx));, conn, cf, ctx);
 }
 QRPC_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc) {
-  return base::Stream::FromHandle(rpc)->connection().ToHandle();
+  return dynamic_cast<qrpc::Connection &>(qrpc::Stream::FromHandle(rpc)->connection()).ToHandle();
 }
 QRPC_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc) {
-  return base::Stream::FromHandle(rpc)->connection().alarm_processor().ToHandle();
+  return qrpc::Stream::FromHandle(rpc)->connection().alarm_processor().ToHandle();
 }
 QRPC_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc) {
-  return base::Stream::FromHandle(rpc) != nullptr;
+  return qrpc::Stream::FromHandle(rpc) != nullptr;
 }
 QRPC_THREADSAFE void qrpc_rpc_validate(qrpc_rpc_t rpc, qrpc_on_rpc_validate_t cb) {
   OP_RAW(qrpc_closure_call(cb, rpc, qrpc_rpc_is_valid(rpc)), rpc, cb);
@@ -512,10 +514,10 @@ QRPC_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb) {
   RPC_OP(qrpc_closure_call(cb, rpc), rpc, cb);
 }
 QRPC_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t rpc) {
-  return base::Stream::FromHandle(rpc)->context_ptr();
+  return qrpc::Stream::FromHandle(rpc)->context_ptr();
 }
-QRPC_THREADSAFE qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc) {
-  return base::Stream::FromHandle(rpc)->id();
+QRPC_CLOSURECALL qrpc_sid_t qrpc_rpc_sid(qrpc_rpc_t rpc) {
+  return qrpc::Stream::FromHandle(rpc)->id();
 }
 
 
@@ -656,16 +658,16 @@ QRPC_THREADSAFE void qrpc_media_watch(qrpc_media_t m, qrpc_on_media_consume_t cb
   MEDIA_OP(__m->SetWatcher(cb), m, cb);
 }
 QRPC_THREADSAFE void qrpc_media_close(qrpc_media_t m) {
-  MEDIA_OP(__m->connection().CloseMedia(base::Media::FromHandle(m)->path()), m);
+  MEDIA_OP(__m->connection().CloseMedia(qrpc::Media::FromHandle(m)->path()), m);
 }
 QRPC_THREADSAFE void qrpc_media_control(qrpc_media_t m, const qrpc_media_control_t *control) {
-  MEDIA_OP(__m->connection().ControlMedia(base::Media::FromHandle(m)->path(), *control), m, control);
+  MEDIA_OP(__m->connection().ControlMedia(qrpc::Media::FromHandle(m)->path(), *control), m, control);
 }
 QRPC_CLOSURECALL bool qrpc_media_paused(qrpc_media_t m) {
-  return base::Media::FromHandle(m)->connection().IsMediaPaused(base::Media::FromHandle(m)->path());
+  return qrpc::Media::FromHandle(m)->connection().IsMediaPaused(qrpc::Media::FromHandle(m)->path());
 }
 QRPC_CLOSURECALL const char *qrpc_media_path(qrpc_media_t m) {
-  return base::Media::FromHandle(m)->path().c_str();
+  return qrpc::Media::FromHandle(m)->path().c_str();
 }
 
 

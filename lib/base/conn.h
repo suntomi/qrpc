@@ -1,7 +1,6 @@
 #pragma once
 
 #include "base/stream.h"
-#include "base/serial.h"
 
 namespace base {
   class Connection {
@@ -25,18 +24,7 @@ namespace base {
     virtual bool IsMediaPaused(const std::string &path) = 0;
     virtual AlarmProcessor &alarm_processor() = 0;
     virtual StreamFactory &stream_factory() = 0;
-    virtual const Serial &serial() const = 0;
     virtual bool is_client() const = 0;
     virtual void *context() = 0;
-    inline qrpc_conn_t ToHandle() const {
-      return { .p = this, .s = this->serial() };
-    }
-    static inline Connection *FromHandle(qrpc_conn_t conn) {
-      auto p = reinterpret_cast<const Connection *>(conn.p);
-      if (p->serial() != Serial(&conn.s)) {
-        return nullptr;
-      }
-      return const_cast<Connection *>(p);
-    }
   };
 } // namespace base

@@ -335,10 +335,10 @@ lib/qrpc/stream.qrpc.cppにおいて、CodedByteStreamを廃止しましたが�
 
 =======
 
-CodedByteStream::OnRead, CodedRPCStream::OnRead ですが、p, szが十分な長さの場合、parse_bufferにappendせずにそのままコールバックにポインタを渡すことができるはずです。このライブラリは小さなパケットを大量に送るようなユースケースが多いため、レコード教会で与えられた
-
-- base::HeaderCodec::Decodeで得られた長さに残りのバッファ長が足りない時のみparsed_buffer_にappendする
-- CodedXXXStream::OnReadが呼ばれたときにparsed_buffer_.size() > 0 なら、p, szをappendし、
+CodedByteStream::OnRead, CodedRPCStream::OnRead ですが、p, szが十分な長さの場合、parse_bufferにappendせずにそのままコールバックにポインタを渡すことができるはずです。このライブラリは小さなパケットを大量に送るようなユースケースが多いため、受信した時点でレコード長が足りているケースは多いです。
+- CodedXXXStream::OnReadが呼ばれたときにparsed_buffer_.size() == 0 なら、p, szに対して直接base::HeaderCodec::Decodeで長さを取り出す。取り出された長さよりもszの残りが大きければそのままpと長さをコールバックに渡す。
+- CodedXXXStream::OnReadが呼ばれたときにparsed_buffer_.size() > 0 なら、p, szをappendし、parsed_buffer_由来のバッファに対して同様の処理を実行する。
+- base::HeaderCodec::Decodeで得られた長さに残りのバッファ長が足りない時のみparsed_buffer_にappendする(あるいは、すでにconsumeしたバッファ長分をeraseする)
 
 =======
 
@@ -347,7 +347,42 @@ lib/ext/mediasoup/worker/src/RTC/SctpAssociation.cpp は、分割されたsctp�
 - sctp streamが複数存在し、それぞれのstream上でのメッセージが分割された際に、両方のメッセージの受信を正しく扱えない(破棄されてしまう可能性がある)
 - unorderedなsctp streamが存在する場合に、後のメッセージが前のメッセージの受信完了前に届いてしまうと前のメッセージが破棄されてしまう
 
-これを防ぐためにSctpAssociationのmessageBufferをstreamIdとSSNのペアごとに保持するようにし、それぞれeorを受信したときに OnSctpAssociationMessageReceived をコールバックするようにしてください。ppid == 50のケースは別に扱い、OnSctpWebRtcDataChannelControlDataReceived を呼び出すようにします。
+これを防ぐためにSctpAssociationのmessageBufferをstreamId,SSN,ppIdのタプルごとに保持するようにし、それぞれeorを受信したときに OnSctpAssociationMessageReceived をコールバックするようにしてください。ppid == 50のケースは別に扱い、OnSctpWebRtcDataChannelControlDataReceived を呼び出すようにします。
+
+ppidごとにバッファを設ける必要はありますか？それともppid == 50 (dcep) とそれ以外を分けるだけでも良いでしょうか？意見を聞かせてください。
+
+=======
+lib/base/sig.hのAPIをqrpc.hに公開したいと考えていますが、以下のような考慮すべき点があります。
+- sig.hのSignalHandlerはLoopが必要だが、qrpc.hにおいてはLoopはスレッドごとに作成される。SignalHandlerを担当するLoopをどのように選ぶべきか。
+- あるいは、全スレッドでSignalHandlerを作成する。この場合、一度のsignalで複数スレッドのSignalHandlerが起動されてしまうか？
+
+この点について意見を聞かせてください。
+
+=======
+
+SignalHandlerについては提案の通り、つまり、専用のスレッドを用意した上で、そこのLoopに対してSignalHandlerを追加して通知を受け取るようにします。
+しかし、そのためには設計変更が必要です。
+base::Loopは今、g_partition_id_とpartition_id_を保持しています。これはLoopがqrpcにおけるどのworker threadに所属しているかを表すものです。
+qrpc_stream_t, qrpc_rpc_t, qrpc_conn_t, qrpc_media_t などのオブジェクトに操作を行う場合、partition_idを見て、同じpartitionからであれば直接操作を行い、そうでなければworkerのキュー経由でthread safeな形で操作を行う、というような動作をします。
+
+base::LoopをWorkerを作らずに作成すると、「partition_idが割り当てられるが、workerがいないのでキューがない」という状況が発生し、今の前提が崩れます。
+したがって、以下のようなある程度大きなリファクタリングを行う必要があります。実際、baseのレベルではpartition_idを考える必要はないため、このリファクタリングを行うことは自然だと思います。
+
+- qrpc::Loopをbase::Loopを継承して作成し、g_partition_id_とpartition_id_の処理を移動させる。
+- そうすると、シリアルの作成にはpartition_idが必要なため、baseのレベルではbase::Media, base::Stream, base::Connにシリアル(qrpc_serial_t)の処理を持たせられないため、これらをqrpcに移動させる
+  - Stream => lib/qrpc/stream.h, Media => lib/qrpc/media.h, Connection => lib/qrpc/conn.h (継承してインターフェイスを追加する)
+
+まずこのリファクタリングを行なってください。実装に入る前にあなたが理解したプランを提示してください。
+
+=======
+
+
+signal専用の初期化のために、qrpc_signal_init()を用意し、signal handlerを使いたい場合にはそれを呼び出す必要がある、という仕様とします
+
+qrpc_signal_handleで登録されたハンドラーについては以下のように実装してください。
+
+- base::Loop::g_partition_id() が０ではない(つまりbase::Loopを持つスレッド)場合、
+
 
 =======
 lib/tests/e2e/qrpc/client/main.cpp と lib/tests/e2e/qrpc/server/main.cpp　にqrpcのRTP実装である qrpc_media_XXXX の動作をテストするコードを追加してください。
