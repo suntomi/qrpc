@@ -81,6 +81,7 @@ public:
   }
 protected:
   static base::IdFactory<uint64_t> id_factory_;
+  static thread_local PartitionId g_partition_id_;
 };
 
 template <class H, class P>

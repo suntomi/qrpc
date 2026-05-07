@@ -103,14 +103,11 @@ public:
   }
   inline void Poll() {
     Event list[max_nfd_];
-    int n_list = LoopImpl::Wait(list, max_nfd_, timeout_);
-    for (int i = 0; i < n_list; i++) {
-      const auto &ev = list[i];
-      Fd fd = LoopImpl::From(ev);
-      auto h = processors_[fd];
-      h->OnEvent(fd, ev);
-    }
-    timer_.Poll();
+    Dispatch(LoopImpl::Wait(list, max_nfd_, timeout_), list);
+  }
+  inline void WaitEvent() {
+    Event list[max_nfd_];
+    Dispatch(LoopImpl::Wait(list, max_nfd_), list);
   }
 public: //IoProcessor
   void OnEvent(Fd lfd, const Event &e) override { ASSERT(fd() == lfd); Poll(); }
@@ -124,6 +121,16 @@ public: //IoProcessor
       processors_ = (IoProcessor**)std::realloc(processors_, max_nfd_ * sizeof(IoProcessor*));
       memset(processors_ + old, 0, sizeof(IoProcessor*) * (max_nfd_ - old));
     }
+  }
+private:
+  inline void Dispatch(int n_list, const Event *list) {
+    for (int i = 0; i < n_list; i++) {
+      const auto &ev = list[i];
+      Fd fd = LoopImpl::From(ev);
+      auto h = processors_[fd];
+      h->OnEvent(fd, ev);
+    }
+    timer_.Poll();
   }
 };
 }

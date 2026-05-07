@@ -19,6 +19,9 @@ using ClientInterface = Client;
 namespace webrtc {
   using ConnectionFactory = base::webrtc::ConnectionFactory;
   using DtlsTransport = RTC::DtlsTransport;
+  static inline qrpc::Loop::PartitionId ReserveClientPartitionId() {
+    return base::Serial::ReservePartitionIds(1);
+  }
   static inline qrpc_transport_type_t type() {
     return QRPC_TRANSPORT_WEBRTC;
   }
@@ -142,11 +145,14 @@ namespace webrtc {
   // webrtc::Client
   class Client : public qrpc::Loop, public ClientInterface {
   public:
-    Client(const qrpc_clconf_t &config) : Loop(), resolver_(*this), config_(config), transport_(
+    Client(const qrpc_clconf_t &config) : Loop(ReserveClientPartitionId()), resolver_(*this), config_(config), transport_(
       OpenOrDie(config.max_nfd, config.poll_timeout_ns),
       base::webrtc::Client::Config::From(
         resolver_.InitOrDie(AsyncResolver::Config::From(config.dns)), config.session_timeout, config.connect_timeout
-      )), queue_(), partition_id_(qrpc::Loop::g_partition_id()) {}
+      )), queue_(), partition_id_(partition_id()) {
+      
+    }
+    ~Client() override {}
     void Close(base::Connection &c) override { transport_.Close(c); }
     bool Connect(const qrpc_connect_conf_t &c) override {
       return transport_.Connect(

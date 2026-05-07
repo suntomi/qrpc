@@ -18,22 +18,24 @@ void Worker::SetThreadLocal(Server &server) {
 }
 
 Worker::TaskQueue &Worker::queue(PartitionId id) {
+  ASSERT(server_ != nullptr);
+  ASSERT(server_->OwnsPartitionId(id));
   return server_->queue(id);
 }
 
-void Worker::Run(int max_nfd) {
-  SetThreadLocal(*owner_);
-  if (loop_.Open(max_nfd) < 0) {
+void Worker::Run(Server &sv) {
+  SetThreadLocal(sv);
+  if (loop_.Open(sv.max_nfd_per_worker()) < 0) {
     QRPC_LOGJ(fatal, {{"ev", "Loop::Open() failed in Worker::Run()"}});
     return;
   }
-  auto &q = server_->AddWorker(loop_.partition_id(), this);
+  auto &q = sv.AddWorker(loop_.partition_id(), this);
   auto ls = Listen();
   if (ls.size() == 0) {
     QRPC_LOGJ(fatal, {{"ev" "no listener"}});
     return;
   }
-  while (server().alive()) {
+  while (sv.alive()) {
     // consume queue. TODO: option to not use task queue
     Task t;
     while (q.try_dequeue(t)) { t(); }

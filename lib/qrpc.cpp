@@ -1,8 +1,16 @@
 #include "qrpc.h"
 
 #include <ares.h>
+#include <pthread.h>
+#include <unistd.h>
+
+#include <array>
+#include <condition_variable>
+#include <mutex>
+#include <queue>
 
 #include "base/logger.h"
+#include "base/sig.h"
 
 #include "base/defs.h"
 #include "base/serial.h"
@@ -15,6 +23,7 @@ using json = nlohmann::json;
 #include "qrpc/conn.h"
 #include "qrpc/loop.h"
 #include "qrpc/transport.h"
+#include "qrpc/worker.h"
 
 #if defined(QRPC_THREADSAFE)
 #undef QRPC_THREADSAFE
@@ -158,6 +167,226 @@ QRPC_THREADSAFE const char *qrpc_error_str(qrpc_error_t code, int /* detail_code
 
 // --------------------------
 //
+// signal API
+//
+// --------------------------
+namespace {
+class SignalService {
+  class ControlProcessor : public base::IoProcessor {
+  public:
+    explicit ControlProcessor(SignalService &owner) : owner_(owner) {}
+    void OnEvent(base::Fd fd, const Event &e) override {
+      if (!base::Loop::Readable(e)) {
+        return;
+      }
+      char buf[64];
+      while (base::Syscall::Read(fd, buf, sizeof(buf)) > 0) {}
+      owner_.DrainControlQueue();
+    }
+  private:
+    SignalService &owner_;
+  };
+  struct Registration {
+    qrpc_signal_handler_t handler;
+    base::Serial::PartitionId partition_id;
+    Worker::TaskQueue *queue;
+    Registration() : handler{nullptr, nullptr}, partition_id(0), queue(nullptr) {}
+  };
+public:
+  SignalService() : loop_(), signal_handler_(), control_(*this) {
+    regs_.fill(Registration{});
+  }
+  int Init() {
+    std::unique_lock<std::mutex> lock(mu_);
+    if (started_) {
+      return QRPC_OK;
+    }
+    started_ = true;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    size_t stack_size = 64 * 1024;
+    if (stack_size < PTHREAD_STACK_MIN) {
+      stack_size = PTHREAD_STACK_MIN;
+    }
+    pthread_attr_setstacksize(&attr, stack_size);
+    int r = pthread_create(&thread_, &attr, &SignalService::ThreadMain, this);
+    pthread_attr_destroy(&attr);
+    if (r != 0) {
+      started_ = false;
+      return QRPC_ESYSCALL;
+    }
+    ready_cv_.wait(lock, [this]() { return ready_ || init_error_ != QRPC_OK; });
+    return init_error_;
+  }
+  int Handle(int signum, qrpc_signal_handler_t handler) {
+    if (signum <= 0 || signum >= NSIG) {
+      return QRPC_EINVAL;
+    }
+    int r = Init();
+    if (r < 0) {
+      return r;
+    }
+    Registration reg;
+    reg.handler = handler;
+    reg.partition_id = Worker::g_partition_id();
+    if (reg.partition_id != 0 && Worker::HasServer()) {
+      reg.queue = &Worker::queue(reg.partition_id);
+    }
+    return InvokeSync([this, signum, reg]() {
+      regs_[signum] = reg;
+      if (!signal_handler_started_) {
+        signal_handler_.Handle(signum, [this](int sig, const Signal &s) {
+          OnSignal(sig, s);
+        });
+        signal_handler_.Start(loop_);
+        signal_handler_started_ = true;
+      } else {
+        signal_handler_.Handle(signum, [this](int sig, const Signal &s) {
+          OnSignal(sig, s);
+        });
+      }
+      return QRPC_OK;
+    });
+  }
+  int Unhandle(int signum) {
+    if (signum <= 0 || signum >= NSIG) {
+      return QRPC_EINVAL;
+    }
+    int r = Init();
+    if (r < 0) {
+      return r;
+    }
+    return InvokeSync([this, signum]() {
+      regs_[signum] = Registration{};
+      if (signal_handler_started_) {
+        signal_handler_.Ignore(signum);
+      }
+      return QRPC_OK;
+    });
+  }
+private:
+  static void *ThreadMain(void *arg) {
+    static_cast<SignalService *>(arg)->Run();
+    return nullptr;
+  }
+  void Run() {
+    int err = QRPC_OK;
+    if (pipe(control_pipe_) != 0) {
+      err = QRPC_ESYSCALL;
+    } else if (!base::Syscall::SetNonblocking(control_pipe_[0]) || !base::Syscall::SetNonblocking(control_pipe_[1])) {
+      err = QRPC_ESYSCALL;
+    } else if (loop_.Open(16, 0) < 0) {
+      err = QRPC_ESYSCALL;
+    } else if (loop_.Add(control_pipe_[0], &control_, base::Loop::EV_READ) < 0) {
+      err = QRPC_ESYSCALL;
+    }
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      init_error_ = err;
+      ready_ = true;
+    }
+    ready_cv_.notify_all();
+    if (err < 0) {
+      return;
+    }
+    while (true) {
+      loop_.WaitEvent();
+    }
+  }
+  void DrainControlQueue() {
+    std::queue<std::function<void()>> tasks;
+    {
+      std::lock_guard<std::mutex> lock(control_mu_);
+      tasks.swap(control_queue_);
+    }
+    while (!tasks.empty()) {
+      auto task = std::move(tasks.front());
+      tasks.pop();
+      task();
+    }
+  }
+  void Wake() {
+    static const uint8_t one = 1;
+    base::Syscall::Write(control_pipe_[1], &one, sizeof(one));
+  }
+  template <class F>
+  int InvokeSync(F &&f) {
+    std::mutex done_mu;
+    std::condition_variable done_cv;
+    bool done = false;
+    int result = QRPC_ESYSCALL;
+    {
+      std::lock_guard<std::mutex> lock(control_mu_);
+      control_queue_.emplace([fn = std::forward<F>(f), &done_mu, &done_cv, &done, &result]() mutable {
+        result = fn();
+        {
+          std::lock_guard<std::mutex> lock(done_mu);
+          done = true;
+        }
+        done_cv.notify_one();
+      });
+    }
+    Wake();
+    std::unique_lock<std::mutex> lock(done_mu);
+    done_cv.wait(lock, [&done]() { return done; });
+    return result;
+  }
+  void OnSignal(int signum, const Signal &signal) {
+    const auto &reg = regs_[signum];
+    if (qrpc_closure_is_empty(reg.handler)) {
+      return;
+    }
+    qrpc_signal_event_t ev{
+      .signum = signum,
+      .reap_count = signal_handler_.GetReapCount(signal),
+    };
+    if (reg.partition_id != 0 && reg.queue != nullptr) {
+      auto closure = reg.handler;
+      reg.queue->enqueue([closure, ev]() mutable {
+        auto local_ev = ev;
+        qrpc_closure_call(closure, &local_ev);
+      });
+      return;
+    }
+    qrpc_closure_call(reg.handler, &ev);
+  }
+private:
+  std::mutex mu_;
+  std::condition_variable ready_cv_;
+  bool started_{false};
+  bool ready_{false};
+  int init_error_{QRPC_OK};
+  pthread_t thread_{};
+  base::Loop loop_;
+  base::SignalHandler signal_handler_;
+  bool signal_handler_started_{false};
+  int control_pipe_[2]{ base::INVALID_FD, base::INVALID_FD };
+  ControlProcessor control_;
+  std::mutex control_mu_;
+  std::queue<std::function<void()>> control_queue_;
+  std::array<Registration, NSIG> regs_;
+};
+
+SignalService &signal_service() {
+  static SignalService *svc = new SignalService();
+  return *svc;
+}
+} // namespace
+
+QRPC_BOOTSTRAP int qrpc_signal_init() {
+  return signal_service().Init();
+}
+QRPC_THREADSAFE int qrpc_signal_handle(int signum, qrpc_signal_handler_t handler) {
+  return signal_service().Handle(signum, handler);
+}
+QRPC_THREADSAFE int qrpc_signal_unhandle(int signum) {
+  return signal_service().Unhandle(signum);
+}
+
+
+
+// --------------------------
+//
 // client API
 //
 // --------------------------
@@ -211,7 +440,7 @@ QRPC_THREADSAFE qrpc_client_t qrpc_client_create(const qrpc_clconf_t *conf) {
 }
 QRPC_THREADSAFE void qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_conf_t *conf) {
   auto c = qrpc::Client::FromHandle(cl);
-  if (c->GetPartitionId() != qrpc::Loop::g_partition_id()) {
+  if (c->GetPartitionId() != Worker::g_partition_id()) {
     c->Enqueue([c, conf]() {
       c->Connect(*conf);
     });
@@ -222,7 +451,7 @@ QRPC_THREADSAFE void qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_co
 }
 QRPC_THREADSAFE void qrpc_client_resolve(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb) {
   auto c = qrpc::Client::FromHandle(cl);
-  if (c->GetPartitionId() != qrpc::Loop::g_partition_id()) {
+  if (c->GetPartitionId() != Worker::g_partition_id()) {
     std::string host = hostname;
     c->Enqueue([c, family_pref, host, cb]() {
       c->Resolve(family_pref, host, cb);
@@ -238,7 +467,7 @@ QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
 }
 QRPC_THREADSAFE void qrpc_client_poll(qrpc_client_t cl) {
   auto c = qrpc::Client::FromHandle(cl);
-  if (UNLIKELY(c->GetPartitionId() != qrpc::Loop::g_partition_id())) {
+  if (UNLIKELY(c->GetPartitionId() != Worker::g_partition_id())) {
     logger::die({{"ev","qrpc_client_poll called from non-owner thread"},});
   }
   c->Poll();
@@ -313,7 +542,7 @@ QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv) {
 #define OP_RAW(__proc, ...) do { \
   auto __h = GET_FIRST(__VA_ARGS__); \
   auto partition_id = base::Serial::GetPartitionId(__h.s); \
-  if (partition_id != qrpc::Loop::g_partition_id()) { \
+  if (partition_id != Worker::g_partition_id()) { \
     Worker::queue(partition_id).enqueue([__VA_ARGS__]() { \
       __proc; \
     }); \
@@ -378,7 +607,7 @@ QRPC_CLOSURECALL void *qrpc_conn_ctx(qrpc_conn_t conn) {
   auto __ptr = GET_SECOND(__VA_ARGS__); \
   auto __size = GET_THIRD(__VA_ARGS__); \
   auto partition_id = base::Serial::GetPartitionId(__h.s); \
-  if (partition_id != qrpc::Loop::g_partition_id()) { \
+  if (partition_id != Worker::g_partition_id()) { \
     GET_SECOND(__VA_ARGS__) = base::Syscall::Memdup(__ptr, __size); \
     Worker::queue(partition_id).enqueue([__VA_ARGS__]() { \
       __proc; \

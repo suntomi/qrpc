@@ -283,17 +283,6 @@ qrpc_media_config_tの値を使って、必要なペイロードをwebrtc::Clien
 - Clientが持っている IdFactory<qrpc_msgid_t> msgid_factory_; をSyscallStreamに移動させ、msgidが必要なSyscallStreamの関数が呼ばれる場合、msgid_factory_から自分でmsgidを生成して使うようにする
 
 =======
-lib/tests/e2e/core/client/native/main.cpp でqrpcのrtpの動作を確認するテストを作成してください。以下のようなテストケースが必要です。
-- test_webrtc_clientのような形でtest_rtp_clientを作成します。
-- test_rtp_clientは２つのbase::webrtc::Clientを作成し、サーバーとの接続をそれぞれ行います。
-  - １つのConnectionはbase::webrtc::Client::Connection::OpenMediaを行います。
-    - qrpc_on_media_produce_tを実装する必要があります。著作権フリーの動画ファイルをダウンロードして、そのファイルを読み出して送信するような実装にしてください。ファイルが終端に達したら、先頭から再送信します。
-  - もう一つのConnectionはbase::webrtc::Client::Connection::WatchMediaを行います。
-    - 受け取ったrtpパケットから動画ファイルを生成して保存します。
-
-
-
-=======
 lib/tests/e2e/qrpc/server/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/server/main.cpp の base::webrtc::AdhocListener と同等の動作をするサーバーを作成してください。
 
 bash lib/tests/e2e/core/run.sh native webrtc_client がexit 0で終了するように実装する必要があります。
@@ -375,17 +364,56 @@ base::LoopをWorkerを作らずに作成すると、「partition_idが割り当�
 まずこのリファクタリングを行なってください。実装に入る前にあなたが理解したプランを提示してください。
 
 =======
+qrpc::Connection にメンバーを追加するとメモリーレイアウトが把握しづらくなるので以下のようにしたいです
 
+- qrpc::Connectionはvirtually qrpc_serial_t serial() = 0追加するだけ
+- 継承するクラスをテンプレート引数として受け取るtemplate class qrpc::ConnectionImplTを作成し。serial()の実装を含む今のqrpc::Connectionの残りの実装を追加する
+- lib/qrpc/transports/webrtc.hのbase::webrtc::Listener::Connectionやbase::webrtc::Client::Connectionをqrpc::ConnectionImplTでラップする。
 
+=======
+SignalHandlerについては提案の通り、つまり、専用のスレッドを用意した上で、そこのLoopに対してSignalHandlerを追加して通知を受け取るようにします。
+signalを扱うスレッドは、定期的なpollingを行わないようにし、さらにメモリの消費量もWorkerを保持するスレッドに比べて少なくします。
 signal専用の初期化のために、qrpc_signal_init()を用意し、signal handlerを使いたい場合にはそれを呼び出す必要がある、という仕様とします
 
 qrpc_signal_handleで登録されたハンドラーについては以下のように実装してください。
 
-- base::Loop::g_partition_id() が０ではない(つまりbase::Loopを持つスレッド)場合、
-
+- qrpc::Loop::g_partition_id() が０ではない(qrpc::Loopを持つスレッド)場合、シグナルハンドラはqrpc_signal_handleを呼び出したスレッドでワーカーのキュー経由で呼び出される
+- qrpc::Loop::g_partition_id() == 0であれば、signal handlerをあつかう専用スレッドの上で呼び出される
 
 =======
-lib/tests/e2e/qrpc/client/main.cpp と lib/tests/e2e/qrpc/server/main.cpp　にqrpcのRTP実装である qrpc_media_XXXX の動作をテストするコードを追加してください。
+いくつか指摘があります。
+- スレッドがqrpc::Loopを持つ場合、それはそのスレッド上でWorkerが動くと考えて良いです。したがって qrpc::Loop::RegisterDispatcher, UnregisterDispatcherは不要で、qrpc::Worker::queue()にsignal handlerを渡せば良いと思います。
+- base::LoopでブロックするPollを実現するためにメンバ変数を追加したり、Poll()内部で分岐したりしていますが、Pollを呼ばなければいけないわけではないので、base::Loop::WaitEventみたいな関数を作って呼び出す方が余計なオーバーヘッドを減らせます。同様にqrpc::LoopのXXBlocking系の関数も不要で、Pollのみ別関数を作れば良いです。
+- base::Loop::WaitInfiniteですが、関数オーバーロードでWaitという同じ名前を使いたいです
+
+=======
+
+Worker::TaskQueueへのenqueueはすでにスレッドセーフなので、mutexを用意する必要はありません。
+したがってWorker::queueの実装は元に戻してよく、またWorkerのqueueにタスクを積む場合も単にWorker::queue(partition_id).enqueue(...)とすれば良いです。したがって、g_queuesも不要なため、UnregisterQueue, RegisterQueueも削除できます。
+
+=======
+ありがとうございます。その指摘により、現在のServer::queue(partition_id)に欠陥があることに気づきました。この実装自体がServerが１つしか作られないという仮定のもとに行われていたようです。２個目以降のServerが作られるとpartition_idは1よりも大きな値で始まるため、 `TaskQueue &queue(PartitionId id) { return worker_queue_[id - 1]; }` では正しいqueueが取れない(それどころか境界外アクセスが起きる)です。また、複数スレッドがServerオブジェクトを作った場合、そもそもWorkerのpartition_idが連番になる保証もありません。したがって以下のように修正します。
+
+- qrpc::Server::StartWorkerを読んでいるループをmutexで保護し、以下のように処理を行う
+  - その時点でのg_next_partition_idの値を読み取り、Serverのメンバ変数(start_partition_id_)に格納する
+  - StartWorkerをmutexで保護された状態で行う。これにより、このServerオブジェクトが所有するWorkerはg_next_partition_idから始まる連番になることが保障される
+- Server::queue(PartitionId)は以下のような実装になる `TaskQueue &queue(PartitionId id) { return worker_queue_[id - start_partition_id_]; }`
+
+その上で、あなたの質問については２の、登録時にTaskQueueも渡す、という方針で良いと思います。
+
+=======
+現在Loopがpartition_idを割り当てていますが、あらかじめreserveするのであれば、Serverにreserveする責務を負わせ、LoopはWorkerにセットされたpartition_idを受け継ぐ(自分ではpartition_idを生成したりしない)方が良いと思います。
+- Serv
+Worker::
+
+=======
+lib/tests/e2e/core/client/native/main.cpp でqrpcのrtpの動作を確認するテストを作成してください。以下のようなテストケースが必要です。
+- test_webrtc_clientのような形でtest_rtp_clientを作成します。
+- test_rtp_clientは２つのbase::webrtc::Clientを作成し、サーバーとの接続をそれぞれ行います。
+  - １つのConnectionはbase::webrtc::Client::Connection::OpenMediaを行います。
+    - qrpc_on_media_produce_tを実装する必要があります。著作権フリーの動画ファイルをダウンロードして、そのファイルを読み出して送信するような実装にしてください。ファイルが終端に達したら、先頭から再送信します。
+  - もう一つのConnectionはbase::webrtc::Client::Connection::WatchMediaを行います。
+    - 受け取ったrtpパケットから動画ファイルを生成して保存します。
 
 
 もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。

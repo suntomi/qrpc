@@ -554,14 +554,17 @@ QRPC_INLINE void *qrpc_closure_proc_generic_noop(...) { return nullptr; }
 // signal API
 //
 // --------------------------
-typedef void *qrpc_signal_router_t;
 typedef struct qrpc_signal_event_tag {
   int signum;
   int reap_count; //number of times signal raised from last event
 } qrpc_signal_event_t;
-QRPC_DECL_CLOSURE(void, qrpc_signal_handler_t, qrpc_signal_router_t, qrpc_signal_event_t*);
-QRPC_BOOTSTRAP int qrpc_signal_handle(qrpc_signal_router_t r, int signum, qrpc_signal_handler_t handler);
-QRPC_BOOTSTRAP int qrpc_signal_unhandle(qrpc_signal_router_t r, int signum);
+QRPC_DECL_CLOSURE(void, qrpc_signal_handler_t, void *, qrpc_signal_event_t*);
+// Initialize the dedicated signal thread and its loop before using signal handlers.
+QRPC_BOOTSTRAP int qrpc_signal_init();
+// If called on a qrpc worker thread, the callback runs on that thread via its queue.
+// Otherwise the callback runs on the dedicated signal thread.
+QRPC_THREADSAFE int qrpc_signal_handle(int signum, qrpc_signal_handler_t handler);
+QRPC_THREADSAFE int qrpc_signal_unhandle(int signum);
 
 
 

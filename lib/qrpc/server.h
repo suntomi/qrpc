@@ -18,6 +18,7 @@ namespace qrpc {
 class Server {
 public:
 	typedef Worker::TaskQueue TaskQueue;
+  typedef base::Serial::PartitionId PartitionId;
   typedef qrpc_listen_conf_t PortConfig;
   enum Status {
     RUNNING,
@@ -30,14 +31,16 @@ protected:
 	std::unique_ptr<TaskQueue[]> worker_queue_;
 	std::unordered_map<int, PortConfig> port_configs_;
   std::unordered_map<int, Worker*> workers_;
+  PartitionId start_partition_id_{0};
   std::mutex mutex_;
   std::condition_variable cond_;
   std::thread shutdown_thread_;
+  static thread_local std::mutex g_mutex_;
 public:
 	Server(const qrpc_svconf_t &conf) : status_(RUNNING),
     n_worker_(conf.n_worker), max_nfd_(conf.max_nfd),
     process_index_(conf.process_index), worker_queue_(nullptr) {}
-  ~Server() {}
+  ~Server() = default;
   int Open(const qrpc_listen_conf_t &conf) {
     if (port_configs_.find(conf.ep.port) != port_configs_.end()) {
       QRPC_LOGJ(error, {{"ev","port dup"},{"port",conf.ep.port}});
@@ -58,12 +61,10 @@ public:
 		if (worker_queue_ == nullptr) {
 			return QRPC_EALLOC;
 		}
-    int r = 0, max_nfd = std::floor(max_nfd_ / n_worker_);
-		for (uint32_t i = 0; i < n_worker_; i++) {
-			if ((r = StartWorker(max_nfd)) < 0) {
-				return r;
-			}
-		}
+    int r = StartWorkers();
+    if (r < 0) {
+      return r;
+    }
     auto shutdown_block = [this]() {
       std::unique_lock<std::mutex> lock(mutex_);
       cond_.wait(lock, [this]() { return !alive(); });
@@ -81,13 +82,13 @@ public:
 	}
   TaskQueue &AddWorker(base::Serial::PartitionId id, Worker *w) {
     std::unique_lock<std::mutex> lock(mutex_);
-    // assert if workers_[id - 1] already exists
-    auto it = workers_.find(id - 1);
+    auto idx = id - start_partition_id_;
+    auto it = workers_.find(idx);
     if (it != workers_.end()) {
-      logger::die({{"ev","Server::AddWorker(): worker already exists"},{"index",id - 1}});
+      logger::die({{"ev","Server::AddWorker(): worker already exists"},{"index",idx}});
     }
-    workers_.emplace(id - 1, w);
-    return worker_queue_[id - 1];
+    workers_.emplace(idx, w);
+    return worker_queue_[idx];
   }
   void Join() {
     if (!alive()) { return; }
@@ -109,11 +110,20 @@ public:
       }
     }
   }
-  TaskQueue &queue(int idx) { return worker_queue_[idx]; }
+  TaskQueue &queue(PartitionId id) {
+    ASSERT(OwnsPartitionId(id));
+    return worker_queue_[id - start_partition_id_];
+  }
   inline bool alive() const { return status_ == RUNNING; }
   inline bool terminated() const { return status_ == TERMINATED; }
   inline uint32_t n_worker() const { return n_worker_; }
+  inline uint32_t max_nfd() const { return max_nfd_; }
+  inline uint32_t max_nfd_per_worker() const { return std::floor(max_nfd_ / n_worker_); }
   inline uint32_t process_index() const { return process_index_; }
+  inline PartitionId start_partition_id() const { return start_partition_id_; }
+  inline bool OwnsPartitionId(PartitionId id) const {
+    return start_partition_id_ != 0 && id >= start_partition_id_ && id < (start_partition_id_ + n_worker_);
+  }
   qrpc_transport_type_t transport_type() const;
   inline const std::unordered_map<int, PortConfig> &port_configs() const { return port_configs_; }
   inline std::unordered_map<int, PortConfig> &port_configs() { return port_configs_; }
@@ -128,9 +138,10 @@ protected:
     status_ = TERMINATED;
     cond_.notify_all();
   }
-  int StartWorker(int max_nfd) {
-    auto w = new Worker(*this);
-    w->Start(max_nfd);
+  int StartWorkers();
+  int StartWorker(PartitionId partition_id) {
+    auto w = new Worker(partition_id);
+    w->Start(*this);
     return QRPC_OK;
   } 
 };
