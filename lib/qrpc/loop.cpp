@@ -5,8 +5,9 @@
 
 namespace qrpc {
   static base::atomic<base::Serial::PartitionId> g_next_partition_id{1};
+  thread_local Loop::PartitionId Loop::g_partition_id_;
 
-  base::Serial::PartitionId Loop::ReservePartitionIds(uint32_t n) {
+  Loop::PartitionId Loop::ReservePartitionIds(uint32_t n) {
     auto start = g_next_partition_id.fetch_add(n, std::memory_order_relaxed);
     if (start == 0 || start + n < start) {
       base::logger::die({{"ev","partition id overflow"},{"start",start},{"count",n}});
@@ -15,7 +16,7 @@ namespace qrpc {
   }
   int Loop::Open(int max_nfd, uint64_t timeout_ns) {
     ASSERT(partition_id() != 0);
-    ASSERT(Worker::g_partition_id() == partition_id());
+    ASSERT(g_partition_id() == partition_id());
     return base::Loop::Open(max_nfd, timeout_ns);
   }
   Loop &Loop::OpenOrDie(int max_nfd, uint64_t timeout_ns) {

@@ -7,11 +7,8 @@
 
 namespace qrpc {
 class Loop : public base::Loop {
-  typedef base::Serial::PartitionId PartitionId;
-  static thread_local PartitionId g_partition_id_;
-  PartitionId partition_id_{0};
 public:
-  using PartitionId = base::Serial::PartitionId;
+  typedef base::Serial::PartitionId PartitionId;
   explicit Loop(PartitionId partition_id = 0) : base::Loop() { EnsurePartitionId(partition_id); }
   inline PartitionId partition_id() const { return partition_id_; }
   static inline PartitionId g_partition_id() { return g_partition_id_; }
@@ -27,5 +24,8 @@ public:
     ASSERT(g_partition_id() == partition_id());
     base::Loop::WaitEvent();
   }
+protected:
+  static thread_local PartitionId g_partition_id_;
+  PartitionId partition_id_{0};
 };
 } // namespace qrpc
