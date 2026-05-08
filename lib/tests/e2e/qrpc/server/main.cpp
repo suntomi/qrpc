@@ -112,6 +112,26 @@ void OnRecvRecord(void*, qrpc_stream_t stream, const void* data, qrpc_size_t dat
 
 void OnIgnoreRecord(void*, qrpc_stream_t, const void*, qrpc_size_t) {}
 
+bool OnMediaOpen(void*, qrpc_media_t, void**) {
+  return true;
+}
+
+void OnMediaClose(void*, qrpc_media_t) {}
+
+void OnMediaStateChange(void*, qrpc_media_t, const char*, const char*) {}
+
+qrpc_media_handler_t* MediaRouter(void*, const char*, qrpc_conn_t) {
+  static qrpc_media_handler_t handler{};
+  static bool initialized = false;
+  if (!initialized) {
+    qrpc_closure_init(handler.on_media_open, OnMediaOpen, nullptr);
+    qrpc_closure_init(handler.on_media_close, OnMediaClose, nullptr);
+    qrpc_closure_init(handler.on_media_state_change, OnMediaStateChange, nullptr);
+    initialized = true;
+  }
+  return &handler;
+}
+
 qrpc_stream_handler_t MakeStreamHandler(qrpc_on_stream_record_t_proc record_cb) {
   qrpc_stream_handler_t handler{};
   qrpc_closure_init(handler.on_stream_open, OnStreamOpen, nullptr);
@@ -183,6 +203,7 @@ int main() {
   qrpc_closure_init(conf.on_open, OnConnOpen, nullptr);
   qrpc_closure_init(conf.on_close, OnConnClose, nullptr);
   qrpc_closure_init(conf.stream_router, StreamRouter, nullptr);
+  qrpc_closure_init(conf.media_router, MediaRouter, nullptr);
   conf.transport.proto = QRPC_TRANSPORT_WEBRTC;
   conf.transport.webrtc.rtp = {
     .initial_outgoing_bitrate = 10000000,

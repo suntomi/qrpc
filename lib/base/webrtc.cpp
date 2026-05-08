@@ -215,6 +215,14 @@ int ConnectionFactory::ThreadInit(AlarmProcessor &a) {
     }
   );
   SctpSender::ClassInit(a);
+  // The following ClassInit functions write to thread_local variables
+  // (Logger::channel, Crypto::seed/mac/hmacSha1Ctx,
+  //  DtlsTransport::certificate/privateKey/sslCtx/localFingerprints,
+  //  DepUsrSCTP::checker), so they must run per thread.
+  Logger::ClassInit(&g_channel_socket_);
+  Utils::Crypto::ClassInit();
+  RTC::DtlsTransport::ClassInit();
+  DepUsrSCTP::CreateChecker();
   g_thread_ref_count_++;
   return QRPC_OK;
 }
@@ -266,12 +274,8 @@ int ConnectionFactory::GlobalInit() {
       DepLibSRTP::ClassInit();
       DepUsrSCTP::ClassInit(SctpSender::onSendStcpData);
       DepLibWebRTC::ClassInit();
-      Utils::Crypto::ClassInit();
-      RTC::DtlsTransport::ClassInit();
       srtp_install_log_handler(srtp_logger, nullptr);
       RTC::SrtpSession::ClassInit();
-      Logger::ClassInit(&g_channel_socket_);
-      DepUsrSCTP::CreateChecker();
     }
     g_ref_count_++;
 		return QRPC_OK;
@@ -287,6 +291,10 @@ void ConnectionFactory::ThreadFin(AlarmProcessor &a) {
     return;
   }
   SctpSender::ClassDestroy(a);
+  // Tear down the per-thread state set up in ThreadInit (in reverse order).
+  DepUsrSCTP::CloseChecker();
+  RTC::DtlsTransport::ClassDestroy();
+  Utils::Crypto::ClassDestroy();
   ::TimerHandle::SetTimerProc([](const ::TimerHandle::Handler &, uint64_t) {
     return AlarmProcessor::INVALID_ID;
   }, [](uint64_t) {
@@ -301,8 +309,6 @@ void ConnectionFactory::GlobalFin() {
       return;
     }
     // Free static stuff.
-		RTC::DtlsTransport::ClassDestroy();
-		Utils::Crypto::ClassDestroy();
 		DepLibWebRTC::ClassDestroy();
 		DepUsrSCTP::ClassDestroy();
 		DepLibSRTP::ClassDestroy();

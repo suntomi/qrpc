@@ -3,7 +3,11 @@ load("//tools/bazel/libs:ms_cppargs.bzl", "MS_CPPARGS")
 
 cc_binary(
   name = "e2e_qrpc_client",
-  srcs = ["main.cpp"],
+  srcs = [
+    "main.cpp",
+    "rtp.cpp",
+    "sctp.cpp",
+  ],
   copts = [
     "-std=c++17",
   ]
