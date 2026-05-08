@@ -440,13 +440,19 @@ a=msid-semantic: WMS
     // a=rtpmap, a=fmtp, a=rtcp-fb for each codec
     for (qrpc_size_t i = 0; i < params.n_codecs; i++) {
       const auto &codec = params.codecs[i];
+      const auto parsed_mime = str::Split(codec.mime_type, "/");
+      if (parsed_mime.size() != 2) {
+        logger::error({{"ev","malform codec mime type"},{"mime_type", codec.mime_type}});
+        ASSERT(false);
+        continue;
+      }
       // a=rtpmap:<pt> <codec>/<clock_rate>[/<channels>]
       if (codec.channels > 0) {
         section += str::Format("a=rtpmap:%u %s/%u/%u\n",
-          codec.payload_type, codec.mime_type, codec.clock_rate, codec.channels);
+          codec.payload_type, parsed_mime[1].c_str(), codec.clock_rate, codec.channels);
       } else {
         section += str::Format("a=rtpmap:%u %s/%u\n",
-          codec.payload_type, codec.mime_type, codec.clock_rate);
+          codec.payload_type, parsed_mime[1].c_str(), codec.clock_rate);
       }
       // a=fmtp:<pt> <params>
       if (codec.fmtp != nullptr && codec.fmtp[0] != '\0') {
@@ -465,12 +471,12 @@ a=msid-semantic: WMS
     return section;
   }
 
-  std::string SDP::CapSdpFrom(const qrpc_media_config_t &config) {
+  std::string SDP::MediaSdpFrom(const qrpc_media_params_t &audio, const qrpc_media_params_t &video) {
     std::string sdp;
     // generate audio section
-    sdp += MediaSectionFrom("audio", config.audio_cap, "0");
+    sdp += MediaSectionFrom("audio", audio, "0");
     // generate video section
-    sdp += MediaSectionFrom("video", config.video_cap, "1");
+    sdp += MediaSectionFrom("video", video, "1");
     return sdp;
   }
 } // namespace webrtc

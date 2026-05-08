@@ -134,6 +134,7 @@ export class QRPCTrack {
       throw new Error("open is only needed for send tracks");
     }
 
+    // if midMediaPathMap is provided, it means, pc is peer connection that actually send/recv tracks.
     if (midMediaPathMap) {
       // want to put tracks to actual peer connection (not for generating localOffer for producing)
       let transceiver: RTCRtpTransceiver | undefined;
@@ -144,7 +145,7 @@ export class QRPCTrack {
           console.log("ignore receiver transceiver", t.sender);
           continue;
         }
-        // in here, pc.setRemoteDescription is already called, so mid is decided by server remote offer
+        // here, pc.setRemoteDescription has already called, so mid is decided by server remote offer (in actual peer connection)
         // also midMediaPathMap is updated by syscall ("produce") or whip API call (in QRPClient.#handshake)
         const path = midMediaPathMap[t.mid!];
         if (!path) {

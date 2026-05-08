@@ -100,6 +100,7 @@ namespace rtp {
         fbb, id.c_str(), producer_id.c_str(), static_cast<FBS::RtpParameters::MediaKind>(kind),
         config.FillBuffer(fbb), RTC::RtpParameters::TypeToFbs(type), &encodings, config.options.pause
       ));
+      m->OnOpen();
       return handler_.FindConsumer(id);
     } catch (std::exception &e) {
       QRPC_LOG(error, "failed to create consumer: %s", e.what());

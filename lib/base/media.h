@@ -1,5 +1,6 @@
 #pragma once
 
+#include "base/defs.h"
 #include <string>
 
 namespace base {
@@ -15,8 +16,8 @@ namespace base {
   public:
     Media(const std::string &path, Connection &c)
       : path_(path), conn_(c) {
-        qrpc_closure_init_noop(consumer_, qrpc_on_media_consume_t);
-      }
+      qrpc_closure_init_noop(consumer_, qrpc_on_media_consume_t);
+    }
     virtual ~Media() = default;
     virtual int OnOpen() { return QRPC_OK; }
     virtual void OnClose() {}

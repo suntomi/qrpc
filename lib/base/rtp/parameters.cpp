@@ -42,6 +42,7 @@ namespace rtp {
     this->network.ip_ver = 4; // v4
     this->network.net_type = "IN"; // inet
     this->rtp_proto = "UDP/TLS/RTP/SAVPF";
+    this->mid = mid;
     // copy codecs
     for (qrpc_size_t i = 0; i < c.n_codecs; ++i) {
       const auto &cc = c.codecs[i];
@@ -54,8 +55,8 @@ namespace rtp {
       }
       codec.clockRate = cc.clock_rate;
       codec.channels = cc.channels;
-      // parse fmtp
-      if (!ParseFmtp(cc.fmtp, codec, answer)) {
+      // parse fmtp (if specified and non-empty)
+      if (cc.fmtp != nullptr && !ParseFmtp(cc.fmtp, codec, answer)) {
         return false;
       }
       codecs.push_back(codec);
@@ -239,6 +240,7 @@ namespace rtp {
     {"http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time", RTC::RtpHeaderExtensionUri::Type::ABS_SEND_TIME},
     {"http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time", RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME},
     {"http://www.webrtc.org/experiments/rtp-hdrext/playout-delay", RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY},
+    {"https://aomediacodec.github.io/av1-rtp-spec/#dependency-descriptor-rtp-header-extension", RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR},
   };
   static std::map<RTC::RtpHeaderExtensionUri::Type, std::string> g_rmap;
   void Parameters::SetupHeaderExtensionMap() {
@@ -388,6 +390,7 @@ namespace rtp {
   )  {
     auto midit = section.find("mid");
     if (midit == section.end()) {
+      logger::info({{"ev","mid not found in section"},{"section",section.dump()}});
       answer = "section: no value for key 'mid'";
       ASSERT(false);
       return false;

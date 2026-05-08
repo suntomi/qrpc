@@ -465,7 +465,6 @@ namespace rtp {
 		if (lit == medias_.end()) {
 			auto m = listener().media_factory(lpath);
 			medias_[lpath] = m;
-			m->OnOpen();
 			return m;
 		}
 		return lit->second;
@@ -667,6 +666,8 @@ namespace rtp {
 			ext_ids().frameMarking = id;
 		} else if (uri == RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME) {
 			ext_ids().absCaptureTime = id;
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR) {
+			ext_ids().dependencyDescriptor = id;
 		} else if (uri == RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY) {
 			// mediasoup ignored but supported (why?)
 		} else {

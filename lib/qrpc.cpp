@@ -574,7 +574,7 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
   };
   static qrpc_media_codec_t audio_codecs[] = {
     {
-      .mime_type = "opus",
+      .mime_type = "audio/opus",
       .clock_rate = 48000,
       .payload_type = 111,
       .channels = 2,
@@ -605,7 +605,7 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
   static qrpc_media_codec_t video_codecs[] = {
     // a=rtpmap:96 VP8/90000
     {
-      .mime_type = "VP8",
+      .mime_type = "video/VP8",
       .clock_rate = 90000,
       .payload_type = 96,
       .channels = 0,
@@ -616,7 +616,7 @@ QRPC_THREADSAFE qrpc_media_config_t qrpc_media_config() {
     // a=rtpmap:97 rtx/90000
     // a=fmtp:97 apt=96
     {
-      .mime_type = "rtx",
+      .mime_type = "video/rtx",
       .clock_rate = 90000,
       .payload_type = 97,
       .channels = 0,

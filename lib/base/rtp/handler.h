@@ -46,6 +46,8 @@ namespace rtp {
       this->media_path = Parameters::MakeMediaPath(path, kind);
       this->direction = d;
       this->options = opts;
+      // this keeps this->mid empty, it will be filled by SDP::Answer(...) in OnMediaSyscallAck
+      // after receiving response from server side with actually decided mid value (via SDP)
       return Parameters::Set(kind, params, rid_seed);
     }
     inline bool sender() const { return direction == Direction::SEND; }

@@ -2163,6 +2163,8 @@ int Client::Connection::InitMedia(const qrpc_media_config_t &config) {
 int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
   // convert and add qrpc_media_produce_config_t into media_stream_configs_ to prepare for actual media production
   rtp::MediaStreamConfig video, audio;
+  // here, mid has fixed value. but actually mid is decided by server side (see SyscallStream::OnRead fn == "produce")
+  // with creating produce stream, and respond back client side with "sdp" parameter of response payload.
   if (!audio.Set(c.path,
     rtp::MediaStreamConfig::MediaKind::AUDIO, rtp::MediaStreamConfig::Direction::SEND,
     c.audio.params, rtp::MediaStreamConfig::ControlOptions(c.audio.paused), rid_seed_)) {
@@ -2180,13 +2182,13 @@ int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
     {video.media_path, c.video.source}
   };
   // send message "produce" via $syscall stream
-  auto mscs = media_stream_configs();
-  mscs.insert(mscs.end(), {audio, video});
   auto midPathMap = json::object();
   auto ridScalabilityModeMap = json::object();
-  // set midPathMap and ridScalabilityModeMap from existing media_stream_configs and above audio, video
-  for (const auto &msc : mscs) {
-    midPathMap[msc.mid] = msc.media_path;
+  int i = 0;
+  // set midPathMap and ridScalabilityModeMap from above audio, video
+  for (const auto &msc : std::vector<rtp::MediaStreamConfig>{audio, video}) {
+    // mid is fixed ("0" or "1"), actual value is decided by server side and set to audio/video object below callback
+    midPathMap[std::to_string(i++)] = msc.media_path;
     for (const auto &e : msc.encodings) {
       if (!e.rid.empty() && !e.scalabilityMode.empty()) {
         ridScalabilityModeMap[e.rid] = e.scalabilityMode;
@@ -2195,13 +2197,12 @@ int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
   }
   return Call("produce", {
     // TODO: if does not worked without application section, add dummy one
-    {"sdp", SDP::MediaSectionFrom("audio", c.audio.params) + SDP::MediaSectionFrom("video", c.video.params)},
+    {"sdp", SDP::MediaSdpFrom(c.audio.params, c.video.params)},
     {"initOptions", {{"video", {{"pause", c.video.paused}}},{"audio", {{"pause", c.audio.paused}}}}},
-    {"midPathMap", midPathMap},
-    {"rtp", {{"ridScalabilityModeMap", ridScalabilityModeMap}}}
+    {"midPathMap", midPathMap}, {"rtp", {{"ridScalabilityModeMap", ridScalabilityModeMap}}}
   }, [this, &on_produce_map](qrpc_error_t result, const std::map<std::string,json> &args) {
     return OnMediaSyscallAck("produce_ack", result, args, [this, &on_produce_map](const rtp::MediaStreamConfig &slot) {
-      // create consumer for this producer, by consume it with itself.
+      // create consumer for this producer, by consuming it with itself.
       // this sends RTP packet which is provided to ReceiveRtpPacket to its peer.
       std::string error;
       if (!rtp_handler().Consume(rtp_handler(), slot, error)) {
