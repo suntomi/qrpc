@@ -402,9 +402,7 @@ Worker::TaskQueueへのenqueueはすでにスレッドセーフなので、mutex
 その上で、あなたの質問については２の、登録時にTaskQueueも渡す、という方針で良いと思います。
 
 =======
-現在Loopがpartition_idを割り当てていますが、あらかじめreserveするのであれば、Serverにreserveする責務を負わせ、LoopはWorkerにセットされたpartition_idを受け継ぐ(自分ではpartition_idを生成したりしない)方が良いと思います。
-- Serv
-Worker::
+
 
 =======
 lib/tests/e2e/core/client/native/main.cpp でqrpcのrtpの動作を確認するテストを作成してください。以下のようなテストケースが必要です。

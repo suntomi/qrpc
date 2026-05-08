@@ -16,8 +16,9 @@ namespace {
 
 std::atomic<bool> g_alive{true};
 
-void OnSignal(int signum) {
-  if (signum == SIGINT || signum == SIGTERM) {
+void OnSignal(void*, qrpc_signal_event_t* ev) {
+  if (ev->signum == SIGINT || ev->signum == SIGTERM) {
+    QLOG(INFO, "OnSignal", { QLOG_INT("signum", ev->signum), QLOG_INT("reap_count", ev->reap_count) });
     g_alive = false;
   }
 }
@@ -34,9 +35,9 @@ int OnConnOpen(void*, qrpc_conn_t, void**) {
 void OnConnClose(void*, qrpc_conn_t, const qrpc_close_reason_t* reason, bool remote) {
   const char* msg = reason->msg != nullptr ? reason->msg : "";
   QLOG(INFO, "OnConnClose", {
-    QLOG_INT("code", static_cast<uint64_t>(reason->code)),
+    QLOG_INT("code", reason->code),
     QLOG_BOOL("remote", remote),
-    QLOG_INT("detail", static_cast<uint64_t>(reason->detail_code)),
+    QLOG_INT("detail", reason->detail_code),
     QLOG_STR("msg", msg)
   });
 }
@@ -159,8 +160,17 @@ qrpc_handler_entry_t* StreamRouter(void*, const char* label, qrpc_conn_t) {
 } // namespace
 
 int main() {
-  std::signal(SIGINT, OnSignal);
-  std::signal(SIGTERM, OnSignal);
+  if (qrpc_signal_init() < 0) {
+    QLOG(ERROR, "failed to initialize signal handler", {});
+    return 1;
+  }
+  qrpc_signal_handler_t signal_handler;
+  qrpc_closure_init(signal_handler, OnSignal, nullptr);
+  if (qrpc_signal_handle(SIGINT, signal_handler) < 0 ||
+      qrpc_signal_handle(SIGTERM, signal_handler) < 0) {
+    QLOG(ERROR, "failed to register signal handler", {});
+    return 1;
+  }
 
   qrpc_svconf_t svconf{
     .n_worker = 1,
@@ -202,7 +212,7 @@ int main() {
   };
 
   if (qrpc_server_listen(server, &conf) < 0) {
-    QLOG(ERROR, "failed to listen", { QLOG_INT("port", static_cast<uint64_t>(conf.port)) });
+    QLOG(ERROR, "failed to listen", { QLOG_INT("port", conf.port) });
     qrpc_server_join(server);
     return 1;
   }

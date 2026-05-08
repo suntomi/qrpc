@@ -561,9 +561,10 @@ typedef struct qrpc_signal_event_tag {
 QRPC_DECL_CLOSURE(void, qrpc_signal_handler_t, void *, qrpc_signal_event_t*);
 // Initialize the dedicated signal thread and its loop before using signal handlers.
 QRPC_INI_FINI int qrpc_signal_init();
-// If called on a qrpc worker thread, the callback runs on that thread via its queue.
-// Otherwise the callback runs on the dedicated signal thread.
+// Enqueue the operation to the dedicated signal thread and return immediately.
+// The callback runs on the dedicated signal thread.
 QRPC_THREADSAFE int qrpc_signal_handle(int signum, qrpc_signal_handler_t handler);
+// Enqueue the operation to the dedicated signal thread and return immediately.
 QRPC_THREADSAFE int qrpc_signal_unhandle(int signum);
 
 
@@ -1017,6 +1018,7 @@ typedef struct {
   union {
     double d;
     uint64_t n;
+    int64_t i;
     const char *s;
     bool b;
   } value;
@@ -1031,7 +1033,8 @@ typedef struct {
 //    QLOG_BOOL("key4", true)
 //  });
 #define QLOG_FLOAT(__k, __d) { .key = __k, .type = QRPC_LOG_DECIMAL, .value = { .d = __d } }
-#define QLOG_INT(__k, __n) { .key = __k, .type = QRPC_LOG_INTEGER, .value = { .n = __n } }
+#define QLOG_UINT(__k, __n) { .key = __k, .type = QRPC_LOG_INTEGER, .value = { .n = __n } }
+#define QLOG_INT(__k, __i) { .key = __k, .type = QRPC_LOG_INTEGER, .value = { .i = __i } }
 #define QLOG_BOOL(__k, __b) { .key = __k, .type = QRPC_LOG_BOOLEAN, .value = { .b = __b } }
 #define QLOG_STR(__k, __s) { .key = __k, .type = QRPC_LOG_STRING, .value = { .s = __s } }
 #define QLOG(__lv, __mag, ...) { \

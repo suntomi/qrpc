@@ -60,7 +60,7 @@ void OnTestRecord(void* arg, qrpc_stream_t stream, const void* data, qrpc_size_t
     }
     if (count < 2) {
       QLOG(INFO, "Data channel latency", {
-        QLOG_INT("latency", static_cast<uint64_t>(now - ts))
+        QLOG_INT("latency", static_cast<int64_t>(now - ts))
       });
       SendJson(stream, {
         {"hello", state->texts[count + 1]},

@@ -95,5 +95,6 @@
     "md5.h": "c",
     "iterator": "cpp"
   },
-  "dotnet.defaultSolution": "disable"
+  "dotnet.defaultSolution": "disable",
+  "C_Cpp.default.compilerPath": "/usr/bin/clang++"
 }

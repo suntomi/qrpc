@@ -6,6 +6,22 @@
 #endif
 
 namespace base {
+  int SignalHandler::Open() {
+    if (fd_ >= 0) { return QRPC_OK; }
+  #if defined(__ENABLE_EPOLL__)
+    if ((fd_ =  signalfd(fd_, &mask_, SFD_NONBLOCK)) < 0) {
+      logger::error({{"ev","signalfd() fails"},{"errno",Syscall::Errno()}});
+      return QRPC_ESYSCALL;
+    }
+  #elif defined(__ENABLE_KQUEUE__)
+    fd_ = ::kqueue();
+    if (fd_ < 0) {
+      logger::error({{"ev","signal: kqueue() fails"},{"rv",fd_},{"errno",Syscall::Errno()}});
+      return QRPC_ESYSCALL;
+    }
+  #endif
+    return QRPC_OK;
+  }
   int SignalHandler::Register(int sig) {
     if (sigaddset(&mask_, sig) != 0) {
       logger::error({{"ev","unsupported signal"},{"sig",sig},{"errno",Syscall::Errno()}});
@@ -25,11 +41,8 @@ namespace base {
     }
   #elif defined(__ENABLE_KQUEUE__)
     if (fd_ < 0) {
-      fd_ = ::kqueue();
-      if (fd_ < 0) {
-        logger::error({{"ev","signal: kqueue() fails"},{"rv",fd_},{"errno",Syscall::Errno()}});
-        return QRPC_ESYSCALL;
-      }
+      int r = Open();
+      if (r < 0) { return r; }
     }
     int r;
     Event ev;
@@ -37,6 +50,37 @@ namespace base {
     if ((r = ::kevent(fd_, &ev, 1, nullptr, 0, nullptr)) != 0) {
       logger::error({{"ev","kevent() fails"},{"rv",r},{"errno",Syscall::Errno()}});
       return QRPC_ESYSCALL;
+    }
+  #endif
+    return QRPC_OK;
+  }
+  int SignalHandler::Unregister(int sig) {
+    sigset_t unmask;
+    sigemptyset(&unmask);
+    if (sigaddset(&unmask, sig) != 0 || sigdelset(&mask_, sig) != 0) {
+      logger::error({{"ev","unsupported signal"},{"sig",sig},{"errno",Syscall::Errno()}});
+      return QRPC_EINVAL;
+    }
+    if (sigprocmask(SIG_UNBLOCK, &unmask, NULL) != 0) {
+      logger::error({{"ev","sigprocmask(UNBLOCK) fails"},
+        {"mask",str::HexDump(reinterpret_cast<const uint8_t *>(&unmask), sizeof(unmask))},
+        {"errno",Syscall::Errno()}});
+      return QRPC_ESYSCALL;
+    }
+  #if defined(__ENABLE_EPOLL__)
+    if (fd_ >= 0 && signalfd(fd_, &mask_, SFD_NONBLOCK) < 0) {
+      logger::error({{"ev","signalfd() fails"},{"errno",Syscall::Errno()}});
+      return QRPC_ESYSCALL;
+    }
+  #elif defined(__ENABLE_KQUEUE__)
+    if (fd_ >= 0) {
+      int r;
+      Event ev;
+      EV_SET(&ev, sig, EVFILT_SIGNAL, EV_DELETE, 0, 0, nullptr);
+      if ((r = ::kevent(fd_, &ev, 1, nullptr, 0, nullptr)) != 0) {
+        logger::error({{"ev","kevent() fails"},{"rv",r},{"errno",Syscall::Errno()}});
+        return QRPC_ESYSCALL;
+      }
     }
   #endif
     return QRPC_OK;
