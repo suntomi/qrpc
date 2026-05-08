@@ -140,8 +140,8 @@ protected:
   }
   int StartWorkers();
   int StartWorker(PartitionId partition_id) {
-    auto w = new Worker(partition_id);
-    w->Start(*this);
+    auto w = new Worker();
+    w->Start(partition_id, *this);
     return QRPC_OK;
   } 
 };

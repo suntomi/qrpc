@@ -2,7 +2,6 @@
 #include "qrpc/transport.h"
 
 namespace qrpc {
-  static thread_local std::mutex g_mutex_;
   int Server::StartWorkers() {
     int r;
     // reserve ids with atomic operation (fetch_add), so even if multiple thread calls StartWorkers() concurrently, 

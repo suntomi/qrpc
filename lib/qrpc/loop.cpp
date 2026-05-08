@@ -5,7 +5,7 @@
 
 namespace qrpc {
   static base::atomic<base::Serial::PartitionId> g_next_partition_id{1};
-  thread_local Loop::PartitionId Loop::g_partition_id_;
+  thread_local Loop::PartitionId Loop::g_partition_id_{0};
 
   Loop::PartitionId Loop::ReservePartitionIds(uint32_t n) {
     auto start = g_next_partition_id.fetch_add(n, std::memory_order_relaxed);
@@ -26,26 +26,32 @@ namespace qrpc {
     }
     return *this;
   }
-  void Loop::EnsurePartitionId(PartitionId id) {
-    if (id == 0) {
-      // if partition_id is not specified, use global partition id for current thread.
-      auto gpid = g_partition_id();
+  void Loop::EnsurePartitionId(PartitionId gpid) {
+    if (partition_id_ != 0) {
+      logger::die({
+        {"ev","Loop::EnsurePartitionId() called more than once for same Loop object"},
+        {"partition_id",partition_id_},{"this",base::str::dptr(this)}
+      });
+    }
+    if (g_partition_id_ == 0) {
       if (gpid == 0) {
-        // if global partition id for current thread is not set, reserve one and set it.
-        gpid = ReservePartitionIds(1);
+        // if global partition id for current thread is not set and gpid not specified explicitly, 
+        // reserve one and set it.
+        g_partition_id_ = ReservePartitionIds(1);
+      } else {
+        // if global partition id for current thread is not set and gpid specified explicitly, use it.
         g_partition_id_ = gpid;
       }
-      partition_id_ = gpid;
-    } else {
-      if (g_partition_id() != 0 && g_partition_id() != id) {
-        logger::die({
-          {"ev","Loop::EnsurePartitionId(): partition id conflict with global partition id for current thread"},
-          {"global_partition_id",g_partition_id()},
-          {"partition_id",id}
-        });
-      }
-      partition_id_ = id;
-      g_partition_id_ = id;
+      logger::info({
+        {"ev","set new partition id for current thread"},
+        {"gpid", g_partition_id_},{"this",base::str::dptr(this)}
+      });
+    } else if (g_partition_id_ != gpid) {
+      logger::die({
+        {"ev","Loop::EnsurePartitionId() called with different partition id for same Loop object"},
+        {"current_gpid",g_partition_id_},{"new_gpid",gpid},{"this",base::str::dptr(this)}
+      });
     }
+    partition_id_ = g_partition_id_;
   }
 } // namespace qrpc

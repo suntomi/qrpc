@@ -18,6 +18,7 @@ namespace qrpc {
     virtual void Resolve(int family_pref, const std::string &host, qrpc_on_resolve_host_t cb) = 0;
     virtual void Enqueue(Worker::Task &&t) = 0;
     virtual base::Serial::PartitionId GetPartitionId() const = 0;
+    virtual void ResetPartition() = 0;
     qrpc_transport_type_t transport_type() const;
     qrpc_client_t ToHandle() { return reinterpret_cast<qrpc_client_t>(this); }
     static Client *FromHandle(qrpc_client_t cl) { return reinterpret_cast<Client *>(cl); }

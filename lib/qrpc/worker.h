@@ -24,12 +24,11 @@ private:
   Loop loop_;
   std::thread thread_; // actually runs event loop
 public:
-  Worker(PartitionId partition_id) :
-    loop_(partition_id), thread_() {}
-  void Run(Server &sv);
+  Worker() : loop_(), thread_() {}
+  void Run(PartitionId partition_id, Server &sv);
   std::vector<std::unique_ptr<Listener>> Listen();
-  inline void Start(Server &server) {
-    thread_ = std::thread([this, &server]() { this->Run(server); });
+  inline void Start(PartitionId partition_id, Server &server) {
+    thread_ = std::thread([this, partition_id, &server]() { this->Run(partition_id, server); });
   }
   inline void Join() {
     if (thread_.joinable()) { thread_.join(); }

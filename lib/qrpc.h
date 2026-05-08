@@ -18,7 +18,7 @@ extern "C" {
 //indicate this call only safe before/after main loop running, 
 //which means call of qrpc_server_start or qrpc_client_poll.
 //also not guaranteed to be safe from calling concurrently
-#define QRPC_BOOTSTRAP extern
+#define QRPC_INI_FINI extern
 //indicate this call can be done concurrently, and works correctly
 //our thread safe approach is like following:
 //read operation: just checking object is valid by comparing serial in
@@ -27,10 +27,10 @@ extern "C" {
 //  owner => do operation directly
 //  non-owner => add operation to queue and owner thread process request
 #define QRPC_THREADSAFE extern
-//indicate this call only safe when invoked with nq_conn/rpc/stream_t which passed to
-//functions of closure type (declared with QRPC_DECL_CLOSURE). 
+//indicate this call only safe inside callback which is invoked with qrpc_conn/rpc/stream/media/alarm_t 
+//which passed to functions of closure type (declared with QRPC_DECL_CLOSURE). 
 #define QRPC_CLOSURECALL extern
-//inline function
+//inline function. gurantee is 
 #define QRPC_INLINE static inline
 
 
@@ -560,7 +560,7 @@ typedef struct qrpc_signal_event_tag {
 } qrpc_signal_event_t;
 QRPC_DECL_CLOSURE(void, qrpc_signal_handler_t, void *, qrpc_signal_event_t*);
 // Initialize the dedicated signal thread and its loop before using signal handlers.
-QRPC_BOOTSTRAP int qrpc_signal_init();
+QRPC_INI_FINI int qrpc_signal_init();
 // If called on a qrpc worker thread, the callback runs on that thread via its queue.
 // Otherwise the callback runs on the dedicated signal thread.
 QRPC_THREADSAFE int qrpc_signal_handle(int signum, qrpc_signal_handler_t handler);
@@ -635,7 +635,7 @@ QRPC_THREADSAFE void qrpc_client_connect(qrpc_client_t cl, const qrpc_connect_co
 // do actual network IO. need to call periodically
 QRPC_THREADSAFE void qrpc_client_poll(qrpc_client_t cl);
 // close connections and destroy client object. after call this, do not call qrpc_client_* API.
-QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl);
+QRPC_INI_FINI void qrpc_client_destroy(qrpc_client_t cl);
 // resolve host. qrpc_client_t need to be polled by qrpc_client_poll to work correctly
 // family_pref can be AF_INET or AF_INET6, and control which address family searched first. 
 QRPC_THREADSAFE void qrpc_client_resolve(qrpc_client_t cl, int family_pref, const char *hostname, qrpc_on_resolve_host_t cb);
@@ -643,7 +643,10 @@ QRPC_THREADSAFE void qrpc_client_resolve(qrpc_client_t cl, int family_pref, cons
 // as src and srcsz. and passing buffer for dst and dstsz, to store string converted result of src/srcsz.
 // return dst if succeed otherwise nullptr returned.
 QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srcsz, char *dst, qrpc_size_t dstsz);
-
+// by default, qrpc_client_t that created by qrpc_client_create(), will be assigned to the thread that called qrpc_client_create, 
+// and qrpc_client_poll() is required to be called from the thread. but if you want to use qrpc_client_t from other thread, 
+// you can call this API by thread which want to receive ownership of the qrpc_client_t.
+QRPC_INI_FINI void qrpc_client_own(qrpc_client_t cl);
 
 
 // --------------------------
@@ -696,9 +699,9 @@ QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv);
 //create server which has n_worker of workers
 QRPC_THREADSAFE qrpc_server_t qrpc_server_create(const qrpc_svconf_t *conf);
 //listen and returns handler map associated with it. 
-QRPC_BOOTSTRAP int qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *config);
+QRPC_INI_FINI int qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *config);
 //if block is true, qrpc_server_start blocks until some other thread calls qrpc_server_join. 
-QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block);
+QRPC_INI_FINI void qrpc_server_start(qrpc_server_t sv, bool block);
 //request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API anymore
 QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv);
 
@@ -1036,7 +1039,7 @@ typedef struct {
   qrpc_log(QRPC_LOGLV_##__lv, __mag, __params, sizeof(__params) / sizeof(qrpc_logparam_t)); \
 }
 
-QRPC_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf);
+QRPC_INI_FINI void qrpc_log_config(const qrpc_logconf_t *conf);
 //write JSON structured log output. 
 QRPC_THREADSAFE void qrpc_log(qrpc_loglv_t lv, const char *msg, qrpc_logparam_t *params, int n_params);
 //write JSON Structured log output, with only msg

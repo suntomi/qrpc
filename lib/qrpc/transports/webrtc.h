@@ -142,20 +142,18 @@ namespace webrtc {
   // webrtc::Client
   class Client : public qrpc::Loop, public ClientInterface {
   public:
-    // parameterless Loop contructor does auto assignment of partition_id.
-    Client(const qrpc_clconf_t &config) : Loop(), resolver_(*this), config_(config), transport_(
+    // Loop(true) does auto assignment of partition_id.
+    Client(const qrpc_clconf_t &config) : Loop(true), resolver_(*this), config_(config), transport_(
       OpenOrDie(config.max_nfd, config.poll_timeout_ns),
       base::webrtc::Client::Config::From(
         resolver_.InitOrDie(AsyncResolver::Config::From(config.dns)), config.session_timeout, config.connect_timeout
-      )), queue_(), partition_id_(partition_id()) {
-      
-    }
+      )), queue_() {}
     ~Client() override {}
     void Close(base::Connection &c) override { transport_.Close(c); }
     bool Connect(const qrpc_connect_conf_t &c) override {
       return transport_.Connect(
         base::webrtc::Client::Endpoint::From(c.ep),
-        [conf = c, pid = partition_id_](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
+        [conf = c, pid = partition_id()](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
           return new ClientConnection(cf, role, pid, conf);
         }
       );
@@ -167,7 +165,8 @@ namespace webrtc {
     }
     void Close() override { transport_.Fin(); }
     void Enqueue(Worker::Task &&t) override { queue_.enqueue(std::move(t)); }
-    base::Serial::PartitionId GetPartitionId() const override { return partition_id_; }
+    base::Serial::PartitionId GetPartitionId() const override { return partition_id(); }
+    void ResetPartition() override { Loop::ResetPartitionId(); }
     void Resolve(int family_pref, const std::string &host, qrpc_on_resolve_host_t cb) override {
       ASSERT(false);
     }
@@ -176,7 +175,6 @@ namespace webrtc {
     qrpc_clconf_t config_;
     base::webrtc::Client transport_;
     Worker::TaskQueue queue_;
-    base::Serial::PartitionId partition_id_;
   };
 }
 }

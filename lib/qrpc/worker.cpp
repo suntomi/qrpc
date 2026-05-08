@@ -23,8 +23,9 @@ Worker::TaskQueue &Worker::queue(PartitionId id) {
   return server_->queue(id);
 }
 
-void Worker::Run(Server &sv) {
+void Worker::Run(PartitionId partition_id, Server &sv) {
   SetThreadLocal(sv);
+  loop_.EnsurePartitionId(partition_id);
   if (loop_.Open(sv.max_nfd_per_worker()) < 0) {
     QRPC_LOGJ(fatal, {{"ev", "Loop::Open() failed in Worker::Run()"}});
     return;

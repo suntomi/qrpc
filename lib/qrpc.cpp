@@ -30,9 +30,9 @@ using json = nlohmann::json;
 #define QRPC_THREADSAFE
 #endif
 
-#if defined(QRPC_BOOTSTRAP)
-#undef QRPC_BOOTSTRAP
-#define QRPC_BOOTSTRAP
+#if defined(QRPC_INI_FINI)
+#undef QRPC_INI_FINI
+#define QRPC_INI_FINI
 #endif
 
 using namespace qrpc;
@@ -373,7 +373,7 @@ SignalService &signal_service() {
 }
 } // namespace
 
-QRPC_BOOTSTRAP int qrpc_signal_init() {
+QRPC_INI_FINI int qrpc_signal_init() {
   return signal_service().Init();
 }
 QRPC_THREADSAFE int qrpc_signal_handle(int signum, qrpc_signal_handler_t handler) {
@@ -460,7 +460,7 @@ QRPC_THREADSAFE void qrpc_client_resolve(qrpc_client_t cl, int family_pref, cons
   }
   c->Resolve(family_pref, hostname, cb);
 }
-QRPC_BOOTSTRAP void qrpc_client_destroy(qrpc_client_t cl) {
+QRPC_INI_FINI void qrpc_client_destroy(qrpc_client_t cl) {
   auto c = qrpc::Client::FromHandle(cl);
   c->Close();
   delete c;
@@ -471,6 +471,13 @@ QRPC_THREADSAFE void qrpc_client_poll(qrpc_client_t cl) {
     logger::die({{"ev","qrpc_client_poll called from non-owner thread"},});
   }
   c->Poll();
+}
+QRPC_INI_FINI void qrpc_client_own(qrpc_client_t cl) {
+  auto c = qrpc::Client::FromHandle(cl);
+  if (c->GetPartitionId() == Worker::g_partition_id()) {
+    return;
+  }
+  c->ResetPartition();
 }
 QRPC_THREADSAFE const char *qrpc_ntop(const char *src, qrpc_size_t srclen, char *dst, qrpc_size_t dstlen) {
   if (AsyncResolver::NtoP(src, srclen, dst, dstlen) < 0) {
@@ -517,11 +524,11 @@ QRPC_THREADSAFE qrpc_server_t qrpc_server_create(const qrpc_svconf_t *conf) {
   auto sv = new Server(c);
   return sv->ToHandle();
 }
-QRPC_BOOTSTRAP int qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *conf) {
+QRPC_INI_FINI int qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t *conf) {
   auto s = Server::FromHandle(sv);
   return s->Open(*conf);
 }
-QRPC_BOOTSTRAP void qrpc_server_start(qrpc_server_t sv, bool block) {
+QRPC_INI_FINI void qrpc_server_start(qrpc_server_t sv, bool block) {
   auto s = Server::FromHandle(sv);
   s->Start(block);
 }
@@ -952,7 +959,7 @@ QRPC_CLOSURECALL void qrpc_alarm_cancel(qrpc_alarm_t a, qrpc_alarm_id_t id) {
 // log API
 //
 // --------------------------
-QRPC_BOOTSTRAP void qrpc_log_config(const qrpc_logconf_t *conf) {
+QRPC_INI_FINI void qrpc_log_config(const qrpc_logconf_t *conf) {
   if (conf == nullptr) {
     // TODO: provide default log config
     base::logger::die({{"ev", "no log config"}});
