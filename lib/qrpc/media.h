@@ -8,8 +8,8 @@
 namespace qrpc {
   class Media : public base::Media {
   public:
-    Media(const std::string &path, base::Connection &c, qrpc_media_handler_t &h) :
-      base::Media(path, c), serial_(&dynamic_cast<qrpc::Connection &>(c).serial()), handler_(h) {
+    Media(const std::string &path, Direction d, base::Connection &c, qrpc_media_handler_t &h) :
+      base::Media(path, d, c), serial_(&dynamic_cast<qrpc::Connection &>(c).serial()), handler_(h) {
         qrpc_closure_init_noop(consumer_, qrpc_on_media_consume_t);
       }
     const qrpc_serial_t &serial() const { return serial_; }

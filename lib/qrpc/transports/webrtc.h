@@ -60,7 +60,7 @@ namespace webrtc {
       return qrpc_alarm_stop_rv();
     }
     void *context() override { return ctx_; }
-    std::shared_ptr<base::Media> media_factory(const std::string &path) override;
+    std::shared_ptr<base::Media> media_factory(const std::string &path, base::Media::Direction direction) override;
   protected:
     void *ctx_;
     qrpc_on_server_conn_open_t on_open_;
@@ -130,7 +130,7 @@ namespace webrtc {
       return qrpc_closure_call(on_close_, ToHandle(), &close_reason_->To(), close_reason_->code == QRPC_CLOSE_REASON_REMOTE);
     }
     void *context() override { return ctx_; }
-    std::shared_ptr<base::Media> media_factory(const std::string &path) override;
+    std::shared_ptr<base::Media> media_factory(const std::string &path, base::Media::Direction direction) override;
   protected:
     void *ctx_;
     qrpc_connect_conf_t config_;

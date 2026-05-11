@@ -204,7 +204,7 @@ namespace webrtc {
       std::shared_ptr<Stream> published_stream_;
     };
   public: // connections
-    class Connection : public virtual base::Connection, 
+    class Connection : public base::Connection, 
                        public IceServer::Listener,
                        public RTC::DtlsTransport::Listener,
                        public RTC::SctpAssociation::Listener,
@@ -254,6 +254,7 @@ namespace webrtc {
       bool has_message_boundary() const override { return true; }
       AlarmProcessor &alarm_processor() override { return factory().alarm_processor(); }
       bool is_client() const override { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
+      rtp::Handler &rtp() override { return rtp_handler(); }
       void *context() override { return nullptr; }
       int ControlMedia(const std::string &path, const qrpc_media_control_t &control) override  {
         bool is_producer; std::string error;
@@ -432,8 +433,8 @@ namespace webrtc {
       void SendSctpData(const uint8_t* data, size_t len) override { ASSERT(false); }
       const rtp::Handler::Config &GetRtpConfig() const override { return transport_config().rtp; }
       bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp::MediaStreamConfig::Direction dir) override;
-      std::shared_ptr<base::Media> media_factory(const std::string &path) override {
-        return std::make_shared<base::Media>(path, *this);
+      std::shared_ptr<base::Media> media_factory(const std::string &path, Media::Direction d) override {
+        return std::make_shared<base::Media>(path, d, *this);
       }
     protected:
       ConnectionFactory &factory_;

@@ -463,7 +463,7 @@ namespace rtp {
 		auto lpath = str::Join(parsed, "/");
 		auto lit = medias_.find(lpath);
 		if (lit == medias_.end()) {
-			auto m = listener().media_factory(lpath);
+			auto m = listener().media_factory(lpath, consumer ? Media::Direction::RECV : Media::Direction::SEND);
 			medias_[lpath] = m;
 			return m;
 		}

@@ -4,18 +4,18 @@
 #include "base/serial.h"
 
 namespace qrpc {
-class Connection : public virtual base::Connection {
+class Connection {
 public:
   virtual ~Connection() = default;
 public:
   virtual const qrpc_serial_t &serial() const = 0;
   qrpc_conn_t ToHandle() const { return { .s = serial(), .p = const_cast<Connection *>(this) }; }
-  static Connection *FromHandle(qrpc_conn_t conn) {
+  static base::Connection *FromHandle(qrpc_conn_t conn) {
     auto p = reinterpret_cast<const Connection *>(conn.p);
     if (p == nullptr || !base::Serial::IsSame(p->serial(), conn.s)) {
       return nullptr;
     }
-    return const_cast<Connection *>(p);
+    return dynamic_cast<base::Connection *>(const_cast<Connection *>(p));
   }
 };
 

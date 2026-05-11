@@ -15,6 +15,7 @@
 #include "base/defs.h"
 #include "base/serial.h"
 #include "base/timespec.h"
+#include "base/rtp/handler.h"
 
 #include "json.hpp"
 using json = nlohmann::json;
@@ -702,6 +703,12 @@ QRPC_CLOSURECALL bool qrpc_media_paused(qrpc_media_t m) {
 }
 QRPC_CLOSURECALL const char *qrpc_media_path(qrpc_media_t m) {
   return qrpc::Media::FromHandle(m)->path().c_str();
+}
+QRPC_CLOSURECALL qrpc_media_kind_t qrpc_media_kind(qrpc_media_t m) {
+  return qrpc::Media::FromHandle(m)->kind();
+}
+QRPC_CLOSURECALL qrpc_media_direction_t qrpc_media_direction(qrpc_media_t m) {
+  return qrpc::Media::FromHandle(m)->direction();
 }
 
 

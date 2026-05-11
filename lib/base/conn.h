@@ -3,6 +3,9 @@
 #include "base/stream.h"
 
 namespace base {
+namespace rtp {
+  class Handler;
+}
   class Connection {
   public:
     virtual ~Connection() = default;
@@ -22,9 +25,11 @@ namespace base {
     virtual int ControlMedia(const std::string &, const qrpc_media_control_t &) = 0;
     virtual int OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,json> &args) = 0;
     virtual bool IsMediaPaused(const std::string &path) = 0;
+    virtual rtp::Handler &rtp() = 0;
     virtual AlarmProcessor &alarm_processor() = 0;
     virtual StreamFactory &stream_factory() = 0;
     virtual bool is_client() const = 0;
     virtual void *context() = 0;
+    const rtp::Handler &rtp() const { return const_cast<Connection *>(this)->rtp(); }
   };
 } // namespace base

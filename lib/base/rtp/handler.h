@@ -35,7 +35,7 @@ namespace rtp {
       ControlOptions(bool p) : pause(p) {}
       bool pause;
     };
-    enum Direction { SEND, RECV };
+    typedef Media::Direction Direction;
     MediaStreamConfig() : Parameters() {}
     MediaStreamConfig(const Parameters &p, Direction d) : Parameters(p), direction(d) {}
     bool Set(
@@ -193,7 +193,7 @@ namespace rtp {
       virtual void SendSctpData(const uint8_t* data, size_t len) = 0;
       virtual bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, MediaStreamConfig::Direction dir) = 0;
       virtual const Config &GetRtpConfig() const = 0;
-      virtual std::shared_ptr<base::Media> media_factory(const std::string &path) = 0;
+      virtual std::shared_ptr<base::Media> media_factory(const std::string &path, Media::Direction direction) = 0;
     };
     typedef Listener::onSendCallback onSendCallback;
   public:

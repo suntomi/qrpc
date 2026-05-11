@@ -79,22 +79,22 @@ typedef struct {
 
 typedef struct qrpc_conn_tag {
   qrpc_serial_t s; //base::Serial
-  const void *p;    //base::Connection
+  const void *p;    //qrpc::Connection
 } qrpc_conn_t;
 
 typedef struct qrpc_stream_tag {
   qrpc_serial_t s; //base::Serial
-  const void *p;    //base::Stream
+  const void *p;    //qrpc::ByteStream or qrpc::CodedByteStream
 } qrpc_stream_t; 
 //below are essentially same as nq_stream, but would be helpful to prevent misuse of rpc/stream/media/alarm
 typedef struct qrpc_rpc_tag {
   qrpc_serial_t s; //base::Serial
-  const void *p;    //qrpc::RPCStream
+  const void *p;    //qrpc::RPCStream or qrpc::CodedRPCStream
 } qrpc_rpc_t; 
 
 typedef struct qrpc_media_tag {
   qrpc_serial_t s; // base::Serial
-  const void *p;    //base::webrtc::Media
+  const void *p;    //qrpc::Media
 } qrpc_media_t;
 
 typedef const void *qrpc_alarm_t;
@@ -828,6 +828,15 @@ QRPC_CLOSURECALL void *qrpc_rpc_ctx(qrpc_rpc_t rpc);
 // media API
 //
 // --------------------------
+typedef enum {
+  QRPC_MEDIA_KIND_UNKNOWN = 0,
+  QRPC_MEDIA_KIND_AUDIO = 1,
+  QRPC_MEDIA_KIND_VIDEO = 2,
+} qrpc_media_kind_t;
+typedef enum {
+  QRPC_MEDIA_DIRECTION_SEND = 0, // produce media stream
+  QRPC_MEDIA_DIRECTION_RECV = 1, // consume media stream
+} qrpc_media_direction_t;
 typedef struct {
   // media_path is used to identify media stream. required.
   const char *path;
@@ -917,6 +926,12 @@ QRPC_CLOSURECALL bool qrpc_media_paused(qrpc_media_t m);
 QRPC_CLOSURECALL void *qrpc_media_ctx(qrpc_media_t m);
 // get media path
 QRPC_CLOSURECALL const char *qrpc_media_path(qrpc_media_t m);
+// get media kind
+QRPC_CLOSURECALL qrpc_media_kind_t qrpc_media_kind(qrpc_media_t m);
+// get media direction
+QRPC_CLOSURECALL qrpc_media_direction_t qrpc_media_direction(qrpc_media_t m);
+
+
 
 // --------------------------
 //
