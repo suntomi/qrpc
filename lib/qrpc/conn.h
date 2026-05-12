@@ -6,9 +6,10 @@
 namespace qrpc {
 class Connection {
 public:
+  Connection(base::Serial::PartitionId pid) : serial_(pid) {}
   virtual ~Connection() = default;
 public:
-  virtual const qrpc_serial_t &serial() const = 0;
+  const qrpc_serial_t &serial() const { return serial_; }
   qrpc_conn_t ToHandle() const { return { .s = serial(), .p = const_cast<Connection *>(this) }; }
   static base::Connection *FromHandle(qrpc_conn_t conn) {
     auto p = reinterpret_cast<const Connection *>(conn.p);
@@ -17,15 +18,6 @@ public:
     }
     return dynamic_cast<base::Connection *>(const_cast<Connection *>(p));
   }
-};
-
-template <class BaseConnectionT>
-class ConnectionImplT : public BaseConnectionT, public qrpc::Connection {
-public:
-  template <class... Args>
-  ConnectionImplT(base::Serial::PartitionId pid, Args&&... args) :
-    BaseConnectionT(std::forward<Args>(args)...), serial_(pid) {}
-  const qrpc_serial_t &serial() const override { return serial_; }
 protected:
   base::Serial serial_;
 };

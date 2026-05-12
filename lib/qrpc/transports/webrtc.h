@@ -47,12 +47,10 @@ namespace webrtc {
   }
 
   // webrtc::ServerConnection
-  class ServerConnection : public qrpc::ConnectionImplT<base::webrtc::Listener::Connection> {
+  class ServerConnection : public base::webrtc::Listener::Connection, public qrpc::Connection {
   public:
     ServerConnection(ConnectionFactory &cf, DtlsTransport::Role dtls_role, const qrpc_listen_conf_t &config) :
-      qrpc::ConnectionImplT<base::webrtc::Listener::Connection>(
-        dynamic_cast<qrpc::Loop &>(cf.loop()).partition_id(), cf, dtls_role
-      ),
+      base::webrtc::Listener::Connection(cf, dtls_role), qrpc::Connection(dynamic_cast<qrpc::Loop &>(cf.loop()).partition_id()),
       on_open_(config.on_open), on_close_(config.on_close), ctx_(nullptr) {}
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { 
@@ -106,14 +104,13 @@ namespace webrtc {
   };
 
     // webrtc::ClientConnection
-  class ClientConnection : public qrpc::ConnectionImplT<base::webrtc::Client::Connection> {
+  class ClientConnection : public base::webrtc::Client::Connection, public qrpc::Connection {
   public:
     ClientConnection(
       ConnectionFactory &cf, DtlsTransport::Role dtls_role,
       base::Serial::PartitionId pid, const qrpc_connect_conf_t &conf
-    ) :
-      qrpc::ConnectionImplT<base::webrtc::Client::Connection>(
-        pid, cf, dtls_role, base::webrtc::Client::TransportConfig::From(conf.transport), 
+    ) : base::webrtc::Client::Connection(
+        cf, dtls_role, base::webrtc::Client::TransportConfig::From(conf.transport),
         [this](const Stream::Config &c, base::Connection &conn) {
           auto &cc = dynamic_cast<ClientConnection &>(conn);
           auto he = qrpc_closure_call(config_.stream_router, c.label.c_str(), cc.ToHandle());
@@ -122,7 +119,7 @@ namespace webrtc {
           }
           return std::shared_ptr<Stream>(qrpc::webrtc::NewStream(c, conn, *he));
         }
-      ),
+      ), qrpc::Connection(pid),
       config_(conf), on_open_(conf.on_open), on_close_(conf.on_close), on_finalize_(conf.on_finalize) {}
     ~ClientConnection() override { qrpc_closure_call(on_finalize_, ToHandle()); }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
