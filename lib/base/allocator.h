@@ -48,7 +48,7 @@ class Allocator {
   std::vector<std::unique_ptr<Block[]>> chunks_;
   size_t total_block_, chunk_size_;
   std::stack<Block*> pool_;
- public:
+public:
   Allocator(size_t chunk_size) : 
     chunks_(), total_block_(chunk_size), chunk_size_(chunk_size), pool_() {
     ASSERT(chunk_size_ > 0);
@@ -86,7 +86,7 @@ class Allocator {
   inline B *Bss(void *ptr) {
     return Block::Bss(ptr);
   }
- protected:
+protected:
   inline void GrowChunk() {
     chunks_.emplace(chunks_.end(), new Block[chunk_size_]);
     auto pb = chunks_[chunks_.size() - 1].get();

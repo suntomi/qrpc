@@ -10,6 +10,7 @@ public:
   virtual ~Connection() = default;
 public:
   const qrpc_serial_t &serial() const { return serial_; }
+  base::Serial::PartitionId partition_id() const { return serial_.partition_id(); }
   qrpc_conn_t ToHandle() const { return { .s = serial(), .p = const_cast<Connection *>(this) }; }
   static base::Connection *FromHandle(qrpc_conn_t conn) {
     auto p = reinterpret_cast<const Connection *>(conn.p);

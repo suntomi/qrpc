@@ -98,7 +98,7 @@ public:
     }
     cond_.notify_all();
     {
-      //wait for Stop() call finished by wait for condition_variable.
+      //wait for Stop() call finished by waiting for condition_variable.
       //note that mutex_ is not assured to be locked by the thread which is waken by above notify_all here.
       std::unique_lock<std::mutex> lock(mutex_); 
       //finailized should evaluated before first actual wait operation, so never deadlock.

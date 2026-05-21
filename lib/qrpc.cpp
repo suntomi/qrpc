@@ -331,7 +331,7 @@ QRPC_INI_FINI void qrpc_server_start(qrpc_server_t sv, bool block) {
   auto s = Server::FromHandle(sv);
   s->Start(block);
 }
-QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv) {
+QRPC_INI_FINI void qrpc_server_join(qrpc_server_t sv) {
   auto s = Server::FromHandle(sv);
   s->Join();
   delete s;

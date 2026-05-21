@@ -704,7 +704,7 @@ QRPC_INI_FINI int qrpc_server_listen(qrpc_server_t sv, const qrpc_listen_conf_t 
 //if block is true, qrpc_server_start blocks until some other thread calls qrpc_server_join. 
 QRPC_INI_FINI void qrpc_server_start(qrpc_server_t sv, bool block);
 //request shutdown and wait for server to stop. after calling this API, do not call qrpc_server_* API anymore
-QRPC_THREADSAFE void qrpc_server_join(qrpc_server_t sv);
+QRPC_INI_FINI void qrpc_server_join(qrpc_server_t sv);
 
 
 

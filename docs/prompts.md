@@ -402,16 +402,82 @@ Worker::TaskQueueへのenqueueはすでにスレッドセーフなので、mutex
 その上で、あなたの質問については２の、登録時にTaskQueueも渡す、という方針で良いと思います。
 
 =======
+lib/base/sig.hのSignalHandlerの機能をlib/qrpc.hに公開したいです。
+
+- SignalHandlerを処理する用の専用のスレッドを用意します。この実装はlib/qrpc/sig.hやlib/qrpc/sig.cppに配置してください。このスレッドをqrpc_signal_initで起動します。
+- そのスレッドもlib/qrpc/worker.hのようにloopを保持しますが、pollingの必要がないため、永遠にイベントを待つLoop::WaitEventを使います
+- SignalHandlerへの操作(Handle/Unhandle)はWorker::TaskQueueに追加します。Loop::WaitEventの待ち状態から抜けるためにpipeのfdを登録しておいて、TaskQueueにタスクを積んだ後pipeのもう１つのfdに書き込みを行なってwake upさせます。wake upさせた後はWorker::TaskQueueをconsumeします。
+- 一旦、SignalHandlerへの操作は同期的に行えなくて良いです。つまりqrpc_singal_handle/unhandleはTaskQueueにタスクとして操作を積んだ後、signalスレッドをwake upさせたらすぐに戻ります。
+
+=======
+
+- SignalThread::signal_もSignalThread::Runでloop_に登録する方がsignal_added_の制御が不要になるのではないですか？
+- SignalThreadのloopはbase::Loopで良いので、変更してください。そうするとEnsurePartitionIdを呼ぶ必要がないです。
+- SignalThreadはstatic変数として宣言できると思うので、そのようにし、g_signal_mutexでの制御はなくします。signal_initではStartだけ行い、その成功失敗を返します。
+  - SignalThread::Handle/Unhandleはready_がtrueでない場合にエラーを返すようにしてください。
+
+=======
+lib/qrpc.cppのSignalServiceの実装について幾つか修正したい点があります
+
+- pthread_XXXX ではなくできればstd::threadを使って欲しいですが、スタックサイズの制御などができませんか？
+- Handle/Unhandleの実装が無駄に複雑です。
+  - SignalHandlerはSignalService::Run()の中でloopに追加すればその時点ですでに利用可能になります。したがってsignal_handler_started_による制御は不要だと思います。
+- InvokeSyncでcondition_variableを使っていますが、Worker::TaskQueueを使えば複雑な排他制御を行う必要はないです。
+
+=======
+lib/tests/e2e/qrpc/client/以下に qrpcのrtpの動作を確認するテストを作成してください。
+- 現在のmain.cppはsctp.cppとします。
+- 新しくrtp.cppも作ります。
+- これら２つのファイルにはtest_sctp_client()やtest_rtp_client()みたいな関数を作り、新しいmain.cppからはこれらをコマンドライン引数("stcp" or "rtp")で呼び出し分けられるようにします。
+- test_rtp_clientは２つのqrpc_client_tを作成し、サーバーとの接続をそれぞれ行います。
+  - １つのqrpc_client_tで作成されたqrpc_conn_tではqrpc_conn_media_openを行います。
+    - qrpc_on_media_produce_tを実装する必要があります。著作権フリーの動画ファイルをダウンロードして、そのファイルを読み出して送信するような実装にしてください。ファイルが終端に達したら、先頭から再送信します。
+  - もう１つのqrpc_client_tで作成されたqrpc_conn_tではqrpc_conn_media_watchを行います。
+  - qrpc_media_router_t が返すqrpc_media_handler_tのon_media_openに渡されるqrpc_media_tを使ってqrpc_media_watchを行います。
+    - qrpc_media_watchに渡したclosure経由で受け取ったrtpパケットから動画ファイルを生成して保存します。
+
+このようなテストが可能でしょうか？特に受け取ったrtpパケットから動画ファイルを生成できるのかについて懸念があります。
+
+=======
+ConnectionFactory::GlobalInitのlib/base/webrtc.cpp:265から呼ばれている XXXX::ClassInitですが、いくつかの関数は内部でthread_localな変数を初期化しており、ConnectionFactory::ThreadInitに移動させることが必要なようです。XXXX::ClassInitを調べて、ThreadInitに移動させる必要があるものを特定してください。
+
+=======
+lib/tests/e2e/qrpc/client/rtp.cpp で lib/qrpc.h のRTP実装である qrpc_media APIのテストを作成しています。
+２つのqrpc_client_tを生成して、１つがRTPストリームの生成、もう１つがRTPストリームの受信を担当します。
+RTPストリームの生成や、RTPパケットからの動画ファイルの生成にはffmpegを使っています。
+
+今qrpc_client_tの動作順序に問題があり、RTPストリームが生成される前にRTPストリームを受信しようとしてエラーになっているので、その点を修正してください。
+例えばproducer側のqrpc_media_handler_tが提供しているOnMediaOpenにおいて、audioとvideoの両方がopenした時点でwatcherのthreadを起動するようなことができるはずです。(OnMediaOpenに渡されたqrpc_media_tのmedia typeは qrpc_media_kind()で取得できます)
+
+=======
+qrpcではqrpc_conn_t, qrpc_stream_t, qrpc_rpc_t, qrpc_media_t などのハンドルオブジェクトが定義されています。
+このハンドルオブジェクトはそのハンドルに対応するC++オブジェクトのポインタpと、そのポインタに含まれるシリアルsのコピーからなっています。
+
+なぜ++オブジェクトのポインタpだけをハンドルとせず、そのような形で定義しているかを説明します。
+
+qrpcはブラウザからの常時接続の上での全二重通信を提供するライブラリであり、主にリアルタイムなユーザー同士のインタラクションを実現するという目的があります。そういったアプリケーションのビジネスロジックでは、「他のユーザーの接続に対して何か操作を行う」ことがよくあり、それを効率よく扱うためには、他のユーザーへの接続を管理するオブジェクトをアプリケーションのデータ構造に保持することが有力な手法です。
+
+しかし、保持されているオブジェクトは基本的にはユーザーの接続によって割り当てられるものであり、ユーザーは切断されたりログアウトしたりして存在しなくなり、対応する接続関連のオブジェクトは解放されます。
+つまり、保持されているオブジェクトがポインタpだけだと、切断によって、pは突然不正なメモリとなります。
+そのため切断のタイミングで全ての保持されているpをメモリ上から削除する必要がありますが、マルチスレッドサーバー上でそれを安全に行うことは難しいチャレンジになります。
+
+このため以下のような方針にしました：
+- メモリ上から全てのオブジェクトを消すことはせず、ユーザーが切断されたタイミングで、あちこちで保持されているオブジェクトが不正になったことがわかるようにする
+- プログラムは自分が保持しているオブジェクトが不正になったことをそれぞれ検出しそれぞれのタイミングでメモリ上から削除する
+
+この方針を実現するため、以下のように
+- シリアル(lib/base/serial.h)はオブジェクトをユニークに識別するだけでなく、含まれるpartition idによってそのオブジェクトがどのスレッドから作成されたかわかるようにする
+- ハンドルオブジェクトはポインタに対応するC++オブジェクトのToHandle()で生成される。生成された時点では、sの値はp->serial()をコピーして設定されるため、sとp->serial() の値は等しい。
+- pが解放される時にserialの値は無効化される。これによりs != p->serial()となり、FromHandleで無効であることが検出できる
+- FromHandleはオブジェクトが作成されたスレッドでしか呼んではならない。
+
+
+qrpc::Connection::FromHandle, qrpc::Stream::FromHandle, qrpc::Media::FromHandleなどの関数は、与えられた
 
 
 =======
-lib/tests/e2e/core/client/native/main.cpp でqrpcのrtpの動作を確認するテストを作成してください。以下のようなテストケースが必要です。
-- test_webrtc_clientのような形でtest_rtp_clientを作成します。
-- test_rtp_clientは２つのbase::webrtc::Clientを作成し、サーバーとの接続をそれぞれ行います。
-  - １つのConnectionはbase::webrtc::Client::Connection::OpenMediaを行います。
-    - qrpc_on_media_produce_tを実装する必要があります。著作権フリーの動画ファイルをダウンロードして、そのファイルを読み出して送信するような実装にしてください。ファイルが終端に達したら、先頭から再送信します。
-  - もう一つのConnectionはbase::webrtc::Client::Connection::WatchMediaを行います。
-    - 受け取ったrtpパケットから動画ファイルを生成して保存します。
+なぜ、C++はサイズ０のクラスを多重継承したクラスをその多重継承したクラスのポインタとして扱う場合にポインタの値を変えるのでしょうか？
+またvtableも別々になるのはなぜでしょうか？結合できるようにも思います。
 
 
 もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。

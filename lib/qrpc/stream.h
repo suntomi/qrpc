@@ -21,7 +21,7 @@ namespace qrpc {
     static constexpr size_t HEADER_BUFFER_SIZE = 8;  
   public:
     Stream(base::Connection &c, const Config &config) :
-      base::Stream(c, config), serial_(&dynamic_cast<qrpc::Connection &>(c).serial()), ctx_(nullptr) {}
+      base::Stream(c, config), serial_(dynamic_cast<qrpc::Connection &>(c).partition_id()), ctx_(nullptr) {}
     ~Stream() override {}
     const qrpc_serial_t &serial() const { return serial_; }
     qrpc_stream_t ToHandle() { return { .s = serial_, .p = this }; }
