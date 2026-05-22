@@ -14,8 +14,4 @@ namespace qrpc {
     }
     return QRPC_OK;
   }
-
-  qrpc_transport_type_t Server::transport_type() const {
-    return transport::type();
-  }
 } 

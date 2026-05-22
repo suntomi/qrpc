@@ -17,7 +17,6 @@ namespace rtp {
     virtual void Close(Stream &) = 0;
     virtual int Send(Stream &, const char *, size_t, bool) = 0;
     virtual std::shared_ptr<Stream> OpenStream(const Stream::Config &) = 0;
-    virtual bool has_message_boundary() const = 0;
     virtual int InitMedia(const qrpc_media_config_t &) = 0;
     virtual int OpenMedia(const qrpc_media_produce_config_t &) = 0;
     virtual int CloseMedia(const std::string &) = 0;

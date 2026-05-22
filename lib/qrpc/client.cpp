@@ -3,10 +3,8 @@
 
 namespace qrpc {
   Client *Client::New(const qrpc_clconf_t &conf) {
-    auto c = new transport::Client(conf);
+    // TODO: support other type of transports
+    auto c = new webrtc::Client(conf);
     return dynamic_cast<Client *>(c);
-  }
-  qrpc_transport_type_t Client::transport_type() const {
-    return transport::type();
   }
 }

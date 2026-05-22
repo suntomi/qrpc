@@ -301,11 +301,10 @@ QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf() {
     .process_index = 0,
   };
 }
-QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv) {
-  auto s = qrpc::Server::FromHandle(sv);
+QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_transport_type_t transport) {
   qrpc_listen_conf_t conf = {
     //transport config see DefaultTransportConfig for default configss
-    .transport = DefaultTransportConfig(s->transport_type()),
+    .transport = DefaultTransportConfig(transport),
     //how meny sessions accepted per loop. default 1024
     .accept_per_loop = 0,
     //allocation hint about max session
@@ -499,13 +498,13 @@ QRPC_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const qrpc_stream_config_t
   auto cf = *conf;
   CONN_OP(__c->OpenStream(base::Stream::Config::From(cf, ctx));, conn, cf, ctx);
 }
-QRPC_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc) {
+QRPC_CLOSURECALL qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc) {
   return dynamic_cast<qrpc::Connection &>(qrpc::Stream::FromHandle(rpc)->connection()).ToHandle();
 }
 QRPC_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc) {
   return qrpc::Stream::FromHandle(rpc)->connection().alarm_processor().ToHandle();
 }
-QRPC_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc) {
+QRPC_CLOSURECALL bool qrpc_rpc_is_valid(qrpc_rpc_t rpc) {
   return qrpc::Stream::FromHandle(rpc) != nullptr;
 }
 QRPC_THREADSAFE void qrpc_rpc_validate(qrpc_rpc_t rpc, qrpc_on_rpc_validate_t cb) {

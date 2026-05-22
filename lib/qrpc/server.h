@@ -124,7 +124,6 @@ public:
   inline bool OwnsPartitionId(PartitionId id) const {
     return start_partition_id_ != 0 && id >= start_partition_id_ && id < (start_partition_id_ + n_worker_);
   }
-  qrpc_transport_type_t transport_type() const;
   inline const std::unordered_map<int, PortConfig> &port_configs() const { return port_configs_; }
   inline std::unordered_map<int, PortConfig> &port_configs() { return port_configs_; }
   inline qrpc_server_t ToHandle() { return reinterpret_cast<qrpc_server_t>(this); }

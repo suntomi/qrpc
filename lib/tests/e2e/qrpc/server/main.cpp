@@ -199,7 +199,7 @@ int main() {
   };
   auto server = qrpc_server_create(&svconf);
 
-  auto conf = qrpc_listen_conf(server);
+  auto conf = qrpc_listen_conf(QRPC_TRANSPORT_WEBRTC);
   qrpc_closure_init(conf.on_open, OnConnOpen, nullptr);
   qrpc_closure_init(conf.on_close, OnConnClose, nullptr);
   qrpc_closure_init(conf.stream_router, StreamRouter, nullptr);

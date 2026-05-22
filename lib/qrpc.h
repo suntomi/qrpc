@@ -696,7 +696,7 @@ typedef struct {
 // get default qrpc_server_conf_t
 QRPC_THREADSAFE qrpc_svconf_t qrpc_server_conf();
 // get default qrpc_listen_conf_t
-QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_server_t sv);
+QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_transport_type_t transport);
 //create server which has n_worker of workers
 QRPC_THREADSAFE qrpc_server_t qrpc_server_create(const qrpc_svconf_t *conf);
 //listen and returns handler map associated with it. 
@@ -791,14 +791,14 @@ typedef struct {
 //open callback of this rpc handler will receive invalid rpc and null **ppctx on error, 
 //valid stream handler and **ppctx where *ppctx == ctx on success.
 QRPC_CLOSURECALL void qrpc_conn_rpc(qrpc_conn_t conn, const qrpc_stream_config_t *conf, void *ctx);
-//get parent conn from rpc. it is possible returned qrpc_conn_t already become invalid when this function is called from non-owner thread of rpc
-QRPC_THREADSAFE qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc);
+//get parent conn from rpc. only safe with qrpc_rpc_t which passed to closure callbacks
+QRPC_CLOSURECALL qrpc_conn_t qrpc_rpc_conn(qrpc_rpc_t rpc);
 //get alarm from stream or rpc
 QRPC_CLOSURECALL qrpc_alarm_t qrpc_rpc_alarm(qrpc_rpc_t rpc);
 //check rpc is valid. note that if (nq_rpc_is_valid(...)) does not assure any safety of following operation.
 //you should give cb parameter with filling qrpc_on_rpc_validate member, to operate this rpc object safely on validation success.
 //you can pass qrpc_closure_empty() for qrpc_conn_is_valid, if you dont need to callback.
-QRPC_THREADSAFE bool qrpc_rpc_is_valid(qrpc_rpc_t rpc);
+QRPC_CLOSURECALL bool qrpc_rpc_is_valid(qrpc_rpc_t rpc);
 //close this stream only (conn not closed.) useful if you use multiple stream and only 1 of them go wrong
 QRPC_THREADSAFE void qrpc_rpc_close(qrpc_rpc_t rpc);
 //send arbiter byte array or object to stream peer. type should be positive
@@ -808,9 +808,9 @@ QRPC_THREADSAFE void qrpc_rpc_callx(qrpc_rpc_t rpc, int16_t type, const void *da
 //send arbiter byte array or object to stream peer, without receving reply. type should be positive
 QRPC_THREADSAFE void qrpc_rpc_notify(qrpc_rpc_t rpc, int16_t type, const void *data, qrpc_size_t datalen);
 //send reply of specified request. result >= 0, data and datalen is response, otherwise error detail
-QRPC_THREADSAFE void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen);
+QRPC_CLOSURECALL void qrpc_rpc_reply(qrpc_rpc_t rpc, qrpc_msgid_t msgid, const void *data, qrpc_size_t datalen);
 //send error response to specified request. data and datalen is error detail
-QRPC_THREADSAFE void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, qrpc_error_t error, const void *data, qrpc_size_t datalen);
+QRPC_CLOSURECALL void qrpc_rpc_error(qrpc_rpc_t rpc, qrpc_msgid_t msgid, qrpc_error_t error, const void *data, qrpc_size_t datalen);
 //schedule execution of closure which is given to cb, will called with given rpc.
 QRPC_THREADSAFE void qrpc_rpc_task(qrpc_rpc_t rpc, qrpc_on_rpc_task_t cb);
 //check equality of qrpc_rpc_t.

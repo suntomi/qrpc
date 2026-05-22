@@ -19,26 +19,18 @@ using ClientInterface = Client;
 namespace webrtc {
   using ConnectionFactory = base::webrtc::ConnectionFactory;
   using DtlsTransport = RTC::DtlsTransport;
-  static inline qrpc_transport_type_t type() {
-    return QRPC_TRANSPORT_WEBRTC;
-  }
 
   // NewStream
   static inline Stream *NewStream(
     const Stream::Config &c, base::Connection &conn, const qrpc_handler_entry_t &he
   ) {
+    // webrtc has message boundary (via SCTP), so always create non coded stream
     switch (he.type) {
     case qrpc_handler_type_t::STREAM: {
-      if (conn.has_message_boundary()) {
-        return new ByteStream(conn, c, he.stream);
-      }
-      return new CodedByteStream(conn, c, he.stream);
+      return new ByteStream(conn, c, he.stream);
     } break;
     case qrpc_handler_type_t::RPC: {
-      if (conn.has_message_boundary()) {
-        return new RPCStream(conn, c, he.rpc, conn.alarm_processor());
-      }
-      return new CodedRPCStream(conn, c, he.rpc, conn.alarm_processor());
+      return new RPCStream(conn, c, he.rpc, conn.alarm_processor());
     } break;
     default:
       ASSERT(false);
@@ -167,6 +159,7 @@ namespace webrtc {
     void Resolve(int family_pref, const std::string &host, qrpc_on_resolve_host_t cb) override {
       ASSERT(false);
     }
+    qrpc_transport_type_t transport_type() const override { return QRPC_TRANSPORT_WEBRTC; }
   private:
     AsyncResolver resolver_;
     qrpc_clconf_t config_;

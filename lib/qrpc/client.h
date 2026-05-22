@@ -19,7 +19,7 @@ namespace qrpc {
     virtual void Enqueue(Worker::Task &&t) = 0;
     virtual base::Serial::PartitionId GetPartitionId() const = 0;
     virtual void ResetPartition() = 0;
-    qrpc_transport_type_t transport_type() const;
+    virtual qrpc_transport_type_t transport_type() const = 0;
     qrpc_client_t ToHandle() { return reinterpret_cast<qrpc_client_t>(this); }
     static Client *FromHandle(qrpc_client_t cl) { return reinterpret_cast<Client *>(cl); }
   };

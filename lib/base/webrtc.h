@@ -251,7 +251,7 @@ namespace webrtc {
       std::shared_ptr<Stream> OpenStream(const Stream::Config &c) override {
         return OpenStream(c, stream_factory());
       }
-      bool has_message_boundary() const override { return true; }
+      // webrtc connection has message boundary by SCTP.
       AlarmProcessor &alarm_processor() override { return factory().alarm_processor(); }
       bool is_client() const override { return dtls_role_ == RTC::DtlsTransport::Role::SERVER; }
       rtp::Handler &rtp() override { return rtp_handler(); }
