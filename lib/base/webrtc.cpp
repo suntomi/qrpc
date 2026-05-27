@@ -62,6 +62,10 @@ int ConnectionFactory::Init() {
   return QRPC_OK;
 }
 void ConnectionFactory::Fin() {
+  if (finalized_) {
+    return;
+  }
+  finalized_ = true;
   connections_.clear();
   cnmap_.clear();
   if (alarm_id_ != AlarmProcessor::INVALID_ID) {
@@ -321,9 +325,7 @@ std::shared_ptr<Connection> ConnectionFactory::Create(
   RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd,
   FactoryMethod &fm
 ) {
-  // Accept base::Connection pointer/shared_ptr and cast to derived Connection.
-  std::shared_ptr<base::Connection> base_conn(fm(*this, dtls_role));
-  auto c = std::dynamic_pointer_cast<Connection>(base_conn);
+  auto c = fm(*this, dtls_role);
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return nullptr;
@@ -2474,6 +2476,7 @@ void Client::Fin() {
     auto p = it++;
     (*p).Fin();
   }
+  ConnectionFactory::Fin();
 }
 
 
@@ -2619,6 +2622,7 @@ void Listener::Fin() {
     auto p = it++;
     (*p).Fin();
   }
+  ConnectionFactory::Fin();
 }
 } //namespace webrtc
 } //namespace base

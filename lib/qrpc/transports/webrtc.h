@@ -3,6 +3,7 @@
 #include "base/webrtc.h"
 #include "base/string.h"
 #include "base/serial.h"
+#include "base/allocator.h"
 
 #include "qrpc/base.h"
 #include "qrpc/client.h"
@@ -19,30 +20,61 @@ using ClientInterface = Client;
 namespace webrtc {
   using ConnectionFactory = base::webrtc::ConnectionFactory;
   using DtlsTransport = RTC::DtlsTransport;
+  class Client;
 
-  // NewStream
-  static inline Stream *NewStream(
-    const Stream::Config &c, base::Connection &conn, const qrpc_handler_entry_t &he
-  ) {
-    // webrtc has message boundary (via SCTP), so always create non coded stream
-    switch (he.type) {
-    case qrpc_handler_type_t::STREAM: {
-      return new ByteStream(conn, c, he.stream);
-    } break;
-    case qrpc_handler_type_t::RPC: {
-      return new RPCStream(conn, c, he.rpc, conn.alarm_processor());
-    } break;
-    default:
-      ASSERT(false);
-      return nullptr;
+  template <class T>
+  using HandleAllocator = base::SharedPtrAllocator<T, HandleBss>;
+
+  struct StreamAllocators {
+    HandleAllocator<ByteStream> byte;
+    HandleAllocator<RPCStream> rpc;
+
+    StreamAllocators(size_t chunk_size) :
+      byte(chunk_size), rpc(chunk_size) {}
+  };
+
+  template <class ConnectionT>
+  class HandleAllocators {
+  public:
+    HandleAllocators(size_t conn_chunk_size, size_t stream_chunk_size, size_t media_chunk_size) :
+      conn_(conn_chunk_size), streams_(stream_chunk_size), media_(media_chunk_size) {}
+    template <class... Args>
+    std::shared_ptr<ConnectionT> NewConnection(Args&&... args) {
+      return conn_.Alloc(std::forward<Args>(args)...);
     }
-  }
+    inline std::shared_ptr<Stream> NewStream(
+      const Stream::Config &c, base::Connection &conn, const qrpc_handler_entry_t &he
+    ) {
+      // webrtc has message boundary (via SCTP), so always create non coded stream
+      switch (he.type) {
+      case qrpc_handler_type_t::STREAM: {
+        return streams_.byte.Alloc(conn, c, he.stream);
+      } break;
+      case qrpc_handler_type_t::RPC: {
+        return streams_.rpc.Alloc(conn, c, he.rpc, conn.alarm_processor());
+      } break;
+      default:
+        ASSERT(false);
+        return nullptr;
+      }
+    }
+    inline std::shared_ptr<base::Media> NewMedia(
+      const std::string &path, base::Media::Direction direction, base::Connection &conn, qrpc_media_handler_t &handler
+    ) {
+      return media_.Alloc(path, direction, conn, handler);
+    }
+  private:
+    HandleAllocator<ConnectionT> conn_;
+    StreamAllocators streams_;
+    HandleAllocator<Media> media_;
+  };
 
   // webrtc::ServerConnection
-  class ServerConnection : public base::webrtc::Listener::Connection, public qrpc::Connection {
+  class ServerConnection : public qrpc::Connection, public base::webrtc::Listener::Connection {
   public:
     ServerConnection(ConnectionFactory &cf, DtlsTransport::Role dtls_role, const qrpc_listen_conf_t &config) :
-      base::webrtc::Listener::Connection(cf, dtls_role), qrpc::Connection(dynamic_cast<qrpc::Loop &>(cf.loop()).partition_id()),
+      qrpc::Connection(dynamic_cast<qrpc::Loop &>(cf.loop()).partition_id()),
+      base::webrtc::Listener::Connection(cf, dtls_role),
       on_open_(config.on_open), on_close_(config.on_close), ctx_(nullptr) {}
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
     qrpc_time_t OnShutdown() override { 
@@ -71,7 +103,7 @@ namespace webrtc {
         base::webrtc::Listener::TransportConfig::From(config.transport),
         // connection factory method
         [this](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
-          return new ServerConnection(cf, role, config_);
+          return allocators_.NewConnection(cf, role, config_);
         },
         // stream factory
         [this](const Stream::Config &c, base::Connection &conn) {
@@ -80,38 +112,40 @@ namespace webrtc {
           if (he == nullptr) {
             logger::die({{"ev","no handler found"},{"label",c.label},{"ptr",base::str::dptr(&conn)}});
           }
-          return std::shared_ptr<Stream>(qrpc::webrtc::NewStream(c, conn, *he));
+          return allocators_.NewStream(c, conn, *he);
         }
-      ), worker_(w), config_(config), port_index_(port_index) {}
+      ), worker_(w), config_(config),
+      allocators_(config.conn_chunk_size, config.stream_chunk_size, config.media_chunk_size),
+      port_index_(port_index) {}
+    ~Listener() override {
+      // it called from parent class' destructor but it assume that our allocators are alive, so parent's Fin() first, 
+      // then free allocators
+      base::webrtc::Listener::Fin();
+    }
     qrpc_transport_type_t transport_type() const override { return QRPC_TRANSPORT_WEBRTC; }
   public:
     bool Listen(int signaling_port, const qrpc_endpoint_t &ep) {
       return base::webrtc::Listener::Listen(signaling_port, base::webrtc::Listener::Endpoint::From(ep));
     }
     inline const qrpc_listen_conf_t &config() const { return config_; }
+    HandleAllocators<ServerConnection> &allocator() { return allocators_; }
   private:
     Worker &worker_;
     qrpc_listen_conf_t config_;
+    HandleAllocators<ServerConnection> allocators_;
     int port_index_;
   };
 
     // webrtc::ClientConnection
-  class ClientConnection : public base::webrtc::Client::Connection, public qrpc::Connection {
+  class ClientConnection : public qrpc::Connection, public base::webrtc::Client::Connection {
   public:
     ClientConnection(
       ConnectionFactory &cf, DtlsTransport::Role dtls_role,
-      base::Serial::PartitionId pid, const qrpc_connect_conf_t &conf
-    ) : base::webrtc::Client::Connection(
-        cf, dtls_role, base::webrtc::Client::TransportConfig::From(conf.transport),
-        [this](const Stream::Config &c, base::Connection &conn) {
-          auto &cc = dynamic_cast<ClientConnection &>(conn);
-          auto he = qrpc_closure_call(config_.stream_router, c.label.c_str(), cc.ToHandle());
-          if (he == nullptr) {
-            logger::die({{"ev","no handler found"},{"label",c.label},{"ptr",base::str::dptr(&conn)}});
-          }
-          return std::shared_ptr<Stream>(qrpc::webrtc::NewStream(c, conn, *he));
-        }
-      ), qrpc::Connection(pid),
+      base::Serial::PartitionId pid, const qrpc_connect_conf_t &conf, base::StreamFactory &&sf
+    ) : qrpc::Connection(pid),
+      base::webrtc::Client::Connection(
+        cf, dtls_role, base::webrtc::Client::TransportConfig::From(conf.transport), std::move(sf)
+      ),
       config_(conf), on_open_(conf.on_open), on_close_(conf.on_close), on_finalize_(conf.on_finalize) {}
     ~ClientConnection() override { qrpc_closure_call(on_finalize_, ToHandle()); }
     int OnConnect() override { return qrpc_closure_call(on_open_, ToHandle(), &ctx_); }
@@ -136,17 +170,30 @@ namespace webrtc {
       OpenOrDie(config.max_nfd, config.poll_timeout_ns),
       base::webrtc::Client::Config::From(
         resolver_.InitOrDie(AsyncResolver::Config::From(config.dns)), config.session_timeout, config.connect_timeout
-      )), queue_() {}
-    ~Client() override {}
+      )), allocators_(config.conn_chunk_size, config.stream_chunk_size, config.media_chunk_size), queue_() {}
+    ~Client() override {
+      // it called from parent transport_'s destructor but it assume that our allocators are alive, so transport_'s Fin() first, 
+      // then free allocators
+      transport_.Fin();
+    }
     void Close(base::Connection &c) override { transport_.Close(c); }
     bool Connect(const qrpc_connect_conf_t &c) override {
       return transport_.Connect(
         base::webrtc::Client::Endpoint::From(c.ep),
-        [conf = c, pid = partition_id()](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
-          return new ClientConnection(cf, role, pid, conf);
+        [this, conf = c, pid = partition_id()](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
+          base::StreamFactory sf = [this, conf](const base::Stream::Config &sc, base::Connection &conn) -> std::shared_ptr<base::Stream> {
+            auto &cc = dynamic_cast<ClientConnection &>(conn);
+            auto he = qrpc_closure_call(conf.stream_router, sc.label.c_str(), cc.ToHandle());
+            if (he == nullptr) {
+              logger::die({{"ev","no handler found"},{"label",sc.label},{"ptr",base::str::dptr(&conn)}});
+            }
+            return allocators_.NewStream(sc, conn, *he);
+          };
+          return allocators_.NewConnection(cf, role, pid, conf, std::move(sf));
         }
       );
     }
+    HandleAllocators<ClientConnection> &allocator() { return allocators_; }
     void Poll() override {
       Worker::Task t;
       while (queue_.try_dequeue(t)) { t(); }
@@ -164,6 +211,7 @@ namespace webrtc {
     AsyncResolver resolver_;
     qrpc_clconf_t config_;
     base::webrtc::Client transport_;
+    HandleAllocators<ClientConnection> allocators_;
     Worker::TaskQueue queue_;
   };
 }

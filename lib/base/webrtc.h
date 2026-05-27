@@ -30,6 +30,7 @@ namespace webrtc {
   // ConnectionFactory
   class ConnectionFactory {
   public:
+    class Connection;
     typedef std::string IceUFrag;
     typedef rtp::MediaStreamConfig::ControlOptions ControlOptions;
     struct CloseReason {
@@ -45,7 +46,7 @@ namespace webrtc {
         };
       }
     };
-    typedef std::function<Connection *(ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
+    typedef std::function<std::shared_ptr<Connection> (ConnectionFactory &, RTC::DtlsTransport::Role)> FactoryMethod;
     struct Port {
       enum Protocol {
         NONE = QRPC_WEBRTC_ENDPOINT_PROTOCOL_NONE,
@@ -117,7 +118,6 @@ namespace webrtc {
       int Derive(const Endpoint &ep, const ConnectionFactory::Config &conf);
     };    
   public: // connection
-    class Connection;
     template <class PS>
     class TcpSessionTmpl : public PS {
     public:
@@ -461,7 +461,7 @@ namespace webrtc {
     };
   public:
     ConnectionFactory(Loop &l, Config &&config) : loop_(l), config_(std::move(config)) { Init(); }
-    virtual ~ConnectionFactory() { Fin(); }
+    virtual ~ConnectionFactory() = default;
   public:
     Loop &loop() { return loop_; }
     const Config &config() const { return config_; }
@@ -538,6 +538,7 @@ namespace webrtc {
     AlarmProcessor::Id alarm_id_{AlarmProcessor::INVALID_ID};
     std::map<IceUFrag, std::shared_ptr<Connection>> connections_;
     std::map<std::string, std::shared_ptr<Connection>> cnmap_;
+    bool finalized_{false};
   private:
     static int32_t g_ref_count_;
     static thread_local int32_t g_thread_ref_count_;
@@ -775,7 +776,7 @@ namespace webrtc {
       ) mutable {
         auto ch = connect_handler_;
         auto sh = shutdown_handler_;
-        return new AdhocConnection(cf, dtls_role, std::move(ch), std::move(sh), std::move(tc), [this](
+        return std::make_shared<AdhocConnection>(cf, dtls_role, std::move(ch), std::move(sh), std::move(tc), [this](
           const Stream::Config &c, base::Connection &conn
         ) {
           // make copy of handlers here, all are move into the new AdhocStream (same as AdhocConnection constructor)
@@ -914,7 +915,7 @@ namespace webrtc {
       AdhocStream::ConnectHandler &&ch, AdhocStream::ShutdownHandler &&sh) :
       Listener(l, std::move(c), std::move(tc), [this](ConnectionFactory &cf, RTC::DtlsTransport::Role role) {
         auto cchh = connect_handler_; auto cshh = shutdown_handler_;
-        return new AdhocConnection(cf, role, std::move(cchh), std::move(cshh));
+        return std::make_shared<AdhocConnection>(cf, role, std::move(cchh), std::move(cshh));
       }, [h = std::move(h), ch = std::move(ch), sh = std::move(sh)](
         const Stream::Config &config, base::Connection &conn
       ) {

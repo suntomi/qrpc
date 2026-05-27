@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cstddef>
+#include <type_traits>
 #include <stack>
+#include <utility>
 #include <vector>
 #include <memory>
 
@@ -10,19 +13,30 @@
 namespace base {
 struct EmptyBSS {
 };
+
+template <class B>
+inline B *BssFromObject(const void *ptr) {
+  return reinterpret_cast<B *>(
+    const_cast<char *>(reinterpret_cast<const char *>(ptr)) - sizeof(B)
+  );
+}
+
 template <class E, class B> 
 struct BlockTrait {
   STATIC_ASSERT((sizeof(E) % 8) == 0, "allocator target type should have 8 byte alignment");
   STATIC_ASSERT((sizeof(B) % 8) == 0, "allocator bss type should have 8 byte alignment");
   typedef struct BlockTag {
-    alignas(E) char p[sizeof(E)];
     ManualConstructedOf<B> bss;
+    alignas(E) char p[sizeof(E)];
     BlockTag() = default;
     BlockTag(BlockTag&&) noexcept = default;
     inline void Init() { bss.Init(); }
     inline void Destroy() { bss.Destroy(); }
     static inline B *Bss(void *ptr) {
-      return reinterpret_cast<B *>(reinterpret_cast<char *>(ptr) + sizeof(p)); 
+      return reinterpret_cast<B *>(reinterpret_cast<char *>(ptr) - offsetof(BlockTag, p) + offsetof(BlockTag, bss));
+    }
+    static inline BlockTag *Block(void *ptr) {
+      return reinterpret_cast<BlockTag *>(reinterpret_cast<char *>(ptr) - offsetof(BlockTag, p));
     }
   } Block;
 };
@@ -37,6 +51,9 @@ struct BlockTrait<E, EmptyBSS> {
     inline void Destroy() {}
     static inline EmptyBSS *Bss(void *ptr) {
       return nullptr;
+    }
+    static inline BlockTag *Block(void *ptr) {
+      return reinterpret_cast<BlockTag *>(ptr);
     }
   } Block;  
 };
@@ -81,7 +98,7 @@ public:
     return block->p;
   }
   inline void Free(void *a) {
-    pool_.push(reinterpret_cast<Block *>(a));
+    pool_.push(Block::Block(a));
   }
   inline B *Bss(void *ptr) {
     return Block::Bss(ptr);
@@ -95,6 +112,45 @@ protected:
       ptr->Init();
       pool_.push(ptr);
     }
+  }
+};
+
+template <class T, class = void>
+struct HasClearMethod : std::false_type {};
+
+template <class T>
+struct HasClearMethod<T, std::void_t<decltype(std::declval<T&>().Clear())>> : std::true_type {};
+
+template <class E, class B = EmptyBSS>
+class SharedPtrAllocator : public Allocator<E, B> {
+  using Base = Allocator<E, B>;
+public:
+  class Deleter {
+  public:
+    explicit Deleter(SharedPtrAllocator *allocator) : allocator_(allocator) {}
+    void operator()(E *p) const {
+      if (p == nullptr) {
+        return;
+      }
+      auto bss = allocator_->Bss(p);
+      p->~E();
+      if constexpr (HasClearMethod<B>::value) {
+        bss->Clear();
+      }
+      allocator_->Free(p);
+    }
+  private:
+    SharedPtrAllocator *allocator_;
+  };
+public:
+  explicit SharedPtrAllocator(size_t chunk_size) : Base(chunk_size) {}
+  SharedPtrAllocator(SharedPtrAllocator &&a) noexcept : Base(std::move(a)) {}
+
+  template <class... Args>
+  inline std::shared_ptr<E> Alloc(Args&&... args) {
+    auto mem = Base::Alloc();
+    auto obj = new (mem) E(std::forward<Args>(args)...);
+    return std::shared_ptr<E>(obj, Deleter(this));
   }
 };
 }

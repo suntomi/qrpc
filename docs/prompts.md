@@ -502,8 +502,45 @@ p->serial()が常に安全に読めることは保証できない、という点
   - base::Allocatorの実体は、qrpc::Listener および qrpc::Client が保持します
   - Allocatorのchunk_sizeはlistenerやclientの生成時に設定で渡せるようにします
 
+後者については、どのような変更を行うかプランをまず作成してください。
+
 =======
-qrpcのベンチマークをlib/tests/e2e/benchに作成します。サーバーとクライアントは別プロセスとし、クライアントには引数を渡してクライアント数をコントロールできるようにします。
+7については、Allocator objectを変更する必要がありますか？ std::shared_ptr<base::Connection> を作っている場所でdeleterを指定すれば良いのではないでしょうか？
+
+また、あなたの提案をみて、qrpc::webrtcではCodedXXXStreamを使うことがないことに気づきました。CodedXXXStreamはトランスポート側でメッセージ境界が定義されていない場合に使いますが、webrtcはSCTP経由でメッセージ境界を提供するからです。それに合わせてコードを変更しました。従って、StreamのAllocatorはRPCStreamとByteStream用のみを作成すれば良いです。
+
+=======
+わかりました。そうすると、qrpc::webrtc::ServerConnection, ClientConnectionにおいてqrpc::Connectionを最初の継承クラスにしています。
+この場合、qrpc::Connectionのthis - sizeof(HandleBss)でHandleBssの先頭へのポインタが得られます。従って、qrpc::Connectionのメンバにserialへのポインタを持たせるのは不要ではないでしょうか？qrpc::Mediaやqrpc::Streamについても同様です。
+
+Allocator::Bssをそれぞれ呼び出したいが、Allocatorにはもう１つの型パラメータEがあり、それを判別できないことが問題であれば、Bssの型パラメータだけで、Allocator::Bss相当の実装はできるはずなので、そのようなヘルパーをlib/base/allocator.h に追加するのはどうでしょうか？
+
+まだStream/Media/ConnectionのコンストラクタにHandleBss&を渡していますが理由は何でしょうか？
+
+=======
+custom deleterを使わないようにできないでしょうか？
+Connection/Stream/Media全てにおいて、デストラクタが呼ばれる段階ではConnectionFactory(=qrpc::webrtc::Client::transport_ or qrpc::webrtc::Listener)経由でallocatorを取得することができます。
+従って、少なくともデストラクタの中で、allocator.Free()を呼ぶことはできるはずです。
+この場合、operator deleteのデフォルト動作でメモリをfreeされるのを防ぐためにoperator deleteをオーバーロードして何もしないようにする必要がありそうです。
+
+operator new/deleteをオーバーロードして、allocator.Alloc/Freeを呼ぶ方が整合性がとれていて良いですが、デストラクタが呼ばれた後は、正しくMedia/Stream/ConnectionからConnectionFactoryへの参照を取得することができないため、static thread_localな変数にAllocatorを保持しておいて、operator deleteから使う、ということもできそうです。
+
+あなたの意見を聞かせてください。
+
+=======
+分かりました。コードの見た目より、どちらかというとMedia/Stream/Connectionの作成時に常に8bytesのオーバーヘッドが加わることが気になっていましたが、そのオーバーヘッドが問題となるかどうかはベンチマークなどを取ったわけでもありませんので、一旦提案のような修正を行なってください。
+
+また、
+
+
+=======
+今まで、qrpcではtransportを差し替えやすいように設計していましたが、よく考えると、複数のtransportを同時に使う可能性があります。
+例えばデータセンター内であれば、webrtcでサーバー間が通信するよりはTCPの方が高効率になると思います。
+
+
+
+=======
+qrpcのベンチマークをlib/tests/e2e/benchに作成します。サーバーとクライアントは別プロセスとし、クライアントには引数を渡してクライアント数をコントロールできるようにします。最初は
 
 =======
 qrpcの再接続テストをlib/tests/e2e/reconnに作成します。

@@ -201,7 +201,12 @@ QRPC_THREADSAFE qrpc_clconf_t qrpc_client_conf() {
       .use_round_robin = false,
     },
     .max_nfd = 1024,
-    .poll_timeout_ns = 1000000
+    .poll_timeout_ns = 1000000,
+    .session_timeout = 0,
+    .connect_timeout = 0,
+    .conn_chunk_size = 1024,
+    .stream_chunk_size = 1024,
+    .media_chunk_size = 1024,
   };
   return conf;
 }
@@ -309,6 +314,15 @@ QRPC_THREADSAFE qrpc_listen_conf_t qrpc_listen_conf(qrpc_transport_type_t transp
     .accept_per_loop = 0,
     //allocation hint about max session
     .max_session_hint = 0,
+    .hint_as_limit = false,
+    .ep = {},
+    .port = 0,
+    .cert = nullptr,
+    .key = nullptr,
+    .ca = nullptr,
+    .conn_chunk_size = 1024,
+    .stream_chunk_size = 1024,
+    .media_chunk_size = 1024,
   };
   qrpc_closure_init_noop(conf.on_open, qrpc_on_server_conn_open_t);
   qrpc_closure_init_noop(conf.on_close, qrpc_on_server_conn_close_t);

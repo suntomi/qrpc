@@ -603,6 +603,9 @@ typedef struct {
 
   //session and connect timeout. TODO: timeout per connection
   qrpc_time_t session_timeout, connect_timeout;
+
+  //allocator chunk sizes for handle-backed objects
+  int conn_chunk_size, stream_chunk_size, media_chunk_size;
 } qrpc_clconf_t;
 
 typedef struct {
@@ -691,6 +694,9 @@ typedef struct {
 
   //cert/key/ca to use for tls
   const char *cert, *key, *ca;
+
+  //allocator chunk sizes for handle-backed objects
+  int conn_chunk_size, stream_chunk_size, media_chunk_size;
 } qrpc_listen_conf_t;
 
 // get default qrpc_server_conf_t

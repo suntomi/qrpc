@@ -4,6 +4,7 @@
 
 #include "qrpc/base.h"
 #include "qrpc/conn.h"
+#include "qrpc/handle.h"
 
 #include "base/alarm.h"
 #include "base/stream.h"
@@ -21,23 +22,24 @@ namespace qrpc {
     static constexpr size_t HEADER_BUFFER_SIZE = 8;  
   public:
     Stream(base::Connection &c, const Config &config) :
-      base::Stream(c, config), serial_(dynamic_cast<qrpc::Connection &>(c).partition_id()), ctx_(nullptr) {}
+      base::Stream(c, config), ctx_(nullptr) {
+        HandleBss::FromObject(this)->Reset(dynamic_cast<qrpc::Connection &>(c).partition_id());
+      }
     ~Stream() override {}
-    const qrpc_serial_t &serial() const { return serial_; }
-    qrpc_stream_t ToHandle() { return { .s = serial_, .p = this }; }
-    qrpc_rpc_t ToRpcHandle() { return { .s = serial_, .p = this }; }
+    const qrpc_serial_t &serial() const { return HandleBss::FromObject(this)->serial; }
+    qrpc_stream_t ToHandle() { return { .s = serial(), .p = this }; }
+    qrpc_rpc_t ToRpcHandle() { return { .s = serial(), .p = this }; }
     static inline Stream *FromHandle(qrpc_stream_t st) { return FromPair(st.p, st.s); }
     static inline Stream *FromHandle(qrpc_rpc_t rpc) { return FromPair(rpc.p, rpc.s); }
   private:
     static inline Stream *FromPair(const void *p, const qrpc_serial_t &s) {
       auto st = reinterpret_cast<Stream *>(const_cast<void *>(p));
-      if (st == nullptr || !base::Serial::IsSame(st->serial_, s)) {
+      if (st == nullptr || !base::Serial::IsSame(HandleBss::FromObject(st)->serial, s)) {
         return nullptr;
       }
       return st;
     }
   protected:
-    base::Serial serial_;
     void *ctx_;
   };
   // ByteStream forwards each transport record to the stream handler as-is.
