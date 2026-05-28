@@ -86,18 +86,20 @@ class AsyncResolver : public Resolver {
  public:
   struct Config : ares_options {
     int optmask{0};
-    qrpc_time_t granularity{qrpc_time_msec(10)};
+    qrpc_time_t poll_interval{qrpc_time_msec(10)};
     ares_addr_port_node *server_list{nullptr};
     Config();
     ~Config();
+    static Config From(const qrpc_dns_conf_t &dns);
     const ares_options *options() const { 
-      return static_cast<const ares_options*>(this); }
+      return static_cast<const ares_options*>(this);
+    }
     //no fail methods
     void SetTimeout(qrpc_time_t timeout);
     void SetRotateDns();
     void SetStayOpen();
     void SetLookup(bool use_hosts, bool use_dns);
-    void SetGranularity(qrpc_time_t g) { granularity = g; }
+    void SetPollInterval(qrpc_time_t intv) { poll_interval = intv; }
 
     //methods may fail sometimes
     bool SetServerHostPort(const std::string &host, int port = 53);
@@ -140,6 +142,12 @@ public:
   void Resolve(Query *q) override { q->resolver_ = this; queries_.push_back(q); }
 public:
   bool Initialize(const Config &config = Config());
+  AsyncResolver &InitOrDie(const Config &config = Config()) {
+    if (!Initialized() && !Initialize(config)) {
+      logger::die({{"ev", "fail to initialize resolver"}});
+    }
+    return *this;
+  }
   void Finalize();
   void Resolve(const char *host, int family, Callback cb, void *arg);
   void Poll();

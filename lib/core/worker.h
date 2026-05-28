@@ -47,7 +47,7 @@ class Worker : class WorkerCompat {
   inline std::thread::id thread_id() const { return thread_.get_id(); }
 
  protected:
-  static bool ToSocketAddress(const qrpc_addr_t &addr, QuicSocketAddress &address);
+  static bool ToSocketAddress(const qrpc_endpoint_t &addr, QuicSocketAddress &address);
   Fd CreateUDPSocketAndBind(const QuicSocketAddress& address);
 
  private:

@@ -92,7 +92,9 @@
     "span": "cpp",
     "__memory": "cpp",
     "__availability": "cpp",
-    "md5.h": "c"
+    "md5.h": "c",
+    "iterator": "cpp"
   },
-  "dotnet.defaultSolution": "disable"
+  "dotnet.defaultSolution": "disable",
+  "C_Cpp.default.compilerPath": "/usr/bin/clang++"
 }

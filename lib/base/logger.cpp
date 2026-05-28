@@ -64,11 +64,17 @@ namespace logger {
 #if defined(NO_LOG_WRITE_CALLBACK)
     std::err << j << std::endl;
 #else
-    auto body = j.dump();
-    if (manual_flush_) {
-      s_logs.enqueue(body);
-    } else {
-      writer_(body.c_str(), body.length());     
+    try {
+      auto body = j.dump();
+      if (manual_flush_) {
+        s_logs.enqueue(body);
+      } else {
+        writer_(body.c_str(), body.length());
+      }
+    } catch (std::exception &e) {
+      mtx_.unlock();
+      write({{"ev","json dump error"},{"msg",e.what()}});
+      throw e;
     }
 #endif
     mtx_.unlock();

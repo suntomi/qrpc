@@ -12,6 +12,7 @@ namespace webrtc {
     const std::string &ufrag, const std::string &pwd, TransportProtocol proto,
     std::string &offer) {
     auto now = qrpc_time_now();
+    auto proto_name = proto == TransportProtocol::TCP ? "TCP" : "UDP";
     // string value to the str::Format should be converted to c string like str.c_str()
     // TODO: add sdp for audio and video
     offer = str::Format(R"sdp(v=0
@@ -31,12 +32,14 @@ a=setup:active
 a=mid:0
 a=sctp-port:5000
 a=max-message-size:%u
+%s
 )sdp",
       now, now,
-      proto == TransportProtocol::UDP ? "UDP" : "TCP",
+      proto_name,
       ufrag.c_str(), pwd.c_str(),
-      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
-      c.factory().config().send_buffer_size
+      c.fingerprint_algorithm().c_str(), c.fingerprint().c_str(),
+      c.webrtc_params().send_buffer_size,
+      SDP::CandidatesSDP(proto_name, const_cast<ConnectionFactory::Connection&>(c)).c_str()
     );
     return QRPC_OK;
   }
@@ -145,11 +148,14 @@ a=max-message-size:%u
 
   std::string SDP::CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c) {
     std::string sdplines;
-    auto &l = c.factory().to<Listener>();
     ASSERT(proto == "UDP" || proto == "TCP");
-    auto nwport = proto == "UDP" ? l.udp_port() : l.tcp_port();
+    auto *listener = dynamic_cast<Listener *>(&c.factory());
+    uint16_t nwport = 9;
+    if (listener != nullptr) {
+      nwport = proto == "UDP" ? listener->udp_port() : listener->tcp_port();
+    }
     size_t idx = 0;
-    for (auto &a : c.factory().config().ifaddrs) {
+    for (auto &a : c.ice_candidate_addrs()) {
       sdplines += str::Format(
         "a=candidate:0 %u %s %u %s %u typ host\n",
         idx + 1, proto.c_str(), AssignPriority(idx), a.c_str(), nwport
@@ -159,7 +165,7 @@ a=max-message-size:%u
     sdplines += str::Format(R"cands(a=end-of-candidates
 a=sctp-port:5000
 a=max-message-size:%u)cands",
-      c.factory().config().send_buffer_size
+      c.webrtc_params().send_buffer_size
     );
     return sdplines;
   }
@@ -224,7 +230,7 @@ a=setup:active
       c.ice_server().GetUsernameFragment().c_str(),
       c.ice_server().GetPassword().c_str(),
       p.receiver() ? "trickle" : "renomination",
-      c.factory().fingerprint_algorithm().c_str(), c.factory().fingerprint().c_str(),
+      c.fingerprint_algorithm().c_str(), c.fingerprint().c_str(),
       p.Answer(cname).c_str(),
       CandidatesSDP(proto, c).c_str()
     );
@@ -317,8 +323,8 @@ a=msid-semantic: WMS
         ASSERT(false);
         return false;
       }
-      params.media_path = pit->second;
-      if (mid.empty()) { // for newly created params, assign new mid
+      params.media_path = pit->second; // media_path of peer which corresponds to peer mid
+      if (mid.empty()) { // for newly created params, assign new mid (the actually used mid is decided here)
         params.mid = c.rtp_handler().GenerateMid();
       } else {
         params.mid = mid; // for reused params, use existing mid (preserved at above)
@@ -415,6 +421,63 @@ a=msid-semantic: WMS
     // geneating answer for prodducer
     ASSERT(!proto.empty());
     return GenerateAnswer(c, proto, section_params, answer);
+  }
+  std::string SDP::MediaSectionFrom(const char *type, const qrpc_media_params_t &params, const char *mid) {
+    if (params.n_codecs == 0) {
+      return "";
+    }
+    // build payload type list for m= line
+    std::string payloads;
+    for (qrpc_size_t i = 0; i < params.n_codecs; i++) {
+      payloads += str::Format(" %u", params.codecs[i].payload_type);
+    }
+    // m= line: m=<type> 9 UDP/TLS/RTP/SAVPF <payloads>
+    std::string section = str::Format("m=%s 9 UDP/TLS/RTP/SAVPF%s\n", type, payloads.c_str());
+    section += "c=IN IP4 0.0.0.0\n";
+    if (mid != nullptr) {
+      section += str::Format("a=mid:%s\n", mid);
+    }
+    // a=rtpmap, a=fmtp, a=rtcp-fb for each codec
+    for (qrpc_size_t i = 0; i < params.n_codecs; i++) {
+      const auto &codec = params.codecs[i];
+      const auto parsed_mime = str::Split(codec.mime_type, "/");
+      if (parsed_mime.size() != 2) {
+        logger::error({{"ev","malform codec mime type"},{"mime_type", codec.mime_type}});
+        ASSERT(false);
+        continue;
+      }
+      // a=rtpmap:<pt> <codec>/<clock_rate>[/<channels>]
+      if (codec.channels > 0) {
+        section += str::Format("a=rtpmap:%u %s/%u/%u\n",
+          codec.payload_type, parsed_mime[1].c_str(), codec.clock_rate, codec.channels);
+      } else {
+        section += str::Format("a=rtpmap:%u %s/%u\n",
+          codec.payload_type, parsed_mime[1].c_str(), codec.clock_rate);
+      }
+      // a=fmtp:<pt> <params>
+      if (codec.fmtp != nullptr && codec.fmtp[0] != '\0') {
+        section += str::Format("a=fmtp:%u %s\n", codec.payload_type, codec.fmtp);
+      }
+      // a=rtcp-fb:<pt> <fb_type>
+      for (qrpc_size_t j = 0; j < codec.n_rtcp_fbs; j++) {
+        section += str::Format("a=rtcp-fb:%u %s\n", codec.payload_type, codec.rtcp_fbs[j]);
+      }
+    }
+    // a=extmap:<id> <uri>
+    for (qrpc_size_t i = 0; i < params.n_hdexts; i++) {
+      const auto &hdext = params.hdexts[i];
+      section += str::Format("a=extmap:%u %s\n", static_cast<uint32_t>(hdext.id), hdext.uri);
+    }
+    return section;
+  }
+
+  std::string SDP::MediaSdpFrom(const qrpc_media_params_t &audio, const qrpc_media_params_t &video) {
+    std::string sdp;
+    // generate audio section
+    sdp += MediaSectionFrom("audio", audio, "0");
+    // generate video section
+    sdp += MediaSectionFrom("video", video, "1");
+    return sdp;
   }
 } // namespace webrtc
 } // namespace base

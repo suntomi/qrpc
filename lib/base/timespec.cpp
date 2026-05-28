@@ -28,12 +28,12 @@ namespace base {
 		}
 		qrpc_time_t now() {
 			struct timespec ts;
-			clock_gettime(CLOCK_REALTIME, &ts);
+			clock_gettime(CLOCK_MONOTONIC, &ts);
 			return to_timespec(ts);
 		}
 		void now(long &sec, long &nsec) {
 			struct timespec ts;
-			clock_gettime(CLOCK_REALTIME, &ts);
+			clock_gettime(CLOCK_MONOTONIC, &ts);
 			sec = ts.tv_sec;
 			nsec = ts.tv_nsec;			
 		}

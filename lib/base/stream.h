@@ -12,18 +12,31 @@ namespace base {
   class Stream {
   public:
     static std::string SYSCALL_NAME;
-    typedef struct {
+    struct Config {
       // TODO: use general stream parameter struct, instead of borrow from WebRTC
       RTC::SctpStreamParameters params;
       std::string label;
       std::string protocol; // now not used
-    } Config;
+      void *context;
+      static inline Config From(const qrpc_stream_config_t &conf, void *ctx) {
+        Config c;
+        if (conf.name == nullptr) {
+          logger::die({{"ev","stream config name is null"}});
+        }
+        c.label = conf.name;
+        c.context = ctx;
+        c.params.streamId = conf.stream_id;
+        c.params.ordered = conf.ordered;
+        c.params.maxPacketLifeTime = conf.max_packet_lifetime;
+        c.params.maxRetransmits = conf.max_retransmits;
+        return c;
+      }
+    };
     typedef Session::CloseReason CloseReason;
     typedef uint16_t Id;
     typedef std::function<int (Stream &, const char *, size_t)> Handler;
   public:
-    Stream(Connection &c, const Config &config, bool binary_payload = true) :
-      conn_(c), config_(config), binary_payload_(binary_payload ? 1 : 0) {}
+    Stream(Connection &c, const Config &config, bool binary_payload = true);
     virtual ~Stream() {}
     const Config &config() const { return config_; }
     bool closed() const { return close_reason_ != nullptr; }
@@ -33,8 +46,9 @@ namespace base {
     Id id() const { return config_.params.streamId; }
     const std::string &label() const { return config_.label; }
     Connection &connection() { return conn_; }
-    template <class T> const T &context() const { return *static_cast<T *>(context_); }
-    template <class T> T &context() { return *static_cast<T *>(context_); }
+    template <class T> const T &context() const { return *static_cast<T *>(config_.context); }
+    template <class T> T &context() { return *static_cast<T *>(config_.context); }
+    inline void *context_ptr() { return config_.context; }
     static inline bool IsSystem(const std::string &label) { return label[0] == '$'; }
   public:
     virtual int Open();
@@ -52,13 +66,13 @@ namespace base {
     virtual int OnConnect() { return QRPC_OK; }
     virtual void OnShutdown() {}
     virtual int OnRead(const char *p, size_t sz) = 0;
-    template <class T> void SetContext(T *t) { context_ = t;}
+    template <class T> void SetContext(T *t) { config_.context = t;}
     void SetReset() { reset_ = 1; }
     void SetPublished(bool on) { published_ = (on ? 1 : 0); }
+    template <class T>  T *As() { return dynamic_cast<T *>(this); }
   protected:
     Connection &conn_;
     Config config_;
-    void *context_{nullptr};
     std::unique_ptr<CloseReason> close_reason_;
     uint8_t binary_payload_, reset_{0}, published_{0};
   };
@@ -76,7 +90,7 @@ namespace base {
     int OnRead(const char *p, size_t sz) override { return read_handler_(*this, p, sz); }
     int OnConnect() override { return connect_handler_(*this); }
     void OnShutdown() override { return shutdown_handler_(*this, *close_reason_); }
-  protected:
+  public:
     struct Nop {
       int operator()(Stream &) { return QRPC_OK; }
       void operator()(Stream &, const CloseReason &) {}

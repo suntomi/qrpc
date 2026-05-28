@@ -65,6 +65,9 @@ namespace internal {
 		inline int Wait(Event *ev, int size, Timeout &to) {
 			return ::epoll_wait(fd_, ev, size, to);
 		}
+		inline int Wait(Event *ev, int size) {
+			return ::epoll_wait(fd_, ev, size, -1);
+		}
 
 		//static method
 		static inline void InitEvent(Event &e, Fd fd = INVALID_FD) { e.events = 0; e.data.fd = fd; }
@@ -133,6 +136,9 @@ namespace internal {
 		inline int Wait(Event *ev, int size, Timeout &to) {
 			return ::kevent(fd_, nullptr, 0, ev, size, &to);
 		}
+		inline int Wait(Event *ev, int size) {
+			return ::kevent(fd_, nullptr, 0, ev, size, nullptr);
+		}
 
 		//static method
 		static inline void InitEvent(Event &e, Fd fd = INVALID_FD) { 
@@ -194,6 +200,9 @@ public:
 		return QRPC_OK;
 	}
 	inline int Wait(Event *ev, int size, Timeout &to) {
+		return QRPC_OK;
+	}
+	inline int Wait(Event *ev, int size) {
 		return QRPC_OK;
 	}
 

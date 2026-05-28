@@ -118,7 +118,10 @@ namespace rtp {
 	const FBS::Transport::Options* Handler::TransportOptions(const Config &c) {
 		auto &fbb = GetFBB();
 		fbb.Finish(FBS::Transport::CreateOptions(
-			fbb, false, std::nullopt, c.initial_outgoing_bitrate, false)
+			fbb, false, std::nullopt,
+			c.initial_outgoing_bitrate > 0 ?
+				std::optional<qrpc_size_t>(c.initial_outgoing_bitrate) : std::nullopt,
+			false)
 		);
 		return ::flatbuffers::GetRoot<FBS::Transport::Options>(fbb.GetBufferPointer());
 	}
@@ -204,7 +207,8 @@ namespace rtp {
 				if (!sync) {
 					QRPC_LOGJ(info, {{"ev","ignore media because already prepare"},{"media_path",media_path},{"sync",sync}});
 					continue;
-				} else {
+				} else { // if consume target reconnects, old consumer may not work because target's connection and media stream is recreated.
+					// so we search existing consumer to see if it is connected to same peer rtp_id, otherwise we create new consumer for new peer connection
 					auto cid = ConsumerFactory::GenerateId(rtp_id(), media_path);
 					auto cit = consumers().find(cid);
 					if (cit != consumers().end()) {
@@ -305,61 +309,98 @@ namespace rtp {
 	}
 	struct ControlSet {
 		static const FBS::Request::Method DOES_NOT_SUPPORT = FBS::Request::Method::WORKER_CLOSE;
+		std::string name;
 		FBS::Request::Method producer_method, consumer_method;
 	};
-	static std::map<std::string, ControlSet> g_controls = {
-		{"pause", {.producer_method = FBS::Request::Method::PRODUCER_PAUSE, .consumer_method = FBS::Request::Method::CONSUMER_PAUSE}},
-		{"resume", {.producer_method = FBS::Request::Method::PRODUCER_RESUME, .consumer_method = FBS::Request::Method::CONSUMER_RESUME}},
-		{"request_key_frame",{.producer_method = ControlSet::DOES_NOT_SUPPORT, .consumer_method = FBS::Request::Method::CONSUMER_REQUEST_KEY_FRAME}}
+	static std::map<qrpc_media_control_command_t, ControlSet> g_controls = {
+		{QRPC_MEDIA_CONTROL_PAUSE, {.name = "pause", .producer_method = FBS::Request::Method::PRODUCER_PAUSE, .consumer_method = FBS::Request::Method::CONSUMER_PAUSE}},
+		{QRPC_MEDIA_CONTROL_RESUME, {.name = "resume", .producer_method = FBS::Request::Method::PRODUCER_RESUME, .consumer_method = FBS::Request::Method::CONSUMER_RESUME}},
+		{QRPC_MEDIA_CONTROL_REQUEST_KEY_FRAME,{.name = "request_key_frame", .producer_method = ControlSet::DOES_NOT_SUPPORT, .consumer_method = FBS::Request::Method::CONSUMER_REQUEST_KEY_FRAME}},
+		{QRPC_MEDIA_CONTROL_SET_PREFERRED_LAYER,{.name = "set_preferred_layer", .producer_method = ControlSet::DOES_NOT_SUPPORT, .consumer_method = FBS::Request::Method::CONSUMER_SET_PREFERRED_LAYERS}},
+		{QRPC_MEDIA_CONTROL_SET_PRIORITY,{.name = "set_priority", .producer_method = ControlSet::DOES_NOT_SUPPORT, .consumer_method = FBS::Request::Method::CONSUMER_SET_PRIORITY}},	
 	};
-	bool Handler::ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error) {
-		auto cit = g_controls.find(control);
+	Channel::ChannelRequest Handler::CreateControlRequest(
+		FBB &fbb, FBS::Request::Method m, const qrpc_media_control_t &control) {
+		switch (m) {
+			case FBS::Request::Method::PRODUCER_PAUSE:
+			case FBS::Request::Method::PRODUCER_RESUME:
+			case FBS::Request::Method::CONSUMER_PAUSE:
+			case FBS::Request::Method::CONSUMER_RESUME:
+			case FBS::Request::Method::CONSUMER_REQUEST_KEY_FRAME: {
+				return Handler::CreateRequest(fbb, m, ::flatbuffers::Offset<void>(0));
+			}
+			case FBS::Request::Method::CONSUMER_SET_PREFERRED_LAYERS: {
+				auto req = FBS::Consumer::CreateSetPreferredLayersRequest(
+					fbb, FBS::Consumer::CreateConsumerLayers(
+						fbb,
+						control.set_preferred_layer.spatial_layer,
+						control.set_preferred_layer.temporal_layer
+					)
+				);
+				return Handler::CreateRequest(fbb, m, req);
+			}
+			case FBS::Request::Method::CONSUMER_SET_PRIORITY: {
+				auto req = FBS::Consumer::CreateSetPriorityRequest(
+					fbb, control.set_priority.priority
+				);
+				return Handler::CreateRequest(fbb, m, req);
+			}
+			default: {
+				ASSERT(false);
+				throw std::runtime_error("unsupported control method");
+			}
+		}
+	}
+	bool Handler::ControlStream(const std::string &path, const qrpc_media_control_t &control, bool &is_producer, std::string &error) {
+		auto cmd = control.command;
+		auto cit = g_controls.find(cmd);
 		if (cit == g_controls.end()) {
-			error = "undefined control:" + control;
-			QRPC_LOGJ(error, {{"ev","undefined control"},{"control",control}});
+			error = "undefined control:" + std::to_string(cmd);
+			QRPC_LOGJ(error, {{"ev","undefined control"},{"control",cmd}});
 			ASSERT(false);
 			return false;
 		}
+		const auto &name = cit->second.name;
 		auto producer = FindProducerByPath(path);
 		if (producer != nullptr) {
 			is_producer = true;
 			if (cit->second.producer_method == ControlSet::DOES_NOT_SUPPORT) {
-				error = "producer " + path + " does not support the control:" + control;
-				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",control},{"cname",cname()},{"path",path}});
+				error = "producer " + path + " does not support the control:" + name;
+				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",name},{"cname",cname()},{"path",path}});
 				return false;
 			}
 			try {
-				auto req = CreateRequest<void>(GetFBB(), cit->second.producer_method);
+				auto req = CreateControlRequest(GetFBB(), cit->second.producer_method, control);
 				producer->HandleRequest(&req);
 			} catch (std::exception &e) {
 				error = "request failure:" + std::string(e.what());
-				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",control},{"id",id},{"error",e.what()}});
+				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",name},{"id",id},{"error",e.what()}});
 				return false;
 			}
 		} else {
 			if (cit->second.consumer_method == ControlSet::DOES_NOT_SUPPORT) {
-				error = "consumer " + path + " does not support the control:" + control;
-				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",control},{"cname",cname()},{"path",path}});
+				error = "consumer " + path + " does not support the control:" + name;
+				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",name},{"cname",cname()},{"path",path}});
 				return false;
 			}
 			auto consumer = FindConsumerByPath(path);
 			if (consumer == nullptr) {
 				error = "no consumer found:" + path;
-				QRPC_LOGJ(info, {{"ev","no producer found for pause"},{"path",path}});
+				QRPC_LOGJ(info, {{"ev","no consumer found for pause"},{"path",path}});
 				return false;
 			}
 			is_producer = false;
 			if (cit->second.consumer_method == ControlSet::DOES_NOT_SUPPORT) {
-				error = "consumer " + path + " does not support the control:" + control;
-				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",control},{"cname",cname()},{"path",path}});
+				error = "consumer " + path + " does not support the control:" + name;
+				QRPC_LOGJ(info, {{"ev","control for consumer does not supported"},{"control",name},{"cname",cname()},{"path",path}});
 				return false;
 			}
 			try {
-				auto req = CreateRequest<void>(GetFBB(), cit->second.consumer_method);
+				auto req = CreateControlRequest(GetFBB(), cit->second.consumer_method, control);
 				consumer->HandleRequest(&req);
 			} catch (std::exception &e) {
 				error = "request failure:" + std::string(e.what());
-				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",control},{"cname",cname()},{"error",e.what()}});
+				QRPC_LOGJ(error, {{"ev","fail to control stream"},{"control",name},{"cname",cname()},{"error",e.what()}});
 				return false;
 			}
 		}
@@ -380,7 +421,7 @@ namespace rtp {
 	}
 	bool Handler::Pause(const std::string &path, std::string &error) {
 		bool is_producer = false;
-		if (ControlStream(path, "pause", is_producer, error)) {
+		if (ControlStream(path, { QRPC_MEDIA_CONTROL_PAUSE }, is_producer, error)) {
 			if (is_producer) {
 				auto pl = json({{"args",{{"path",cname() + "/" + path}}},{"fn","remote_pause"}}).dump();
 				SendToConsumersOf(path, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
@@ -391,7 +432,7 @@ namespace rtp {
 	}
 	bool Handler::Resume(const std::string &path, std::string &error) {
 		bool is_producer = false;
-		if (ControlStream(path, "resume", is_producer, error)) {
+		if (ControlStream(path, { QRPC_MEDIA_CONTROL_RESUME }, is_producer, error)) {
 			if (is_producer) {
 				auto pl = json({{"args",{{"path",cname() + "/" + path}}},{"fn","remote_resume"}}).dump();
 				SendToConsumersOf(path, Stream::SYSCALL_NAME, pl.c_str(), pl.size());
@@ -400,16 +441,16 @@ namespace rtp {
 		}
 		return false;
 	}
-	std::shared_ptr<Media> Handler::FindFrom(const std::string &path, bool consumer) {
-		auto parsed = str::Split(path, "/");
+	std::shared_ptr<Media> Handler::FindFrom(const std::string &media_path, bool consumer) {
+		auto parsed = str::Split(media_path, "/");
 		if (consumer) {
 			if (parsed.size() < 3) {
-				QRPC_LOGJ(error, {{"ev","invalid consumer path"},{"path",path}});
+				QRPC_LOGJ(error, {{"ev","invalid consumer path"},{"media_path",media_path}});
 				ASSERT(false);
 				return nullptr;
 			}
 		} else if (parsed.size() < 2) {
-			QRPC_LOGJ(error, {{"ev","invalid producer path"},{"path",path}});
+			QRPC_LOGJ(error, {{"ev","invalid producer path"},{"media_path",media_path}});
 			ASSERT(false);
 			return nullptr;
 		}
@@ -422,7 +463,7 @@ namespace rtp {
 		auto lpath = str::Join(parsed, "/");
 		auto lit = medias_.find(lpath);
 		if (lit == medias_.end()) {
-			auto m = std::make_shared<Media>(lpath);
+			auto m = listener().media_factory(lpath, consumer ? Media::Direction::RECV : Media::Direction::SEND);
 			medias_[lpath] = m;
 			return m;
 		}
@@ -479,7 +520,7 @@ namespace rtp {
 			auto *p = FindProducerByPath(config.media_path);
 			if (p != nullptr) {
 				// preserve ssrcs related with the producer. because if chrome has 2 tabs which connects to qrpc server, 
-				// later one does not send rid/mid to the server. so remember ssrc => rid mapping of previous setting and 
+				// later one does not send rid/mid to the server. so remember ssrc => rid mapping of previous setting 
 				auto &map_ref = ssrc_stream_recovery_map_;
 				for (const auto &kv : p->GetRtpStreams()) {
 					const auto &rid = kv.first->GetRid();
@@ -513,6 +554,9 @@ namespace rtp {
 		return true;
 	}
 	void Handler::CloseConsumer(Consumer *c) {
+		auto *m = ConsumerFactory::MediaFrom(c);
+		ASSERT(m != nullptr);
+		m->OnClose();
 		auto &fbb = GetFBB();
 		HandleRequest(fbb, FBS::Request::Method::TRANSPORT_CLOSE_CONSUMER, 
 			FBS::Transport::CreateCloseConsumerRequestDirect(fbb, c->id.c_str()));
@@ -521,6 +565,7 @@ namespace rtp {
 		auto pl = json({{"args",{{"path",cname() + "/" + p->media_path()}}},{"fn","close_track"}}).dump();
 		auto data = pl.c_str();
 		auto len = pl.size();
+		p->media()->OnClose();
 		for (auto *c : router_.GetConsumersOf(p)) {
 			auto &h = ConsumerFactory::HandlerFrom(c);
 			h.SendToStream(Stream::SYSCALL_NAME, data, len);
@@ -621,6 +666,8 @@ namespace rtp {
 			ext_ids().frameMarking = id;
 		} else if (uri == RTC::RtpHeaderExtensionUri::Type::ABS_CAPTURE_TIME) {
 			ext_ids().absCaptureTime = id;
+		} else if (uri == RTC::RtpHeaderExtensionUri::Type::DEPENDENCY_DESCRIPTOR) {
+			ext_ids().dependencyDescriptor = id;
 		} else if (uri == RTC::RtpHeaderExtensionUri::Type::PLAYOUT_DELAY) {
 			// mediasoup ignored but supported (why?)
 		} else {

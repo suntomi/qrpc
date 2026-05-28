@@ -18,6 +18,8 @@ namespace rtp {
       return ss.str();
     }
     Router(RTC::Shared *shared, Listener *l) : RTC::Router(shared, to_string(std::this_thread::get_id()), l) {}
+    void OnTransportProducerRtpPacketReceived(
+		  RTC::Transport* transport, RTC::Producer* producer, RTC::RtpPacket* packet) override;
     void Publish(const Stream *publisher) {
       publish_map_[publisher];
     }

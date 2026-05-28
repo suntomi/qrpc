@@ -40,13 +40,8 @@ config_setting(
 
 # Reference to distributed BUILD targets
 alias(
-  name = "server",
-  actual = "//lib/tests/e2e/server:e2e_server",
-)
-
-alias(
-  name = "client", 
-  actual = "//lib/tests/e2e/client:e2e_client_native",
+  name = "tests",
+  actual = "//lib/tests:e2e",
 )
 
 alias(

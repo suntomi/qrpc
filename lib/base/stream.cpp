@@ -3,6 +3,8 @@
 
 namespace base {
   std::string Stream::SYSCALL_NAME = "$syscall";
+  Stream::Stream(Connection &c, const Config &config, bool binary_payload) :
+    conn_(c), config_(config), binary_payload_(binary_payload ? 1 : 0) {}
   int Stream::Open() {
     return conn_.Open(*this);
   }

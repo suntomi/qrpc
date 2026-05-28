@@ -3,10 +3,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(_MSC_VER)
+#if defined(OS_WIN)
 #include <malloc.h>
 #else
 #include <stdlib.h>
+#include <alloca.h>
 #endif
 
 #include "base/defs.h"
@@ -23,6 +24,18 @@ inline void AlignedFree(void* ptr) {
   free(ptr);
 #endif
 }
+
+// Allocate a variable-sized buffer on the caller's stack frame.
+// Do not use this in a loop unless you can prove the total stack usage remains
+// bounded, since each alloca() persists until the surrounding function returns.
+// also, Do not replace this with inline function, because if not inlined, 
+// buffer which is allocated by alloca will be freed when that function returns, 
+// so caller happen to use stack region which has already been freed, which is undefined behavior.
+#if defined(OS_WIN)
+#define ALLOC_STACK_BUFFER(T, sz) static_cast<T *>(_alloca((sz) * sizeof(T)))
+#else
+#define ALLOC_STACK_BUFFER(T, sz) static_cast<T *>(alloca((sz) * sizeof(T)))
+#endif
 
 // Deleter for use with smart pointers
 //   eg. std::unique_ptr<Foo, base::AlignedMemoryDeleter> foo;

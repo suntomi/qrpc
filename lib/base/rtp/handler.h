@@ -32,11 +32,24 @@ namespace rtp {
     struct ControlOptions {
       ControlOptions(const json &j);
       ControlOptions() : pause(false) {}
+      ControlOptions(bool p) : pause(p) {}
       bool pause;
     };
-    enum Direction { SEND, RECV };
+    typedef Media::Direction Direction;
     MediaStreamConfig() : Parameters() {}
     MediaStreamConfig(const Parameters &p, Direction d) : Parameters(p), direction(d) {}
+    bool Set(
+      const std::string &path, MediaKind kind, Direction d,
+      const qrpc_media_params_t &params, const ControlOptions opts,
+      uint32_t &rid_seed
+    ) {
+      this->media_path = Parameters::MakeMediaPath(path, kind);
+      this->direction = d;
+      this->options = opts;
+      // this keeps this->mid empty, it will be filled by SDP::Answer(...) in OnMediaSyscallAck
+      // after receiving response from server side with actually decided mid value (via SDP)
+      return Parameters::Set(kind, params, rid_seed);
+    }
     inline bool sender() const { return direction == Direction::SEND; }
     inline bool receiver() const { return direction == Direction::RECV; }
     inline bool probator() const { return mid == RTC::RtpProbationGenerator::GetMidValue(); }
@@ -134,23 +147,27 @@ namespace rtp {
       }
       return nullptr;
     }
+    inline MediaStreamConfig *FindSlotByPath(const std::string &path) {
+      for (auto &c : *this) {
+        if (c.media_path == path) {
+          return &c;
+        }
+      }
+      return nullptr;
+    }
   };
   class Handler : public RTC::Transport {
   public:
     typedef RTC::RtpHeaderExtensionIds ExtensionIds;
     typedef ::flatbuffers::FlatBufferBuilder FBB;
-    struct Config {
-      size_t initial_outgoing_bitrate;
-      size_t max_outgoing_bitrate, max_incoming_bitrate;
-      size_t min_outgoing_bitrate;
-    };
+    typedef qrpc_rtp_config_t Config;
     struct RouterListener : RTC::Router::Listener {
       RTC::WebRtcServer* OnRouterNeedWebRtcServer(
 			  RTC::Router* router, std::string& webRtcServerId) override { return nullptr; }
     };
     class Listener {
     public:
-      typedef const std::function<void(bool sent)> onSendCallback;  
+      typedef const std::function<void(bool sent)> onSendCallback;
     public:
       virtual const std::string &rtp_id() const = 0;
       virtual const std::string &cname() const = 0;
@@ -176,6 +193,7 @@ namespace rtp {
       virtual void SendSctpData(const uint8_t* data, size_t len) = 0;
       virtual bool GetRtpRoc(uint32_t ssrc, uint32_t &roc, MediaStreamConfig::Direction dir) = 0;
       virtual const Config &GetRtpConfig() const = 0;
+      virtual std::shared_ptr<base::Media> media_factory(const std::string &path, Media::Direction direction) = 0;
     };
     typedef Listener::onSendCallback onSendCallback;
   public:
@@ -187,7 +205,7 @@ namespace rtp {
     inline const std::string &cname() const { return listener_.cname(); }
     inline const absl::flat_hash_map<std::string, RTC::Consumer*> &consumers() const { return this->mapConsumers; }
     inline const absl::flat_hash_map<std::string, RTC::Producer*> &producers() const { return this->mapProducers; }
-    inline const std::map<Media::Mid, Media::Id> mid_media_path_map() const { return mid_media_path_map_; }
+    inline const std::map<Media::Mid, Media::Id> &mid_media_path_map() const { return mid_media_path_map_; }
     inline std::map<uint32_t, StreamRecoveryContext> &ssrc_stream_recovery_map() { return ssrc_stream_recovery_map_; }
     inline int SendToStream(const std::string &path, const char *data, size_t len) {
       return listener_.SendToStream(path, data, len);
@@ -217,6 +235,7 @@ namespace rtp {
       }
       return Channel::ChannelRequest(&socket(), ::flatbuffers::GetRoot<FBS::Request::Request>(fbb.GetBufferPointer()));
     }
+    static Channel::ChannelRequest CreateControlRequest(FBB &fbb, FBS::Request::Method m, const qrpc_media_control_t &control);
     template <typename Body> void HandleRequest(FBB &fbb, FBS::Request::Method m, ::flatbuffers::Offset<Body> ofs) { 
       auto req = CreateRequest(fbb, m, ofs);
       RTC::Transport::HandleRequest(&req);
@@ -232,7 +251,7 @@ namespace rtp {
       const std::string &local_path, const std::optional<Parameters::MediaKind> &media_kind,
       MediaStreamConfigs &media_stream_configs, std::vector<std::string> &closed_paths, std::string &error);
     bool Consume(Handler &peer, const MediaStreamConfig &config, std::string &error);
-    bool ControlStream(const std::string &path, const std::string &control, bool &is_producer, std::string &error);
+    bool ControlStream(const std::string &path, const qrpc_media_control_t &control, bool &is_producer, std::string &error);
     bool CloseStream(MediaStreamConfig &config, std::string &error);
     bool Pause(const std::string &path, std::string &error);
     bool Resume(const std::string &path, std::string &error);
@@ -244,7 +263,7 @@ namespace rtp {
     }
     void UpdateByCapability(const Capability &cap);
     std::shared_ptr<Media> FindFrom(const Parameters &p, bool consumer);
-    std::shared_ptr<Media> FindFrom(const std::string &label, bool consumer);
+    std::shared_ptr<Media> FindFrom(const std::string &media_path, bool consumer);
     inline Producer *FindProducerByPath(const std::string &path) const {
       return FindProducer(ProducerFactory::GenerateId(rtp_id(), path));
     }
@@ -310,8 +329,8 @@ namespace rtp {
     Listener &listener_;
     ProducerFactory producer_factory_; // should be declared prior to Producer* and Consumer* containers
     ConsumerFactory consumer_factory_;
-    std::map<std::string, std::shared_ptr<base::Stream>> published_streams_;
-    std::map<Media::Id, std::shared_ptr<Media>> medias_;
+    std::map<std::string, std::shared_ptr<base::Stream>> published_streams_; // key: stream path
+    std::map<std::string, std::shared_ptr<Media>> medias_; // key: media path
     std::map<Media::Mid, std::string> mid_media_path_map_;
     std::map<uint32_t, StreamRecoveryContext> ssrc_stream_recovery_map_;
   };

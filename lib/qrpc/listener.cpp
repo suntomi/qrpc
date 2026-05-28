@@ -1,12 +1,18 @@
 #include "qrpc/listener.h"
 #include "qrpc/worker.h"
 
-#include "qrpc/transports/webrtc.h"
+#include "qrpc/transport.h"
 
 namespace qrpc {
-  std::unique_ptr<Listener> Listener::Listen(
-      const Worker &w, int port_index, const qrpc_addr_t &addr, const qrpc_svconf_t &config
+  std::unique_ptr<Listener> Listener::Create(
+      Worker &w, int port_index, const qrpc_listen_conf_t &config
   ) {
-    return std::make_unique<Listener>(webrtc::Listener::New(w, port_index, addr, config));
+    // TODO: support other type of transports
+    auto l = std::make_unique<webrtc::Listener>(w, port_index, config);
+    if (!l) {
+      return nullptr;
+    }
+    l->Listen(config.port, config.ep);
+    return l;
   }
-}
+} // namespace qrpc

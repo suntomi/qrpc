@@ -11,57 +11,49 @@
 #include "qrpc.h"
 
 #include "qrpc/base.h"
-#include "qrpc/handler_map.h"
 #include "qrpc/worker.h"
 
 namespace qrpc {
 // server is a class to manage multiple workers and ports.
 class Server {
- public:
+public:
 	typedef Worker::TaskQueue TaskQueue;
-  struct PortConfig : public qrpc_svconf_t {
-    HandlerMap handler_map;
-    qrpc_addr_t addr;
-
-    PortConfig(const qrpc_addr_t &a, const qrpc_svconf_t &config) : 
-     qrpc_svconf_t(config), handler_map(), addr(a) {}
-  }; 
+  typedef base::Serial::PartitionId PartitionId;
+  typedef qrpc_listen_conf_t PortConfig;
   enum Status {
     RUNNING,
     TERMINATING,
     TERMINATED,
   };
- protected:
+protected:
   std::atomic<Status> status_;
-  uint32_t process_index_, n_worker_;  // process index in cluster (eg. statefulset number in k8s), number of worker
+  uint32_t process_index_, n_worker_, max_nfd_;  // process index in cluster (eg. statefulset number in k8s), number of worker
 	std::unique_ptr<TaskQueue[]> worker_queue_;
 	std::unordered_map<int, PortConfig> port_configs_;
   std::unordered_map<int, Worker*> workers_;
+  PartitionId start_partition_id_{0};
   std::mutex mutex_;
   std::condition_variable cond_;
   std::thread shutdown_thread_;
-  IdFactory<uint32_t> stream_index_factory_;
-  qrpc_time_t timer_intv_;
-
- public:
-	Server(uint32_t n_worker) : 
-    status_(RUNNING), n_worker_(n_worker), worker_queue_(nullptr), 
-    stream_index_factory_(0x7FFFFFFF) {}
-  ~Server() {}
-  HandlerMap *Open(const qrpc_addr_t &addr, const qrpc_svconf_t &conf) {
-    if (port_configs_.find(addr.port) != port_configs_.end()) {
-      return nullptr; //already port used
+  static thread_local std::mutex g_mutex_;
+public:
+	Server(const qrpc_svconf_t &conf) : status_(RUNNING),
+    n_worker_(conf.n_worker), max_nfd_(conf.max_nfd),
+    process_index_(conf.process_index), worker_queue_(nullptr) {}
+  ~Server() = default;
+  int Open(const qrpc_listen_conf_t &conf) {
+    if (port_configs_.find(conf.ep.port) != port_configs_.end()) {
+      QRPC_LOGJ(error, {{"ev","port dup"},{"port",conf.ep.port}});
+      return QRPC_EDUP; //already port used
     } 
     auto pc = port_configs_.emplace(std::piecewise_construct, 
-                std::forward_as_tuple(addr.port), std::forward_as_tuple(addr, conf));
+                std::forward_as_tuple(conf.ep.port), std::forward_as_tuple(conf));
     if (!pc.second) {
-      QRPC_LOGJ(error, {{"ev","port dup"},{"port",addr.port}});
+      QRPC_LOGJ(error, {{"ev","port dup"},{"port",conf.ep.port}});
       ASSERT(false);
-      return nullptr;
+      return QRPC_EDUP;
     }
-    auto &pconf = pc.first->second;
-    //first is iterator of map<int, PortConfig>
-    return &(pconf.handler_map);
+    return QRPC_OK;
   }
 	int Start(bool block) {
     if (!alive()) { return QRPC_OK; }
@@ -69,12 +61,10 @@ class Server {
 		if (worker_queue_ == nullptr) {
 			return QRPC_EALLOC;
 		}
-    int r = 0;
-		for (uint32_t i = 0; i < n_worker_; i++) {
-			if ((r = StartWorker(i)) < 0) {
-				return r;
-			}
-		}
+    int r = StartWorkers();
+    if (r < 0) {
+      return r;
+    }
     auto shutdown_block = [this]() {
       std::unique_lock<std::mutex> lock(mutex_);
       cond_.wait(lock, [this]() { return !alive(); });
@@ -90,6 +80,16 @@ class Server {
     }
 		return QRPC_OK;
 	}
+  TaskQueue &AddWorker(base::Serial::PartitionId id, Worker *w) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    auto idx = id - start_partition_id_;
+    auto it = workers_.find(idx);
+    if (it != workers_.end()) {
+      logger::die({{"ev","Server::AddWorker(): worker already exists"},{"index",idx}});
+    }
+    workers_.emplace(idx, w);
+    return worker_queue_[idx];
+  }
   void Join() {
     if (!alive()) { return; }
     {
@@ -98,7 +98,7 @@ class Server {
     }
     cond_.notify_all();
     {
-      //wait for Stop() call finished by wait for condition_variable.
+      //wait for Stop() call finished by waiting for condition_variable.
       //note that mutex_ is not assured to be locked by the thread which is waken by above notify_all here.
       std::unique_lock<std::mutex> lock(mutex_); 
       //finailized should evaluated before first actual wait operation, so never deadlock.
@@ -110,18 +110,26 @@ class Server {
       }
     }
   }
-  TaskQueue &queue(int idx) { return worker_queue_[idx]; }
+  TaskQueue &queue(PartitionId id) {
+    ASSERT(OwnsPartitionId(id));
+    return worker_queue_[id - start_partition_id_];
+  }
   inline bool alive() const { return status_ == RUNNING; }
   inline bool terminated() const { return status_ == TERMINATED; }
   inline uint32_t n_worker() const { return n_worker_; }
+  inline uint32_t max_nfd() const { return max_nfd_; }
+  inline uint32_t max_nfd_per_worker() const { return std::floor(max_nfd_ / n_worker_); }
   inline uint32_t process_index() const { return process_index_; }
+  inline PartitionId start_partition_id() const { return start_partition_id_; }
+  inline bool OwnsPartitionId(PartitionId id) const {
+    return start_partition_id_ != 0 && id >= start_partition_id_ && id < (start_partition_id_ + n_worker_);
+  }
   inline const std::unordered_map<int, PortConfig> &port_configs() const { return port_configs_; }
   inline std::unordered_map<int, PortConfig> &port_configs() { return port_configs_; }
-  inline qrpc_server_t ToHandle() { return (qrpc_server_t)this; }
-  inline IdFactory<uint32_t> &stream_index_factory() { return stream_index_factory_; }
-  static inline Server *FromHandle(qrpc_server_t sv) { return (Server *)sv; }
+  inline qrpc_server_t ToHandle() { return reinterpret_cast<qrpc_server_t>(this); }
+  static inline Server *FromHandle(qrpc_server_t sv) { return reinterpret_cast<Server *>(sv); }
 
- protected:
+protected:
   void Stop() {
     for (auto &kv : workers_) {
       kv.second->Join();
@@ -129,10 +137,10 @@ class Server {
     status_ = TERMINATED;
     cond_.notify_all();
   }
-  int StartWorker(int index) {
-    auto l = new Worker(index, *this);
-    workers_[index] = l;
-    l->Start(worker_queue_[index]);
+  int StartWorkers();
+  int StartWorker(PartitionId partition_id) {
+    auto w = new Worker();
+    w->Start(partition_id, *this);
     return QRPC_OK;
   } 
 };

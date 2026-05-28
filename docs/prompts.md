@@ -112,3 +112,437 @@ linux版のe2e_serverをdebug mode + address sanitizerを有効にしてビル�
 docs/reference/asan/schedule_close.txt
 のようなエラーを報告します。このバグを修正してください。
 動作確認はこちらで行いますので、修正が完了したら入力を待ってください。
+
+
+===================
+このレポジトリでは、ストリームベースの多重化された通信を行い、さらにwebrtcのSFUとしても動作するqrpcというCライブラリを開発しています。
+ヘッダーはlib/qrpc.hにあります。現在このライブラリはブラウザクライアント lib/web/ts/src/*.ts とは正しくwebrtcで通信ができています。
+このライブラリに以下のような機能を設けたいです。
+- クライアント機能をCライブラリ側でも利用できるようにしたい
+- サーバーはクライアントから送られてくるmedia streamをコールバックで受け取れるようにしたい
+
+このためにqrpc_media_**** というインターフェイスを用意しようとしていますが、ベースはqrpc_conn_tに対して呼び出しを行うようにしたいです。
+qrpc_conn_tはサーバー/クライアントの接続を共通で表すハンドルです。
+
+ですが、クライアントが以下のように多様な機能を必要とするのに比較して、サーバー側はコールバックの設定しかありません。
+つまり、同じqrpc_conn_tでも行える操作に非対称性があります。この非対称性をうまく表現できるようなインターフェイスにしたいと考えています。
+この場合、qrpc_media_***はどのようなインターフェイスにするのが良いと考えますか？
+
+===================
+lib/base/webrtc/sdp.cpp に SDP::CapSdpTextFromを実装してください。この関数はlib/qrpc.hに定義されているqrpc_media_config_tを受け取って、この構造体が表しているaudio/video sectionのSDPを生成します。
+
+===================
+このレポジトリではmediasoupをベースとしたRTP/RTCPの処理を実装しています。サーバー(SFU)側の実装には特に問題はないです。
+クライアントを実装する場合、rtp packetを生成して接続先に送信する必要がありますが、mediasoupは基本的にSFUを実装しているため送信側の処理がありません。
+そのため、以下のような手段を取ろうと考えています。
+1. rtp::Handlerにproducerを生成する。これが送信されるrtp packetを扱う窓口となる。
+2. このproducerを自分自身(=base::webrtc::Client::Connection)でconsumeする。
+3. 送信したいrtp packetを、midやridを調整して1.で作られたproducerが処理するようにローカルで生成する。
+4. そのバイト列表現をHandler::ReceiveRtpPacketに渡す。
+5. 対応するrtp packetはproducerで処理され、consumerに渡される。consumerは自分自身のpeerにrtp packetを送信するはず。
+
+この実装で問題なく動作しそうかmediasoupのコードを確認してください。特に懸念しているのは、rtp packetを送信する場合にpeerからの要求に従って適宜rtcp packetを送る必要があると思いますが、mediasoupのproducerがそれを全て処理できるか、こちら側で何かしらの追加実装を行う必要があるかについて確認したいです。
+
+=====
+ありがとうございます。FIR/PILの対応を行うための実装は以下のように行おうと考えています。
+ConnectionFactory::Connection::SendRtcpPacket
+
+=====
+lib/tests/e2e/qrpc/client/main.cpp に lib/qrpc.h のAPIを使ったクライアントを作成してください。
+lib/qrpc.hのAPIが行う通信は
+
+
+.build/bazel-bin/lib/tests/e2e/core/client/e2e_client_native を動かした時に発生する以下のaddress sanitizerエラーを修正してください。
+e2e_client_native は lib/tests/e2e/core/client/native/main.cpp をbazelでビルドして生成され、BUILDファイルは lib/tests/e2e/core/client/BUILD です。
+
+======
+
+lib/tests/e2e/core/client/native/main.cpp のsdpのテキストは長く、ソースコード中に存在すると可読性に影響があるので別ファイルにしてください
+
+
+=======
+lib/base/session_base.h の SessionFactory::Connect がsslを使うかどうかは現在、SessionFactoryを作るときに渡されたConfigのMaybeCertPairの値で決定されます。
+しかし、理想的には、SessionFactory::Connect がSSLを必要とするかどうかはConnectごとに決定されるべきです。
+
+この問題を解決し、base::SessionFactoryのクライアントとサーバーとしての責務をより明確に分割するためにはどのような修正を行うのが良いでしょうか？プランを教えてください。
+- SessionFactoryから、TLS関連の処理やConnect()をなくす, SessionFactory::Configからsession timeout以外の設定をなくす
+- SessionFactory::SessionからClose()の再接続をなくす
+- 新たにClientSessionFactory, ListenerSessionFactoryをSessionFactoryを継承する形で作成する(session_base.hに実装)
+  - ClientSessionFactory::SessionはMaybeCertPairを持つが、ClientSessionFactory自身はtls_ctx_を持たない。現在のSessionFactory::Openもこちらのクラスのみが持つようにする
+    - SessionFactory::Session::Closeの再接続処理もClientSessionFactory::Closeに移動する
+    - SessionFactory::Config::resolverをClientSessionFactory::Config::resolverに移動
+  - ListenerSessionFactory::SessionはMaybeCertPairを持たない(SessionFactory::Sessionをそのまま使う)が、tls_ctx_とその初期化処理を持つ
+    - SessionFactory::Config::certpairはListenerSessionFactory::Configに移動
+- TcpClient, UdpClientはClientSessionFactory、TcpListener, UdpListenerはListenerSessionFactoryを継承する
+- ClientSessionFactory::Connect にはMaybeCertPairを渡せるようにする
+
+1. HttpClientのコンストラクタにcertpairを渡していますが、HttpClientではConnect()にcertpairを渡せるようにする必要があります。
+
+=======
+
+lib/base/session_base.h の SessionFactory::Connect は本来base::TcpClientやbase::UdpClientといったclient系のオブジェクトでしか使うことができません。
+この責務の分離をコード上でよりよく表現するために修正を行います。
+
+最初のステップは
+- 新たにClientSessionFactory, ListenerSessionFactoryをSessionFactoryを継承する形で作成する(session_base.hに実装)
+- TcpClient, UdpClientはClientSessionFactory、TcpListener, UdpListenerはListenerSessionFactoryを継承する
+です。
+
+SessionFactory::Connectはlistener系の派生クラス(TcpListener/UdpListener)では呼ぶことができない方が良いと考えます。
+そこで新たにClientSessionFactory, ListenerSessionFactoryをSessionFactoryを継承する形で作成し、SessionFactory::ConnectをClientSessionFactoryに移動させる修正を行いたいです。
+
+その場合はどのように実装しますか？
+
+TcpSessionFactory, UdpSessionFactoryを、継承するクラスを型引数として受け取るテンプレートクラスにして、ListenerSessionFactory, ClientSessionFactoryを与えることでListener/Client用のTcpSessionFactory, UdpSessionFactoryを生成させるのはどうですか
+
+TransportModeは、tlsが有効かどうか、とサーバーかクライアントか、という異なる属性が１つのenumで管理されているのが良くないと考えます。
+SessionFactory::Sessionに仮想関数is_listener()とneed_tls()を用意し、これらが
+- ListenerSessionFactoryで作られたSessionか、ClientSessionFactoryで作られたSessionか
+  - これはそれぞれのSessionFactoryでSessionFactory::Sessionを継承し、適切にoverrideすれば良い
+- tlsが有効か無効か
+  - ListenerSessionFactoryではConfigに有効なCertificatePair渡されたかどうか
+  - ClientSessionFactoryではConnectOptionでuse_tlsが指定されたかどうか
+を返せば良いのではないでしょうか？
+
+ConnectごとのConnectOptionsをsessionに渡す方法としては、FactoryMethodをラップするようにします。この前提で進めてください。
+
+ここまでの修正プランを docs/plans/per_connect_ssl_options.md にまとめてください。
+
+- ConnectOptionはConnectを持っているClientSessionFactoryが持っていれば良いのではないでしょうか
+- SessionFactory::Connectが残っています。ClientSessionFactoryにConnectを移動させてください
+- ResolverがSessionFactoryに残っています。デザインドキュメントの通り、ClientSessionFactory::Configに移動させてください
+
+- Connectに関係がないので、ConnectOptionsはSessionFactory::Sessionには不要ではないでしょうか。
+- SessionFactory::ConfigにcertpairやResolverが存在しています。これらはSessionFactory::Configには不要に見えます
+  - ResolverはClientSessionFactory::Configにあれば良いはずです
+  - certpairはListenerSessionFactory::Configにあれば良いはずです。
+
+Session::ApplyConnectOptionsはClientSessionFactory::Sessionに移動できると思います。そうすれば、Sessionにclient_tls_enabled_を持つ必要はなく、この変数は
+おそらくClientSessionFactory::Session::tls_enabled_のような変数に移動できます。
+
+http.hのHttpSessionですが、TcpSessionがTcpClientSessionとTcpListenerSessionに分かれたので、lib/base/session.hのTcpSessionTのような方針で、HttpSessionTを実装して継承元をTcpClientSessionとTcpListenerSessionのどちらでも指定できるようにし、HttpClientSessionとHttpListenerSessionを定義できるようにします。
+
+- HttpProtocolクラスを定義して、今のHttpSessionのOnRead/Sendとfsm_へのアクセサ以外のメンバ関数や型定義はそれに移動させる
+- HttpProtocolクラスにProcessRead(HttpFSM &fsm, const char *p, size_t sz)を実装し、今のHttpSession::OnReadを移設する
+- HttpSessionTはテンプレートパラメーターとして与えられたクラスと別にHttpProtocolクラスをmixinとして継承する
+- HttpSession::OnReadはHttpProtocol::ProcessRead(fsm_, p, sz)を呼ぶだけにする
+
+ProcessReadが要求するSessionの機能を全部見積もれていなかったため、仮想関数が大量に作られてしまいました。
+これは無駄に複雑なため、以下のようにしたいと思います。
+- virtual int HttpProtocol::OnFinishRead()を作成し、http.cpp:529-544の処理を return OnFinishRead()で置き換える。
+- HttpWritevはどのような時に呼ばれるか、を明確に表していないため、OnSendPayloadという名前にします。
+
+次にWebSocket側も同様に修正を行います。
+
+まずWebSocketProtocolクラスを作成し、WebSocketSession::State, opcode, Frameの定義を移動させてWebSocketSessionにmixinするようにしてください。
+
+現在のWebSocketSessionはHttpFSMにあたる部分がSessionの実装に混じってしまっていて見通しが悪いため、WebSocketFSMというクラスを作成し以下の部分を移動させます。
+
+- 状態を保持している全てのメンバ変数(m_ではじまっている)
+- WebSocketSessionの実装のうち、read_frameとhandshake、およびこれらの関数から呼び出されている全ての関数
+
+そしてWebSocketSessionはWebSocketFSMをメンバ変数として持つようにし、handshakeとread_frameはWebSocketFSMのものを呼ぶようにしてください。
+
+- 作成されたコードを見るとHttpFSMはWebSocketFSMに含まれていてよさそうですので、移動させてください
+- WebSocketFSM::ControlFrameはWebSocketProtocolにあるべき定義なので、移動させてください。
+- WebSocketFSMの読み込み関数やWebSocketFSM::ControlFrame::drainにWebSocketSessionを渡していますが、WebSocketSessionは後でWebSocketSessionTとなるため、利用できません。呼び出している関数を見るとSessionで十分ですので変更してください。
+
+ではWebSocketSessionをWebSocketSessionTとして、TcpClientSession/TcpListenerSessionの両方を継承クラスとして受け取れるようにしてください。今WebSocketSessionはTcpSessionFactoryを受け取っていますが、これは以下のようにして、正しいFactoryを受け取れるようにします。
+
+1. ClientSessionFactory::SessionとListenerSessionFactory::SessionにFactoryという型定義を追加する。
+  - ClientSessionFactory::Session では、typedef ClientSessionFactory Factory;
+  - ListenerSessionFactory::Session では、typedef ListenerSessionFactory Factory;
+2. WebSocketSessionFactoryでは、以下のような定義をする
+  - typedef TcpSessionFactory<typename SessionBase::Factory> Factory;
+3. WebSocketSessionのコンストラクタでは上のFactoryを受け取るようにする
+
+
+=======
+
+lib/tests/e2e/core/run.sh に lib/tests/e2e/core/suites 以下のテストスイートを実行するテストランナーを作成します。
+以下のような手順で動作します。
+
+1. .build/bazel-bin/lib/tests/e2e/core/server/e2e_server　を lib/tests/tools/debugger.sh の with_dbgで起動する。
+2. この際.  .build/bazel-bin/lib/tests/e2e/core/server/e2e_server の pidを調べて記憶しておき、trapでrun.shが終了する際にはシャットダウンするようにする(kill -TERM $PID)
+3. suites以下のスクリプトを全部実行する。0以外でexitした場合にも処理を打ち切らず、最後に失敗したスクリプト名のリストを表示する
+
+=======
+
+原則として native clientは lib/web/ts/src/client.ts に準拠した動作をすべきなので、cnameだけではなく、capabilityも送る必要があります。いくつか仕様上決めるべき点があると思うので列挙します。
+
+- cname, capabilityを保持する場所
+  - SDP::CapSdpFrom(qrpc_media_config_t &)があるので、capabilityはqrpc_media_config_tの形で持っておけば良さそう
+  - cnameもqrpc_media_config_tに追加する
+- webrtc::Client::Configはwebrtc::ConnectionFactory::Configを継承して、qrpc_media_config_tを保持できるようにする
+
+qrpc_media_config_tの値を使って、必要なペイロードをwebrtc::Clientが送るwhipリクエストのペイロードに追加してください。
+
+=======
+今 SyscallStream のCall系関数にはmsgidを必要とするものがあり、そのmsgidは外から渡されています。しかし、msgidは一意でなければならず、外部から渡すと一意性が維持されない不具合を生む可能性があります。したがって、以下のように修正します。
+
+- Clientが持っている IdFactory<qrpc_msgid_t> msgid_factory_; をSyscallStreamに移動させ、msgidが必要なSyscallStreamの関数が呼ばれる場合、msgid_factory_から自分でmsgidを生成して使うようにする
+
+=======
+lib/tests/e2e/qrpc/server/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/server/main.cpp の base::webrtc::AdhocListener と同等の動作をするサーバーを作成してください。
+
+bash lib/tests/e2e/core/run.sh native webrtc_client がexit 0で終了するように実装する必要があります。
+
+もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。
+
+=======
+lib/tests/e2e/core/run.sh のサーバーを起動する部分と、trapでサーバーをシャットダウンさせる部分を他のスクリプトでも使いたいので lib/tests/tools/debugger.sh に setup_server() のような関数として移動させてください。
+
+=======
+lib/tests/e2e/qrpc/client/main.cpp に lib/qrpc.h で定義されたAPIを使って lib/tests/e2e/core/client/native/main.cpp と同等の動作をするプログラムを作成してください。テストは lib/tests/e2e/qrpc/run.sh が成功するかどうかで行います。
+lib/tests/e2e/qrpc/run.sh は作成したばかりなので不具合があれば修正してください。
+
+また、もし lib/qrpc.h のAPIを誤って使ったことによってエラーになった場合、LLMがそのような誤った使い方をしないようにコメントも修正してください。
+
+10,000,000,000
+
+=======
+qrpc_stream_handler_t::stream_reader, stream_writerを廃止します。理由は現在のtransportプロトコルであるsctp自身が送信したバイト列の単位でレコード境界を定義しているためです。
+
+まず、どのような修正が必要か調べてください。
+
+=======
+lib/qrpc/stream.qrpc.cppにおいて、CodedByteStreamを廃止しましたが、これを残すようにしようと思います。
+理由は、transportがTCPのようにメッセージ境界を持たない実装になるケースにも将来的に対応したいからです。
+
+以下のようにします。
+- lib/base/conn.h のインターフェイスに virtual bool has_message_boundary() const = 0;を追加する
+- lib/base/webrtc.h では return trueとして実装する
+- lib/qrpc/transports/webrtc.hのNewStream では has_message_boundary() のtrue/falseに基づいて、以下のようにStreamを作る
+  - has_message_boundary() == true && type: STREAM => ByteStream
+  - has_message_boundary() == false && type: STREAM => CodedByteStream
+  - has_message_boundary() == true && type: RPC => RPCStream
+  - has_message_boundary() == false && type: STREAM => CodedRPCStream
+- ByteStream => 今のByteStream
+- RPCStream => 現在のRPCStreamから、base::LengthCodec::Decodeと長さが足りない場合のバッファリング処理を除く
+- CodedByteStream => 削除したCodedByteStreamと同じもの
+- CodedRPCStream => CodedByteStreamで１レコードが得られた後、そこにbase::HeaderCodec::Decodeとそれ以降の処理を追加したもの(長さが足りない場合のバッファリングを除く)
+
+=======
+
+CodedByteStream::OnRead, CodedRPCStream::OnRead ですが、p, szが十分な長さの場合、parse_bufferにappendせずにそのままコールバックにポインタを渡すことができるはずです。このライブラリは小さなパケットを大量に送るようなユースケースが多いため、受信した時点でレコード長が足りているケースは多いです。
+- CodedXXXStream::OnReadが呼ばれたときにparsed_buffer_.size() == 0 なら、p, szに対して直接base::HeaderCodec::Decodeで長さを取り出す。取り出された長さよりもszの残りが大きければそのままpと長さをコールバックに渡す。
+- CodedXXXStream::OnReadが呼ばれたときにparsed_buffer_.size() > 0 なら、p, szをappendし、parsed_buffer_由来のバッファに対して同様の処理を実行する。
+- base::HeaderCodec::Decodeで得られた長さに残りのバッファ長が足りない時のみparsed_buffer_にappendする(あるいは、すでにconsumeしたバッファ長分をeraseする)
+
+=======
+
+lib/ext/mediasoup/worker/src/RTC/SctpAssociation.cpp は、分割されたsctpメッセージを保持するためのバッファが１つしかない(this->messageBuffer)ため、以下の問題があります。
+
+- sctp streamが複数存在し、それぞれのstream上でのメッセージが分割された際に、両方のメッセージの受信を正しく扱えない(破棄されてしまう可能性がある)
+- unorderedなsctp streamが存在する場合に、後のメッセージが前のメッセージの受信完了前に届いてしまうと前のメッセージが破棄されてしまう
+
+これを防ぐためにSctpAssociationのmessageBufferをstreamId,SSN,ppIdのタプルごとに保持するようにし、それぞれeorを受信したときに OnSctpAssociationMessageReceived をコールバックするようにしてください。ppid == 50のケースは別に扱い、OnSctpWebRtcDataChannelControlDataReceived を呼び出すようにします。
+
+ppidごとにバッファを設ける必要はありますか？それともppid == 50 (dcep) とそれ以外を分けるだけでも良いでしょうか？意見を聞かせてください。
+
+=======
+lib/base/sig.hのAPIをqrpc.hに公開したいと考えていますが、以下のような考慮すべき点があります。
+- sig.hのSignalHandlerはLoopが必要だが、qrpc.hにおいてはLoopはスレッドごとに作成される。SignalHandlerを担当するLoopをどのように選ぶべきか。
+- あるいは、全スレッドでSignalHandlerを作成する。この場合、一度のsignalで複数スレッドのSignalHandlerが起動されてしまうか？
+
+この点について意見を聞かせてください。
+
+=======
+
+SignalHandlerについては提案の通り、つまり、専用のスレッドを用意した上で、そこのLoopに対してSignalHandlerを追加して通知を受け取るようにします。
+しかし、そのためには設計変更が必要です。
+base::Loopは今、g_partition_id_とpartition_id_を保持しています。これはLoopがqrpcにおけるどのworker threadに所属しているかを表すものです。
+qrpc_stream_t, qrpc_rpc_t, qrpc_conn_t, qrpc_media_t などのオブジェクトに操作を行う場合、partition_idを見て、同じpartitionからであれば直接操作を行い、そうでなければworkerのキュー経由でthread safeな形で操作を行う、というような動作をします。
+
+base::LoopをWorkerを作らずに作成すると、「partition_idが割り当てられるが、workerがいないのでキューがない」という状況が発生し、今の前提が崩れます。
+したがって、以下のようなある程度大きなリファクタリングを行う必要があります。実際、baseのレベルではpartition_idを考える必要はないため、このリファクタリングを行うことは自然だと思います。
+
+- qrpc::Loopをbase::Loopを継承して作成し、g_partition_id_とpartition_id_の処理を移動させる。
+- そうすると、シリアルの作成にはpartition_idが必要なため、baseのレベルではbase::Media, base::Stream, base::Connにシリアル(qrpc_serial_t)の処理を持たせられないため、これらをqrpcに移動させる
+  - Stream => lib/qrpc/stream.h, Media => lib/qrpc/media.h, Connection => lib/qrpc/conn.h (継承してインターフェイスを追加する)
+
+まずこのリファクタリングを行なってください。実装に入る前にあなたが理解したプランを提示してください。
+
+=======
+qrpc::Connection にメンバーを追加するとメモリーレイアウトが把握しづらくなるので以下のようにしたいです
+
+- qrpc::Connectionはvirtually qrpc_serial_t serial() = 0追加するだけ
+- 継承するクラスをテンプレート引数として受け取るtemplate class qrpc::ConnectionImplTを作成し。serial()の実装を含む今のqrpc::Connectionの残りの実装を追加する
+- lib/qrpc/transports/webrtc.hのbase::webrtc::Listener::Connectionやbase::webrtc::Client::Connectionをqrpc::ConnectionImplTでラップする。
+
+=======
+SignalHandlerについては提案の通り、つまり、専用のスレッドを用意した上で、そこのLoopに対してSignalHandlerを追加して通知を受け取るようにします。
+signalを扱うスレッドは、定期的なpollingを行わないようにし、さらにメモリの消費量もWorkerを保持するスレッドに比べて少なくします。
+signal専用の初期化のために、qrpc_signal_init()を用意し、signal handlerを使いたい場合にはそれを呼び出す必要がある、という仕様とします
+
+qrpc_signal_handleで登録されたハンドラーについては以下のように実装してください。
+
+- qrpc::Loop::g_partition_id() が０ではない(qrpc::Loopを持つスレッド)場合、シグナルハンドラはqrpc_signal_handleを呼び出したスレッドでワーカーのキュー経由で呼び出される
+- qrpc::Loop::g_partition_id() == 0であれば、signal handlerをあつかう専用スレッドの上で呼び出される
+
+=======
+いくつか指摘があります。
+- スレッドがqrpc::Loopを持つ場合、それはそのスレッド上でWorkerが動くと考えて良いです。したがって qrpc::Loop::RegisterDispatcher, UnregisterDispatcherは不要で、qrpc::Worker::queue()にsignal handlerを渡せば良いと思います。
+- base::LoopでブロックするPollを実現するためにメンバ変数を追加したり、Poll()内部で分岐したりしていますが、Pollを呼ばなければいけないわけではないので、base::Loop::WaitEventみたいな関数を作って呼び出す方が余計なオーバーヘッドを減らせます。同様にqrpc::LoopのXXBlocking系の関数も不要で、Pollのみ別関数を作れば良いです。
+- base::Loop::WaitInfiniteですが、関数オーバーロードでWaitという同じ名前を使いたいです
+
+=======
+
+Worker::TaskQueueへのenqueueはすでにスレッドセーフなので、mutexを用意する必要はありません。
+したがってWorker::queueの実装は元に戻してよく、またWorkerのqueueにタスクを積む場合も単にWorker::queue(partition_id).enqueue(...)とすれば良いです。したがって、g_queuesも不要なため、UnregisterQueue, RegisterQueueも削除できます。
+
+=======
+ありがとうございます。その指摘により、現在のServer::queue(partition_id)に欠陥があることに気づきました。この実装自体がServerが１つしか作られないという仮定のもとに行われていたようです。２個目以降のServerが作られるとpartition_idは1よりも大きな値で始まるため、 `TaskQueue &queue(PartitionId id) { return worker_queue_[id - 1]; }` では正しいqueueが取れない(それどころか境界外アクセスが起きる)です。また、複数スレッドがServerオブジェクトを作った場合、そもそもWorkerのpartition_idが連番になる保証もありません。したがって以下のように修正します。
+
+- qrpc::Server::StartWorkerを読んでいるループをmutexで保護し、以下のように処理を行う
+  - その時点でのg_next_partition_idの値を読み取り、Serverのメンバ変数(start_partition_id_)に格納する
+  - StartWorkerをmutexで保護された状態で行う。これにより、このServerオブジェクトが所有するWorkerはg_next_partition_idから始まる連番になることが保障される
+- Server::queue(PartitionId)は以下のような実装になる `TaskQueue &queue(PartitionId id) { return worker_queue_[id - start_partition_id_]; }`
+
+その上で、あなたの質問については２の、登録時にTaskQueueも渡す、という方針で良いと思います。
+
+=======
+lib/base/sig.hのSignalHandlerの機能をlib/qrpc.hに公開したいです。
+
+- SignalHandlerを処理する用の専用のスレッドを用意します。この実装はlib/qrpc/sig.hやlib/qrpc/sig.cppに配置してください。このスレッドをqrpc_signal_initで起動します。
+- そのスレッドもlib/qrpc/worker.hのようにloopを保持しますが、pollingの必要がないため、永遠にイベントを待つLoop::WaitEventを使います
+- SignalHandlerへの操作(Handle/Unhandle)はWorker::TaskQueueに追加します。Loop::WaitEventの待ち状態から抜けるためにpipeのfdを登録しておいて、TaskQueueにタスクを積んだ後pipeのもう１つのfdに書き込みを行なってwake upさせます。wake upさせた後はWorker::TaskQueueをconsumeします。
+- 一旦、SignalHandlerへの操作は同期的に行えなくて良いです。つまりqrpc_singal_handle/unhandleはTaskQueueにタスクとして操作を積んだ後、signalスレッドをwake upさせたらすぐに戻ります。
+
+=======
+
+- SignalThread::signal_もSignalThread::Runでloop_に登録する方がsignal_added_の制御が不要になるのではないですか？
+- SignalThreadのloopはbase::Loopで良いので、変更してください。そうするとEnsurePartitionIdを呼ぶ必要がないです。
+- SignalThreadはstatic変数として宣言できると思うので、そのようにし、g_signal_mutexでの制御はなくします。signal_initではStartだけ行い、その成功失敗を返します。
+  - SignalThread::Handle/Unhandleはready_がtrueでない場合にエラーを返すようにしてください。
+
+=======
+lib/qrpc.cppのSignalServiceの実装について幾つか修正したい点があります
+
+- pthread_XXXX ではなくできればstd::threadを使って欲しいですが、スタックサイズの制御などができませんか？
+- Handle/Unhandleの実装が無駄に複雑です。
+  - SignalHandlerはSignalService::Run()の中でloopに追加すればその時点ですでに利用可能になります。したがってsignal_handler_started_による制御は不要だと思います。
+- InvokeSyncでcondition_variableを使っていますが、Worker::TaskQueueを使えば複雑な排他制御を行う必要はないです。
+
+=======
+lib/tests/e2e/qrpc/client/以下に qrpcのrtpの動作を確認するテストを作成してください。
+- 現在のmain.cppはsctp.cppとします。
+- 新しくrtp.cppも作ります。
+- これら２つのファイルにはtest_sctp_client()やtest_rtp_client()みたいな関数を作り、新しいmain.cppからはこれらをコマンドライン引数("stcp" or "rtp")で呼び出し分けられるようにします。
+- test_rtp_clientは２つのqrpc_client_tを作成し、サーバーとの接続をそれぞれ行います。
+  - １つのqrpc_client_tで作成されたqrpc_conn_tではqrpc_conn_media_openを行います。
+    - qrpc_on_media_produce_tを実装する必要があります。著作権フリーの動画ファイルをダウンロードして、そのファイルを読み出して送信するような実装にしてください。ファイルが終端に達したら、先頭から再送信します。
+  - もう１つのqrpc_client_tで作成されたqrpc_conn_tではqrpc_conn_media_watchを行います。
+  - qrpc_media_router_t が返すqrpc_media_handler_tのon_media_openに渡されるqrpc_media_tを使ってqrpc_media_watchを行います。
+    - qrpc_media_watchに渡したclosure経由で受け取ったrtpパケットから動画ファイルを生成して保存します。
+
+このようなテストが可能でしょうか？特に受け取ったrtpパケットから動画ファイルを生成できるのかについて懸念があります。
+
+=======
+ConnectionFactory::GlobalInitのlib/base/webrtc.cpp:265から呼ばれている XXXX::ClassInitですが、いくつかの関数は内部でthread_localな変数を初期化しており、ConnectionFactory::ThreadInitに移動させることが必要なようです。XXXX::ClassInitを調べて、ThreadInitに移動させる必要があるものを特定してください。
+
+=======
+lib/tests/e2e/qrpc/client/rtp.cpp で lib/qrpc.h のRTP実装である qrpc_media APIのテストを作成しています。
+２つのqrpc_client_tを生成して、１つがRTPストリームの生成、もう１つがRTPストリームの受信を担当します。
+RTPストリームの生成や、RTPパケットからの動画ファイルの生成にはffmpegを使っています。
+
+今qrpc_client_tの動作順序に問題があり、RTPストリームが生成される前にRTPストリームを受信しようとしてエラーになっているので、その点を修正してください。
+例えばproducer側のqrpc_media_handler_tが提供しているOnMediaOpenにおいて、audioとvideoの両方がopenした時点でwatcherのthreadを起動するようなことができるはずです。(OnMediaOpenに渡されたqrpc_media_tのmedia typeは qrpc_media_kind()で取得できます)
+
+=======
+qrpcではqrpc_conn_t, qrpc_stream_t, qrpc_rpc_t, qrpc_media_t などのハンドルオブジェクトが定義されています。
+このハンドルオブジェクトはそのハンドルに対応するC++オブジェクトのポインタpと、そのポインタに含まれるシリアルsのコピーからなっています。
+
+なぜ++オブジェクトのポインタpだけをハンドルとせず、そのような形で定義しているかを説明します。
+
+qrpcはブラウザからの常時接続の上での全二重通信を提供するライブラリであり、主にリアルタイムなユーザー同士のインタラクションを実現するという目的があります。そういったアプリケーションのビジネスロジックでは、「他のユーザーの接続に対して何かを送信するなどの操作を行う」ことがよくあり、それを効率よく扱うためには、他のユーザーへの接続を管理するオブジェクトをアプリケーションのデータ構造に保持することが有力な手法です。
+
+しかし、保持されているオブジェクトは基本的にはユーザーの接続によって割り当てられるものであり、ユーザーは切断されたりログアウトしたりして存在しなくなり、対応する接続関連のオブジェクトは解放されます。
+つまり、保持されているオブジェクトがポインタpだけだと、切断によって、pは突然不正なメモリとなります。
+そのため切断のタイミングで全ての保持されているpをメモリ上から削除する必要がありますが、マルチスレッドサーバー上でそれを安全に行うことは難しいチャレンジになります。
+
+このため以下のような方針にしました：
+- メモリ上から全てのオブジェクトを消すことはせず、ユーザーが切断されたタイミングで、あちこちで保持されているオブジェクトが不正になったことがわかるようにする
+- プログラムは自分が保持しているオブジェクトが不正になったことをそれぞれ検出しそれぞれのタイミングで破棄する
+
+この方針を実現するため、以下のような仕組みを考えました。
+- 接続オブジェクトを作成する際に極めて長い時間同じ値が生成されないと考えられる値をオブジェクトに割り当てる(=シリアル)
+- オブジェクトに操作する権限を持つオブジェクト(=ハンドルオブジェクト)はオブジェクトのポインタと、そのタイミングのシリアルを保持する
+- pが解放される時にserialの値は無効化される。これによりs != p->serial()となり、FromHandleで無効であることが検出できる
+
+なので、Fromhandleがnullを返す = オブジェクトがすでに無効化されている、ということで問題が解決できると考えています。
+
+この仕組みについて批判的に意見を欲しいです。
+
+=======
+
+指摘のうち
+
+Stream/Mediaのシリアルの生成については実装ミスでした。本来は接続のシリアルのpartition_id_だけを引き継いで、世代番号などは新しく生成する予定でしたので修正しました。
+
+serialをatomicにすべき、については疑問があります。Connection/Media/Stream::FromHandleは基本的に、以下の条件を満たすときのみ呼び出されているはずです。
+
+- FromHandleの対象となるqrpc_conn_t/qrpc_media_t/qrpc_stream_t/qrpc_rpc_tのserialのpartiton_idが、現在のスレッドのpartition_idと等しい、つまり現在のスレッドがそのqrpc_conn_t/qrpc_media_t/qrpc_stream_t/qrpc_rpc_tのオーナーである。
+
+QRPC_THREADSAFE が指定されているAPIでは、qrpc_conn_t/qrpc_media_t/qrpc_stream_t/qrpc_rpc_tのparition_idと現在のスレッドのpartition_idが等しくない場合、qrpc_conn_t/qrpc_media_t/qrpc_stream_t/qrpc_rpc_tのpartition_idに対応するワーカースレッドのキューにタスクとして追加され、タスクがconsumeされるタイミングでFromHandleが呼ばれます。そのとき処理をしているのはそのqrpc_conn_t/qrpc_media_t/qrpc_stream_t/qrpc_rpc_tのオーナーのスレッドです。
+この辺りの処理はlib/qrpc.cppのOP_RAWというマクロで定義されており、これによりQRPC_THREADSAFEのAPIは安全にどのスレッドからも呼ぶことができるようになっています。
+
+この仕組みを通さずFromHandleを読んでいるAPIは全て QRPC_CLOSURECALL が指定されています。 QRPC_CLOSURECALL が指定されているAPIは、qrpcのAPIに指定したclosureの中からしか呼び出してはいけないという規約になっています。これをCの文法的に強制することができないのは確かですが、その危険性はserialがatomicであることとは関係ないです。
+
+従って、serialをatomicにする必要はないと考えています。
+
+p->serial()が常に安全に読めることは保証できない、という点についてはまさにその通りで、そのために lib/base/allocator.h が用意されています。base::Allocator::BlockのBSSにシリアルをセットする想定です。
+
+=======
+現在の問題点についてはまさにその通りで、その修正をあなたにお願いしたいです。
+
+- QRPC_XXXX アノテーションと実装のミスマッチが起きている場合、実装に合わせ、アノテーションを変更したAPIについて教えてください。
+- qrpc::Connection, qrpc::Stream, qrpc::Mediaのメモリを lib/base/allocator.h の base::Allocator で割り当てるように変更します。
+  - serialはBSSに配置します
+  - base::Allocatorの実体は、qrpc::Listener および qrpc::Client が保持します
+  - Allocatorのchunk_sizeはlistenerやclientの生成時に設定で渡せるようにします
+
+後者については、どのような変更を行うかプランをまず作成してください。
+
+=======
+7については、Allocator objectを変更する必要がありますか？ std::shared_ptr<base::Connection> を作っている場所でdeleterを指定すれば良いのではないでしょうか？
+
+また、あなたの提案をみて、qrpc::webrtcではCodedXXXStreamを使うことがないことに気づきました。CodedXXXStreamはトランスポート側でメッセージ境界が定義されていない場合に使いますが、webrtcはSCTP経由でメッセージ境界を提供するからです。それに合わせてコードを変更しました。従って、StreamのAllocatorはRPCStreamとByteStream用のみを作成すれば良いです。
+
+=======
+わかりました。そうすると、qrpc::webrtc::ServerConnection, ClientConnectionにおいてqrpc::Connectionを最初の継承クラスにしています。
+この場合、qrpc::Connectionのthis - sizeof(HandleBss)でHandleBssの先頭へのポインタが得られます。従って、qrpc::Connectionのメンバにserialへのポインタを持たせるのは不要ではないでしょうか？qrpc::Mediaやqrpc::Streamについても同様です。
+
+Allocator::Bssをそれぞれ呼び出したいが、Allocatorにはもう１つの型パラメータEがあり、それを判別できないことが問題であれば、Bssの型パラメータだけで、Allocator::Bss相当の実装はできるはずなので、そのようなヘルパーをlib/base/allocator.h に追加するのはどうでしょうか？
+
+まだStream/Media/ConnectionのコンストラクタにHandleBss&を渡していますが理由は何でしょうか？
+
+=======
+custom deleterを使わないようにできないでしょうか？
+Connection/Stream/Media全てにおいて、デストラクタが呼ばれる段階ではConnectionFactory(=qrpc::webrtc::Client::transport_ or qrpc::webrtc::Listener)経由でallocatorを取得することができます。
+従って、少なくともデストラクタの中で、allocator.Free()を呼ぶことはできるはずです。
+この場合、operator deleteのデフォルト動作でメモリをfreeされるのを防ぐためにoperator deleteをオーバーロードして何もしないようにする必要がありそうです。
+
+operator new/deleteをオーバーロードして、allocator.Alloc/Freeを呼ぶ方が整合性がとれていて良いですが、デストラクタが呼ばれた後は、正しくMedia/Stream/ConnectionからConnectionFactoryへの参照を取得することができないため、static thread_localな変数にAllocatorを保持しておいて、operator deleteから使う、ということもできそうです。
+
+あなたの意見を聞かせてください。
+
+=======
+分かりました。コードの見た目より、どちらかというとMedia/Stream/Connectionの作成時に常に8bytesのオーバーヘッドが加わることが気になっていましたが、そのオーバーヘッドが問題となるかどうかはベンチマークなどを取ったわけでもありませんので、一旦提案のような修正を行なってください。
+
+また、
+
+
+=======
+今まで、qrpcではtransportを差し替えやすいように設計していましたが、よく考えると、複数のtransportを同時に使う可能性があります。
+例えばデータセンター内であれば、webrtcでサーバー間が通信するよりはTCPの方が高効率になると思います。
+
+
+
+=======
+qrpcのベンチマークをlib/tests/e2e/benchに作成します。サーバーとクライアントは別プロセスとし、クライアントには引数を渡してクライアント数をコントロールできるようにします。最初は
+
+=======
+qrpcの再接続テストをlib/tests/e2e/reconnに作成します。
+
+

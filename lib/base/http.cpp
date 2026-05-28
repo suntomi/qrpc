@@ -513,10 +513,10 @@ namespace base {
     }
 
 
-    /******* HttpSession *******/
-    int HttpSession::OnRead(const char *p, size_t sz) {
-        fsm_.append(p, sz);
-        switch (fsm_.get_state()) {
+    /******* HttpProtocol *******/
+    int HttpProtocol::ProcessRead(HttpFSM &fsm, const char *p, size_t sz) {
+        fsm.append(p, sz);
+        switch (fsm.get_state()) {
         case HttpFSM::state_recv_header:
         case HttpFSM::state_recv_body:
         case HttpFSM::state_recv_body_nochunk:
@@ -525,24 +525,8 @@ namespace base {
         case HttpFSM::state_recv_comment:
             return QRPC_OK; //not close connection
         case HttpFSM::state_websocket_establish:
-        case HttpFSM::state_recv_finish: {
-            auto newsession = callback()(*this);
-            if (newsession != nullptr) {
-                ASSERT(newsession->fd() == fd_);
-                if (newsession == this) {
-                    fsm_.set_state(HttpFSM::state_response_pending);
-                    // session does not closed here (deferred).
-                    // callbacked module should cleanup connection after response is sent,
-                    // by calling Close(...)
-                    return QRPC_OK; // not close conection
-                } else {
-                    // fd is migrate to other session. eg WebSocket.
-                    // need to delete this. done by returning QRPC_EGOAWAY below
-                    MigrateTo(newsession);
-                }
-            }
-            return QRPC_EGOAWAY; // close connection
-        } break;
+        case HttpFSM::state_recv_finish:
+            return OnFinishRead();
         case HttpFSM::state_invalid:
         case HttpFSM::state_error:
         case HttpFSM::state_response_pending:
@@ -552,22 +536,354 @@ namespace base {
         return QRPC_EINVAL; // close connection
     }
 
-    int WebSocketSession::send_handshake_request(const char *host) {
+    /******* WebSocketFSM *******/
+    int WebSocketProtocol::ControlFrame::drain(WebSocketFSM &fsm, SessionFactory::Session &s, size_t remain) {
+        int r;
+        if ((r = fsm.read_body_and_fd(s, m_buff + m_len, remain)) <= 0) {
+            return r;
+        }
+        m_len += r;
+        return m_len;
+    }
+    int WebSocketFSM::read_body_and_fd(SessionFactory::Session &s, char *p, size_t l) {
+        size_t bl = m_sm.bodylen() - m_sm_body_read;
+        size_t copied = 0;
+        if (bl > 0) {
+            copied += (bl < l ? bl : l);
+            Syscall::MemCopy(p, m_sm.bodyptr() + m_sm_body_read, copied);
+            ConsumeBody(copied);
+            l -= copied;
+            p += copied;
+            if (l == 0) {
+                return copied;
+            }
+        }
+        copied += s.Read(p, l);
+        return copied;
+    }
+    char *WebSocketFSM::mask_payload(char *p, size_t l, uint32_t mask, uint8_t &mask_idx) {
+        char *endp = (p + l);
+        if (mask_idx > 0) {
+            while (endp > p && mask_idx < sizeof(mask)) {
+                *p = ((*p) ^ (reinterpret_cast<uint8_t *>(&mask))[mask_idx]);
+                p++; mask_idx++;
+            }
+            if (mask_idx >= sizeof(mask)) {
+                mask_idx = 0;
+            }
+        }
+        while ((endp - p) >= (int)sizeof(uint32_t)) {
+            SET_32(p, (GET_32(p) ^ mask));
+            p += sizeof(mask);
+        }
+        size_t remain = (endp - p);
+        if (remain > 0) {
+            for (; p < endp; p++) {
+                mask_idx = (remain - (endp - p));
+                *p = ((*p) ^ (reinterpret_cast<uint8_t *>(&mask))[mask_idx]);
+            }
+            mask_idx++;
+        }
+        return (endp - l);
+    }
+    WebSocketFSM::State WebSocketFSM::analyze_frame(size_t &over_read_length) {
+        if (m_flen < sizeof(uint16_t)) { return state_recv_frame; }
+        if (m_frame.ext.h.mask()) {
+            if (m_frame.ext.h.payload_len() == 0x7F) {
+                if (m_flen < sizeof(m_frame.ext.mask_0x7F)) { return state_recv_frame; }
+                over_read_length = (m_flen - sizeof(m_frame.ext.mask_0x7F));
+                return state_recv_mask_0x7F;
+            } else if (m_frame.ext.h.payload_len() == 0x7E) {
+                if (m_flen < sizeof(m_frame.ext.mask_0x7E)) { return state_recv_frame; }
+                over_read_length = (m_flen - sizeof(m_frame.ext.mask_0x7E));
+                return state_recv_mask_0x7E;
+            } else {
+                if (m_flen < sizeof(m_frame.ext.mask)) { return state_recv_frame; }
+                over_read_length = (m_flen - sizeof(m_frame.ext.mask));
+                return state_recv_mask;
+            }
+        } else {
+            if (m_frame.ext.h.payload_len() == 0x7F) {
+                if (m_flen < sizeof(m_frame.ext.nomask_0x7F)) { return state_recv_frame; }
+                over_read_length = (m_flen - sizeof(m_frame.ext.nomask_0x7F));
+                return state_recv_0x7F;
+            } else if (m_frame.ext.h.payload_len() == 0x7E) {
+                if (m_flen < sizeof(m_frame.ext.nomask_0x7E)) { return state_recv_frame; }
+                over_read_length = (m_flen - sizeof(m_frame.ext.nomask_0x7E));
+                return state_recv_0x7E;
+            } else {
+                if (m_flen < sizeof(m_frame.ext.nomask)) { return state_recv_frame; }
+                over_read_length = (m_flen - sizeof(m_frame.ext.nomask));
+                return state_recv;
+            }
+        }
+    }
+    uint32_t WebSocketFSM::get_mask() {
+        switch (get_state()) {
+        case state_recv_mask: return GET_32(m_frame.ext.mask.masking_key);
+        case state_recv_mask_0x7E: return GET_32(m_frame.ext.mask_0x7E.masking_key);
+        case state_recv_mask_0x7F: return GET_32(m_frame.ext.mask_0x7F.masking_key);
+        default: ASSERT(false); return 0;
+        }
+    }
+    size_t WebSocketFSM::frame_size() {
+        switch (get_state()) {
+        case state_recv_mask: return m_frame.ext.h.payload_len();
+        case state_recv_mask_0x7E: return ntohs(m_frame.ext.mask_0x7E.ext_payload_len);
+        case state_recv_mask_0x7F: return ntohll(GET_64(m_frame.ext.mask_0x7F.ext_payload_len));
+        case state_recv: return m_frame.ext.h.payload_len();
+        case state_recv_0x7E: return ntohs(m_frame.ext.nomask_0x7E.ext_payload_len);
+        case state_recv_0x7F: return ntohll(GET_64(m_frame.ext.nomask_0x7F.ext_payload_len));
+        default: ASSERT(false); return 0;
+        }
+    }
+    int WebSocketFSM::drain_recv_data(SessionFactory::Session &s, bool &finished) {
+        int r; size_t remain = frame_size() - m_read, n_read = 0;
+        analyze_frame(n_read);
+        if (n_read > 0) {
+            Syscall::MemCopy(m_ctrl_frame.m_buff, m_frame_buff + (m_flen - n_read), n_read);
+            m_ctrl_frame.m_len += n_read;
+        }
+        while (remain > 0) {
+            if ((r = m_ctrl_frame.drain(*this, s, remain)) <= 0) { return r; }
+            m_read += r;
+            remain -= r;
+        }
+        finished = (remain <= 0);
+        return QRPC_OK;
+    }
+    int WebSocketFSM::read_frame(SessionFactory::Session &s, char *p, size_t l) {
+        int r; size_t remain, n_read; char *orgp = p;
+    retry:
+        switch(get_state()) {
+        case state_established:
+            init_frame();
+        case state_recv_frame: {
+            if ((r = read_body_and_fd(s, m_frame_buff + m_flen, sizeof(Frame) - m_flen)) <= 0) {
+                if (r == 0) { return r; }
+                if (Syscall::EAgain()) { goto again; }
+                goto error;
+            }
+            m_flen += r;
+            m_state = analyze_frame(n_read);
+            if (m_state <= state_recv_frame) { goto again; }
+            if (n_read > 0) {
+                if (l < n_read) { return QRPC_ESIZE; }
+                Syscall::MemCopy(p, m_frame_buff + (m_flen - n_read), n_read);
+                if (m_frame.masked()) { mask_payload(p, n_read, get_mask(), m_mask_idx); }
+                p += n_read; l -= n_read; m_read += n_read;
+            }
+        }
+        case state_recv_mask:
+        case state_recv_mask_0x7E:
+        case state_recv_mask_0x7F:
+        case state_recv:
+        case state_recv_0x7E:
+        case state_recv_0x7F: {
+            switch (m_frame.get_opcode()) {
+            case opcode_continuation_frame:
+            case opcode_text_frame:
+            case opcode_binary_frame:
+                remain = frame_size() - m_read;
+                if (remain <= 0) {
+                    if (m_read <= 0) { goto error; }
+                    m_state = state_established;
+                    goto retry;
+                }
+                n_read = (l < remain ? l : remain);
+                if ((r = read_body_and_fd(s, p, n_read)) <= 0) {
+                    if (r == 0) { return r; }
+                    if (Syscall::EAgain()) { goto again; }
+                    goto error;
+                }
+                if (m_frame.masked()) { mask_payload(p, r, get_mask(), m_mask_idx); }
+                m_read += r; p += r; l -= r;
+                break;
+            case opcode_connection_close: {
+                bool finished;
+                if ((r = drain_recv_data(s, finished)) <= 0) {
+                    if (r == 0) { return r; }
+                    if (Syscall::EAgain()) { goto again; }
+                    goto error;
+                }
+                if (finished) {
+                    if (m_frame.masked()) { mask_payload(m_ctrl_frame.m_buff, m_ctrl_frame.m_len, get_mask(), m_mask_idx); }
+                    auto code = GET_16(m_ctrl_frame.m_buff);
+                    m_ctrl_frame.reset();
+                    s.Close(QRPC_CLOSE_REASON_REMOTE, code, "websocket close frame received");
+                }
+            } break;
+            case opcode_ping:
+            case opcode_pong: {
+                bool finished;
+                if ((r = drain_recv_data(s, finished)) <= 0) {
+                    if (r == 0) { return r; }
+                    if (Syscall::EAgain()) { goto again; }
+                    goto error;
+                }
+                if (finished) {
+                    if (m_frame.get_opcode() == opcode_ping) {
+                        if (m_frame.masked()) { mask_payload(m_ctrl_frame.m_buff, m_ctrl_frame.m_len, get_mask(), m_mask_idx); }
+                        write_frame(s, m_ctrl_frame.m_buff, m_ctrl_frame.m_len, opcode_pong, m_frame.masked());
+                    }
+                    m_ctrl_frame.reset();
+                }
+            } break;
+            }
+            if (l > 0) { goto retry; }
+            return p - orgp;
+        }
+        default:
+            ASSERT(false);
+            return QRPC_EINVAL;
+        }
+    again:
+        return (orgp < p) ? (p - orgp) : QRPC_EAGAIN;
+    error:
+        return QRPC_EINVAL;
+    }
+    int WebSocketFSM::write_frame(SessionFactory::Session &s, const char *p, size_t l, opcode opc, bool masked, bool fin) {
+        char buff[sizeof(Frame)]; uint32_t rnd = 0; uint8_t idx = 0;
+        Frame *pf = reinterpret_cast<Frame *>(buff); size_t hl; Frame frm;
+        pf->ext.h.set_controls(fin, masked, opc);
+        if (l >= 0x7E) {
+            if (l <= 0xFFFF) {
+                pf->ext.h.set_payload_len(0x7E);
+                if (pf->ext.h.mask()) {
+                    rnd = random::gen32();
+                    pf->ext.mask_0x7E.ext_payload_len = htons(l);
+                    SET_32(pf->ext.mask_0x7E.masking_key, rnd);
+                    hl = sizeof(frm.ext.mask_0x7E);
+                } else {
+                    pf->ext.nomask_0x7E.ext_payload_len = htons(l);
+                    hl = sizeof(frm.ext.nomask_0x7E);
+                }
+            } else {
+                pf->ext.h.set_payload_len(0x7F);
+                if (pf->ext.h.mask()) {
+                    rnd = random::gen32();
+                    SET_64(pf->ext.mask_0x7F.ext_payload_len, htonll(l));
+                    SET_32(pf->ext.mask_0x7F.masking_key, rnd);
+                    hl = sizeof(frm.ext.mask_0x7F);
+                } else {
+                    SET_64(pf->ext.nomask_0x7F.ext_payload_len, htonll(l));
+                    hl = sizeof(frm.ext.nomask_0x7F);
+                }
+            }
+        } else {
+            pf->ext.h.set_payload_len(l);
+            if (pf->ext.h.mask()) {
+                rnd = random::gen32();
+                SET_32(pf->ext.mask.masking_key, rnd);
+                hl = sizeof(frm.ext.mask);
+            } else {
+                hl = sizeof(frm.ext.nomask);
+            }
+        }
+        if (s.Write(buff, hl) < 0) { return QRPC_ESYSCALL; }
+        int r = (masked ? s.Write(mask_payload(const_cast<char *>(p), l, rnd, idx), l) : s.Write(p, l));
+        if (r < 0 || ((size_t)r) < l) { return QRPC_ESYSCALL; }
+        return r;
+    }
+    char *WebSocketFSM::init_accept_key_from_header(char *accept_key, size_t accept_key_len) {
+        char kbuf[256]; int kblen;
+        if (!m_sm.hdrstr("Sec-Websocket-Key", kbuf, sizeof(kbuf), &kblen)) { return nullptr; }
+        uint8_t vbuf[256];
+        if (sizeof(m_key_ptr) != base64::decode(kbuf, kblen, vbuf, sizeof(vbuf))) { return nullptr; }
+        Syscall::MemCopy(m_key_ptr, vbuf, sizeof(m_key_ptr));
+        return generate_accept_key(accept_key, accept_key_len, kbuf);
+    }
+    char *WebSocketFSM::generate_accept_key_from_value(char *accept_key, size_t accept_key_len) {
+        char enc[base64::buffsize(sizeof(m_key_ptr))];
+        base64::encode(m_key_ptr, sizeof(m_key_ptr), enc, sizeof(enc));
+        return generate_accept_key(accept_key, accept_key_len, enc);
+    }
+    char *WebSocketFSM::generate_accept_key(char *accept_key, size_t accept_key_len, const char *sec_key) {
+        if (accept_key_len < base64::buffsize(sha1::kDigestSize)) { ASSERT(false); return nullptr; }
+        char work[256];
+        char salt[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        size_t l = str::Vprintf(work, sizeof(work), "%s%s", sec_key, salt);
+        const uint8_t *digest = sha1::digest(work, l);
+        base64::encode(digest, sha1::kDigestSize, accept_key, sizeof(accept_key));
+        return accept_key;
+    }
+    #define HS_CHECK(cond, ...) if (!(cond)) { TRACE(__VA_ARGS__); return QRPC_EINVAL; }
+    int WebSocketFSM::verify_handshake() {
+        char tok[256];
+        HS_CHECK(m_sm.hdrstr("Upgrade", tok, sizeof(tok)), "Upgrade header\n");
+        HS_CHECK(str::CmpNocase(tok, "websocket", sizeof(tok)) == 0, "Upgrade invalid %s\n", tok);
+        HS_CHECK(m_sm.hdrstr("Connection", tok, sizeof(tok)), "Connection header\n");
+        HS_CHECK(str::CmpNocase(tok, "upgrade", sizeof(tok)) == 0, "Connection invalid %s\n", tok);
+        switch (get_state()) {
+        case state_client_handshake_2: {
+            char calculated[base64::buffsize(sha1::kDigestSize)];
+            HS_CHECK(m_sm.rc() == HRC_SWITCHING_PROTOCOLS, "invalid response %d\n", m_sm.rc());
+            HS_CHECK(m_sm.hdrstr("Sec-WebSocket-Accept", tok, sizeof(tok)) != nullptr, "Sec-WebSocket-Accept header\n");
+            HS_CHECK(nullptr != generate_accept_key_from_value(calculated, sizeof(calculated)), "cannot calculate accept key from client data\n");
+            HS_CHECK(str::CmpNocase(tok, calculated, sizeof(calculated)) == 0, "Sec-WebSocket-Accept Invalid\n");
+        } return QRPC_OK;
+        case state_server_handshake: {
+            int v;
+            HS_CHECK(m_sm.hashdr("Host"), "Host header\n");
+            HS_CHECK(m_sm.hashdr("Sec-WebSocket-Key"), "Sec-WebSocket-Key header\n");
+            HS_CHECK(m_sm.hdrint("Sec-WebSocket-version", v) >= 0, "Sec-WebSocket-version header\n");
+            HS_CHECK(v == 13, "version invalid %u\n", v);
+        } return QRPC_OK;
+        default:
+            ASSERT(false);
+            return QRPC_EINVAL;
+        }
+    }
+    int WebSocketFSM::send_handshake_request(SessionFactory::Session &s, const char *host) {
         init_key();
         char out[base64::buffsize(sizeof(m_key_ptr))], origin[256];
         base64::encode(m_key_ptr, sizeof(m_key_ptr), out, sizeof(out));
         str::Vprintf(origin, sizeof(origin), "http://%s", host);
-        auto r = WebSocketListener::send_handshake_request(*this, host, out, origin, NULL);
+        auto r = WebSocketListener::send_handshake_request(s, host, out, origin, NULL);
         if (r < 0) { return Syscall::IOMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
         return r;
     }
-    int WebSocketSession::send_handshake_response() {
+    int WebSocketFSM::send_handshake_response(SessionFactory::Session &s) {
         char buffer[base64::buffsize(sha1::kDigestSize)], *p;
-        if (!(p = init_accept_key_from_header(buffer, sizeof(buffer)))) {
+        if (!(p = init_accept_key_from_header(buffer, sizeof(buffer)))) { return QRPC_EINVAL; }
+        auto r = WebSocketListener::send_handshake_response(s, buffer);
+        if (r < 0) { return Syscall::IOMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
+        return r;
+    }
+    int WebSocketFSM::handshake(SessionFactory::Session &s, int r, int w) {
+        char rbf[4096]; int rsz;
+        switch (get_state()) {
+        case state_client_handshake:
+            if (!w) { return QRPC_EAGAIN; }
+            if (send_handshake_request(s, m_hostname.c_str()) < 0) {
+                return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
+            }
+            set_state(state_client_handshake_2);
+            return QRPC_EAGAIN;
+        case state_client_handshake_2:
+        case state_server_handshake:
+            if (!r) { return QRPC_EAGAIN; }
+            if ((rsz = s.Read(rbf, sizeof(rbf))) < 0) {
+                return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
+            }
+            switch (m_sm.append(rbf, rsz)) {
+            case HttpFSM::state_recv_header:
+                return QRPC_EAGAIN;
+            case HttpFSM::state_websocket_establish:
+                if (verify_handshake() < 0) { return QRPC_EINVAL; }
+                if (get_state() == state_server_handshake && send_handshake_response(s) < 0) {
+                    return Syscall::EAgain() ? QRPC_EAGAIN : QRPC_ESYSCALL;
+                }
+                set_state(state_established);
+                return QRPC_OK;
+            default:
+                ASSERT(false);
+                return QRPC_EINVAL;
+            }
+        default:
+            ASSERT(false);
             return QRPC_EINVAL;
         }
-        auto r = WebSocketListener::send_handshake_response(*this, buffer);
-        if (r < 0) { return Syscall::IOMayBlocked(r, false) ? QRPC_EAGAIN : QRPC_ESYSCALL; }
-        return r;
     }
+    #undef HS_CHECK
 }

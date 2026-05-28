@@ -46,6 +46,15 @@ namespace base {
       }
       return *this;
     }
+    SignalHandler &Unhandle(int sig) {
+      receivers_[sig] = Nop();
+      int ret;
+      if ((ret = Unregister(sig)) < 0) {
+        logger::error({{"ev","unregister signal fails"},{"sig",sig},{"error",ret}});
+        ASSERT(false);
+      }
+      return *this;
+    }
     bool Start(Loop &l) {
       if (l.Add(fd_, this, Loop::EV_READ) < 0) {
         logger::error({{"ev","sig: Loop::Add() fails"},{"fd",fd_},{"errno",Syscall::Errno()}});
@@ -53,8 +62,11 @@ namespace base {
       }
       return true;
     }
+    int Open();
     int Register(int);
+    int Unregister(int);
     void OnEvent(Fd fd, const Event &e) override;
+    int GetReapCount(const Signal &s);
   protected:
     class Nop {
     public:

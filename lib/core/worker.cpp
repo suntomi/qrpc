@@ -162,7 +162,7 @@ Fd Worker::CreateUDPSocketAndBind(const QuicSocketAddress& address) {
   return fd; 
 }
 /* static */
-bool Worker::ToSocketAddress(const qrpc_addr_t &addr, QuicSocketAddress &socket_address) {
+bool Worker::ToSocketAddress(const qrpc_endpoint_t &addr, QuicSocketAddress &socket_address) {
   char buffer[sizeof(struct sockaddr_storage)];
   int len, af;
   if ((len = AsyncResolver::PtoN(addr.host, &af, &buffer, sizeof(buffer))) < 0) {

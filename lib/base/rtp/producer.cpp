@@ -208,6 +208,7 @@ namespace rtp {
 			handler_.HandleRequest(
 				fbb, FBS::Request::Method::TRANSPORT_PRODUCE, p.MakeProduceRequest(fbb, id, p.options.pause)
 			);
+			m->OnOpen();
 			return handler_.FindProducer(id);
 		} catch (std::exception &e) {
 			QRPC_LOG(error, "failed to create producer: %s", e.what());

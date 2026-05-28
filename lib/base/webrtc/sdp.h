@@ -54,6 +54,12 @@ namespace webrtc {
       const std::string &proto, const rtp::MediaStreamConfig &p, std::string &answer);
     static std::string CandidatesSDP(const std::string &proto, ConnectionFactory::Connection &c);
     static uint32_t AssignPriority(uint32_t component_id);
+    static inline std::string CapSdpFrom(const qrpc_media_config_t &config) {
+      return MediaSdpFrom(config.audio_cap, config.video_cap);
+    }
+    static std::string MediaSdpFrom(const qrpc_media_params_t &audio, const qrpc_media_params_t &video);
+    static std::string MediaSectionFrom(
+      const char *type, const qrpc_media_params_t &params, const char *mid = nullptr);
   public:
   };
 } // namespace webrtc

@@ -16,7 +16,6 @@ class Loop : public LoopImpl, IoProcessor {
   TimerScheduler timer_;
   int max_nfd_{-1};
   LoopImpl::Timeout timeout_; // not initailized in constructor.
-  // TODO: define default constructor of LoopImpl::Timeout in loop_impl.h
 public:
   static const int kMinimumProcessorArraySize = 16;
   typedef LoopImpl::Event Event;
@@ -25,11 +24,16 @@ public:
   template <class T> T *ProcessorAt(int fd) { return (T *)processors_[fd]; }
   inline AlarmProcessor &alarm_processor() { return timer_; }
   inline Fd fd() const { return LoopImpl::fd(); }
+  // NOTE: we assume the thread which call Open and Poll is same.
   inline int Open(int max_nfd, uint64_t timeout_ns = 1000 * 1000) {
     if (max_nfd < kMinimumProcessorArraySize) {
       max_nfd = kMinimumProcessorArraySize;
     }
-    max_nfd_ = max_nfd; //TODO: use getrlimit if max_nfd omitted
+    if (max_nfd > 0) {
+      max_nfd_ = max_nfd;
+    } else {
+      max_nfd_ = base::Syscall::GetFdLimit();
+    }
     ToTimeout(timeout_ns, timeout_);
     processors_ = new IoProcessor*[max_nfd_];
     if (processors_ == nullptr) {
@@ -39,6 +43,13 @@ public:
     }
     memset(processors_, 0, sizeof(IoProcessor*) * max_nfd_);
     return LoopImpl::Open(max_nfd_);
+  }
+  inline Loop &OpenOrDie(int max_nfd, uint64_t timeout_ns = 1000 * 1000) {
+    int r;
+    if ((r = Open(max_nfd, timeout_ns)) < 0) {
+      logger::die({{"ev","Loop::Open() fails"}, {"err", r}});
+    }
+    return *this;
   }
   inline void Close() {
     if (processors_ != nullptr) {
@@ -92,14 +103,11 @@ public:
   }
   inline void Poll() {
     Event list[max_nfd_];
-    int n_list = LoopImpl::Wait(list, max_nfd_, timeout_);
-    for (int i = 0; i < n_list; i++) {
-      const auto &ev = list[i];
-      Fd fd = LoopImpl::From(ev);
-      auto h = processors_[fd];
-      h->OnEvent(fd, ev);
-    }
-    timer_.Poll();
+    Dispatch(LoopImpl::Wait(list, max_nfd_, timeout_), list);
+  }
+  inline void WaitEvent() {
+    Event list[max_nfd_];
+    Dispatch(LoopImpl::Wait(list, max_nfd_), list);
   }
 public: //IoProcessor
   void OnEvent(Fd lfd, const Event &e) override { ASSERT(fd() == lfd); Poll(); }
@@ -113,6 +121,16 @@ public: //IoProcessor
       processors_ = (IoProcessor**)std::realloc(processors_, max_nfd_ * sizeof(IoProcessor*));
       memset(processors_ + old, 0, sizeof(IoProcessor*) * (max_nfd_ - old));
     }
+  }
+private:
+  inline void Dispatch(int n_list, const Event *list) {
+    for (int i = 0; i < n_list; i++) {
+      const auto &ev = list[i];
+      Fd fd = LoopImpl::From(ev);
+      auto h = processors_[fd];
+      h->OnEvent(fd, ev);
+    }
+    timer_.Poll();
   }
 };
 }

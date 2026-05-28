@@ -24,9 +24,15 @@
 #include <srtp.h>
 
 #include <algorithm>
+#include <vector>
 
 namespace base {
 namespace webrtc {
+namespace {
+std::string GenerateClientCname() {
+  return random::word(12);
+}
+}
 
 // ConnectionFactory
 int ConnectionFactory::Start(const std::vector<Port> &ports) {
@@ -34,10 +40,10 @@ int ConnectionFactory::Start(const std::vector<Port> &ports) {
   if ((r = Setup(ports))) {
     return r;
   }
-  if (config_.connection_timeout > 0) {
-    alarm_processor().Set(
+  if (config().connection_timeout > 0) {
+    alarm_id_ = alarm_processor().Set(
       [this]() { return this->CheckTimeout(); },
-      qrpc_time_now() + config_.connection_timeout
+      qrpc_time_now() + config().connection_timeout
     );
   }
   return QRPC_OK;
@@ -56,6 +62,10 @@ int ConnectionFactory::Init() {
   return QRPC_OK;
 }
 void ConnectionFactory::Fin() {
+  if (finalized_) {
+    return;
+  }
+  finalized_ = true;
   connections_.clear();
   cnmap_.clear();
   if (alarm_id_ != AlarmProcessor::INVALID_ID) {
@@ -209,6 +219,14 @@ int ConnectionFactory::ThreadInit(AlarmProcessor &a) {
     }
   );
   SctpSender::ClassInit(a);
+  // The following ClassInit functions write to thread_local variables
+  // (Logger::channel, Crypto::seed/mac/hmacSha1Ctx,
+  //  DtlsTransport::certificate/privateKey/sslCtx/localFingerprints,
+  //  DepUsrSCTP::checker), so they must run per thread.
+  Logger::ClassInit(&g_channel_socket_);
+  Utils::Crypto::ClassInit();
+  RTC::DtlsTransport::ClassInit();
+  DepUsrSCTP::CreateChecker();
   g_thread_ref_count_++;
   return QRPC_OK;
 }
@@ -260,12 +278,8 @@ int ConnectionFactory::GlobalInit() {
       DepLibSRTP::ClassInit();
       DepUsrSCTP::ClassInit(SctpSender::onSendStcpData);
       DepLibWebRTC::ClassInit();
-      Utils::Crypto::ClassInit();
-      RTC::DtlsTransport::ClassInit();
       srtp_install_log_handler(srtp_logger, nullptr);
       RTC::SrtpSession::ClassInit();
-      Logger::ClassInit(&g_channel_socket_);
-      DepUsrSCTP::CreateChecker();
     }
     g_ref_count_++;
 		return QRPC_OK;
@@ -281,6 +295,10 @@ void ConnectionFactory::ThreadFin(AlarmProcessor &a) {
     return;
   }
   SctpSender::ClassDestroy(a);
+  // Tear down the per-thread state set up in ThreadInit (in reverse order).
+  DepUsrSCTP::CloseChecker();
+  RTC::DtlsTransport::ClassDestroy();
+  Utils::Crypto::ClassDestroy();
   ::TimerHandle::SetTimerProc([](const ::TimerHandle::Handler &, uint64_t) {
     return AlarmProcessor::INVALID_ID;
   }, [](uint64_t) {
@@ -295,8 +313,6 @@ void ConnectionFactory::GlobalFin() {
       return;
     }
     // Free static stuff.
-		RTC::DtlsTransport::ClassDestroy();
-		Utils::Crypto::ClassDestroy();
 		DepLibWebRTC::ClassDestroy();
 		DepUsrSCTP::ClassDestroy();
 		DepLibSRTP::ClassDestroy();
@@ -306,9 +322,10 @@ void ConnectionFactory::GlobalFin() {
 	}
 }
 std::shared_ptr<Connection> ConnectionFactory::Create(
-  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd
+  RTC::DtlsTransport::Role dtls_role, std::string &ufrag, std::string &pwd,
+  FactoryMethod &fm
 ) {
-  auto c = std::shared_ptr<Connection>(factory_method_(*this, dtls_role));
+  auto c = fm(*this, dtls_role);
   if (c == nullptr) {
     logger::error({{"ev","fail to allocate connection"}});
     return nullptr;
@@ -323,40 +340,44 @@ std::shared_ptr<Connection> ConnectionFactory::Create(
 
 // ConnectionFactory::Config
 int ConnectionFactory::Config::Derive() {
+  for (auto &a : Syscall::GetIfAddrs()) {
+    if (in6 == (a.family() == AF_INET6)) {
+      logger::info({{"ev","add detected ip"},{"ip",a.hostip()},{"in6",in6}});
+      ifaddrs.push_back(a.hostip());
+    }
+  }
+  return QRPC_OK;
+}
+// ConnectionFactory::TransportConfig
+int ConnectionFactory::TransportConfig::Derive(const Endpoint &ep, const ConnectionFactory::Config &conf) {
   // derive auto configured values
   for (auto fp : RTC::DtlsTransport::GetLocalFingerprints()) {
-    auto fpit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(fingerprint_algorithm);
+    auto fpit = RTC::DtlsTransport::GetString2FingerprintAlgorithm().find(params.fingerprint_algorithm);
     if (fpit == RTC::DtlsTransport::GetString2FingerprintAlgorithm().end()) {
-      logger::die({{"ev","invalid fingerprint algorithm name"},{"algo", fingerprint_algorithm}});
+      logger::die({{"ev","invalid fingerprint algorithm name"},{"alggo", params.fingerprint_algorithm}});
     }
     // TODO: SHA256 is enough?
     if (fp.algorithm == fpit->second) {
       fingerprint = fp.value;
+      fingerprint_algorithm = params.fingerprint_algorithm;
     }
   }
   if (fingerprint.length() <= 0) {
-    logger::die({{"ev","no fingerprint for algorithm"},{"algo", fingerprint_algorithm}});
+    logger::die({{"ev","no fingerprint for algorithm"},{"algo", params.fingerprint_algorithm}});
   }
-  if (ip.length() <= 0) {
-    for (auto &a : Syscall::GetIfAddrs()) {
-      if (in6 == (a.family() == AF_INET6)) {
-        logger::info({{"ev","add detected ip"},{"ip",a.hostip()},{"in6",in6}});
-        ifaddrs.push_back(a.hostip());
-      }
+  if (ep.ip.empty()) {
+    if (conf.ifaddrs.empty()) {
+      logger::die({{"ev","no ICE candidate ips"}});
     }
-    if (ifaddrs.size() <= 0) {
-      logger::die({{"ev","no if address detected"},{"in6",in6}});
-    }
+    QRPC_LOGJ(info, {{"ev","use ifaddrs as ICE candidates"},{"addrs",str::Join(conf.ifaddrs, ",")}});
+    ice_candidate_addrs = conf.ifaddrs;
   } else {
-    logger::info({{"ev","add configured ip"},{"ip",ip}});
-    ifaddrs.push_back(ip);
+    QRPC_LOGJ(info, {{"ev","use configured ip as ICE candidates"},{"ip",ep.ip}});
+    ice_candidate_addrs.push_back(ep.ip);
   }
   if (certpair.has_value() && certpair.value().empty()) {
-    QRPC_LOGJ(info, {
-      {"ev","set hostname to empty certpair for auto generation"},
-      {"hostnames",ifaddrs},{"cert",certpair.value().cert},{"privkey",certpair.value().privkey}}
-    );
-    certpair.value().hostnames = ifaddrs;
+    QRPC_LOGJ(info, {{"ev","auto generate certificate with ifaddrs"},{"addrs",str::Join(conf.ifaddrs, ",")}});
+    certpair.value().hostnames = conf.ifaddrs;
   }
   return QRPC_OK;
 }
@@ -409,7 +430,7 @@ qrpc_time_t ConnectionFactory::UdpSessionTmpl<PS>::OnShutdown() {
 #define RAISE(str) { \
   std::string __error = std::string(str) + " at " +  __FILE__ +  ":" + LINESTR; \
   QRPC_LOGJ(error, {{"ev","syscall failure"},{"fn",fn},{"pl",pl},{"error",__error}}); \
-  Call((fn + "_ack").c_str(), msgid, {{"error",__error}}); \
+  Respond((fn + "_ack").c_str(), msgid, {{"error",__error}}); \
   return QRPC_OK; \
 }
 static std::map<std::string, logger::level> syscall_log_levels = {
@@ -418,6 +439,7 @@ static std::map<std::string, logger::level> syscall_log_levels = {
 int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
   auto pl = std::string(p, sz);
   try {
+    auto &c = dynamic_cast<Connection &>(connection());
     auto data = json::parse(pl);
     auto fnit = data.find("fn");
     if (fnit == data.end()) {
@@ -427,11 +449,52 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
     const auto &fn = fnit->get<std::string>();
     const auto mit = data.find("msgid");
     if (mit == data.end()) {
-      QRPC_LOGJ(error, {{"ev","syscall invalid payload"},{"fn",fn},{"pl",pl},{"r","no value for key 'msgid'"}});
+      // notifications (called from other peer)
+      if (fn == "close") {
+        QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
+        c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
+        return QRPC_OK;
+      }
+      const auto ait = data.find("args");
+      if (ait == data.end()) {
+        QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no value for key 'args'"},{"pl",pl}});
+        ASSERT(false);
+        return QRPC_OK;
+      }
+      if (fn == "remote_pause" || fn == "remote_resume") {
+        auto &h = c.rtp_handler();
+        const auto pit = ait->find("path");
+        if (pit != ait->end()) {
+          std::string error;
+          auto r = (fn == "remote_pause") ?
+            h.Pause(pit->get<std::string>(), error) :
+            h.Resume(pit->get<std::string>(), error);
+          if (!r) {
+            QRPC_LOGJ(error, {
+              {"ev","fail to control stream"},
+              {"control",fn},{"path",pit->get<std::string>()},
+              {"cname",c.cname()},{"error",error}
+            });
+            ASSERT(false);
+          }
+        } else {
+          QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no value for key 'path'"},{"pl",pl}});
+          ASSERT(false);
+        }
+      } else if (fn == "ping") {
+        const auto pit = ait->find("path");
+        if (pit != ait->end()) {
+          return QRPC_OK;
+        } else {
+          QRPC_LOGJ(info, {{"ev", "syscall invalid payload"},{"r", "no value for key 'path'"},{"pl",pl}});
+          ASSERT(false);
+        }
+      } else {
+        QRPC_LOGJ(warn, {{"ev","unknown syscall"},{"fn",fn}});
+      }
       return QRPC_OK;
     }
     const auto msgid = mit->get<uint64_t>();
-    auto &c = dynamic_cast<Connection &>(connection());
     auto scllvit = syscall_log_levels.find(fn);
     if (scllvit != syscall_log_levels.end()) {
       QRPC_LOGVJ(scllvit->second, {{"ev","recv syscall"},{"pl",data}});
@@ -439,181 +502,180 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
       QRPC_LOGJ(info, {{"ev","recv syscall"},{"pl",data}});
     }
     try {
+      const auto ait = data.find("args");
+      if (ait == data.end()) {
+        RAISE("no value for key 'args'");
+      }
+      const auto &args = ait->get<std::map<std::string,json>>();
       if (fn == "close") {
         QRPC_LOGJ(info, {{"ev", "shutdown from peer"}});
-        c.factory().ScheduleClose(c);
-        Call("close_ack",msgid,{});
-      } else {
-        const auto ait = data.find("args");
-        if (ait == data.end()) {
-          RAISE("no value for key 'args'");
+        c.factory().ScheduleClose(c, QRPC_CLOSE_REASON_REMOTE);
+        Respond("close_ack",msgid,json::object());
+      } else if (fn == "remote_answer") {
+        // remote_answer receives answer information per mid
+        const auto mmit = args.find("midMap");
+        if (mmit == args.end()) {
+          RAISE("no value for key 'midMap'");
         }
-        const auto &args = ait->get<std::map<std::string,json>>();
-        if (fn == "remote_answer") {
-          // remote_answer receives answer information per mid
-          const auto mmit = args.find("midMap");
-          if (mmit == args.end()) {
-            RAISE("no value for key 'midMap'");
-          }
-          for (const auto &kv : mmit->second.get<std::map<std::string,json>>()) {
-            const auto &mid = kv.first;
-            const auto &answer = kv.second;
-            std::string error;
-            if (!c.rtp_handler().ApplyAnswer(mid, answer, error)) {
-              RAISE(error);
-            }
-          }
-          Call("remote_answer_ack",msgid,{});
-        } else if (fn == "produce") {
-          const auto sdpit = args.find("sdp");
-          if (sdpit == args.end()) {
-            RAISE("no value for key 'sdp'");
-          }
-          const auto mpmit = args.find("midPathMap");
-          if (mpmit == args.end()) {
-            RAISE("no value for key 'midPathMap'");
-          }
-          SDP::MediaContext context;
-          auto &options_map = context.options_map;
-          const auto oit = args.find("options");
-          if (oit != args.end()) {
-            QRPC_LOGJ(info, {{"ev","produce options"},{"options",oit->second}});
-            const auto &opts = oit->second.get<std::map<std::string,json>>();
-            const auto v = opts.find("video");
-            if (v != opts.end()) {
-              options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
-            }
-            const auto a = opts.find("audio");
-            if (a != opts.end()) {
-              options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
-            }
-          }
-          const auto rtpit = args.find("rtp");
-          if (rtpit != args.end()) {
-            const auto rsmit = rtpit->second.find("ridScalabilityModeMap");
-            if (rsmit != rtpit->second.end()) {
-              context.rid_scalability_mode_map = rsmit->get<std::map<std::string,std::string>>();
-            } else {
-              ASSERT(false);
-            }
-          }
-          SDP sdp(sdpit->second.get<std::string>());
-          std::string answer;
-          std::map<std::string,rtp::Producer*> created_producers;
-          if (!sdp.Answer(mpmit->second.get<std::map<std::string,std::string>>(), c, answer, &context)) {
-            RAISE("fail to produce");
-          }
-          if (!c.rtp_enabled()) {
-            RAISE("nothing produced");
-          }
-          json status_map;
-          for (const auto &kv : created_producers) {
-            status_map[kv.first] = kv.second->status().ToJson();
-          }
-          Call("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
-        } else if (fn == "publish_stream") {
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          const auto stit = args.find("stop");
-          auto stop = stit != args.end() && stit->second.get<bool>();
-          if (stop) {
-            if (!c.rtp_enabled()) {
-              RAISE("nothing published");
-            }
-            if (!c.UnpublishStream(pit->second.get<std::string>())) {
-              RAISE("fail to publish");
-            }
-          } else {
-            if (!c.PublishStream(pit->second.get<std::string>())) {
-              RAISE("fail to publish");
-            }
-          }
-          Call("publish_stream_ack",msgid,{});
-        } else if (fn == "consume") {
-          QRPC_LOGJ(info, {{"ev","consume request"},{"args",args}});
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          std::map<rtp::Parameters::MediaKind, ControlOptions> options_map;
-          bool sync = false;
-          const auto oit = args.find("options");
-          if (oit != args.end()) {
-            QRPC_LOGJ(info, {{"ev","consume options"},{"options",oit->second}});
-            const auto &opts = oit->second.get<std::map<std::string,json>>();
-            const auto v = opts.find("video");
-            if (v != opts.end()) {
-              options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
-            }
-            const auto a = opts.find("audio");
-            if (a != opts.end()) {
-              options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
-            }
-            const auto syncit = opts.find("sync");
-            if (syncit != opts.end()) {
-              sync = syncit->second.get<bool>();
-            }
-          }
-          auto path = pit->second.get<std::string>();
-          std::string sdp;
-          std::map<std::string,rtp::Consumer*> created_consumers;
-          if (!c.PrepareConsume(path, options_map, sync, sdp, created_consumers)) {
-            RAISE("fail to prepare consume");
-          }
-          json status_map;
-          for (const auto &kv : created_consumers) {
-            auto st = rtp::ConsumerFactory::StatusFrom(kv.second);
-            status_map[kv.first] = st.ToJson();
-          }
-          Call("consume_ack",msgid,{
-            {"status_map",status_map},{"sdp",sdp},
-            {"mid_media_path_map",c.rtp_handler().mid_media_path_map()}
-          });
-        } else if (fn == "pause") {
-          if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          std::string reason;
-          if (!c.rtp_handler().Pause(pit->second.get<std::string>(), reason)) {
-            RAISE("fail to pause track:" + reason);
-          }
-          Call("pause_ack",msgid,{});
-        } else if (fn == "resume") {
-          if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          std::string reason;
-          if (!c.rtp_handler().Resume(pit->second.get<std::string>(), reason)) {
-            RAISE("fail to pause track:" + reason);
-          }
-          Call("resume_ack",msgid,{});
-        } else if (fn == "ping") {
+        for (const auto &kv : mmit->second.get<std::map<std::string,json>>()) {
+          const auto &mid = kv.first;
+          const auto &answer = kv.second;
           std::string error;
-          if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
-          if (!c.rtp_handler().Ping(error)) {
-            RAISE("fail to ping:" + error);
+          if (!c.rtp_handler().ApplyAnswer(mid, answer, error)) {
+            RAISE(error);
           }
-          Call("ping_ack",msgid,{},logger::level::trace);
-        } else if (fn == "close_media") {
-          std::string sdp_or_error;
-          std::vector<std::string> closed_paths;
-          const auto pit = args.find("path");
-          if (pit == args.end()) {
-            RAISE("no value for key 'path'");
-          }
-          if (!c.CloseMedia(pit->second.get<std::string>(), closed_paths, sdp_or_error)) {
-            RAISE("fail to close media:" + sdp_or_error);
-          }
-          Call("close_media_ack",msgid,{{"paths",closed_paths},{"sdp",sdp_or_error}});
-        } else {
-          RAISE("syscall is not supported");
         }
+        Respond("remote_answer_ack",msgid,json::object());
+      } else if (fn == "produce") {
+        const auto sdpit = args.find("sdp");
+        if (sdpit == args.end()) {
+          RAISE("no value for key 'sdp'");
+        }
+        const auto mpmit = args.find("midPathMap");
+        if (mpmit == args.end()) {
+          RAISE("no value for key 'midPathMap'");
+        }
+        SDP::MediaContext context;
+        auto &options_map = context.options_map;
+        const auto oit = args.find("options");
+        if (oit != args.end()) {
+          QRPC_LOGJ(info, {{"ev","produce options"},{"options",oit->second}});
+          const auto &opts = oit->second.get<std::map<std::string,json>>();
+          const auto v = opts.find("video");
+          if (v != opts.end()) {
+            options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
+          }
+          const auto a = opts.find("audio");
+          if (a != opts.end()) {
+            options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
+          }
+        }
+        const auto rtpit = args.find("rtp");
+        if (rtpit != args.end()) {
+          const auto rsmit = rtpit->second.find("ridScalabilityModeMap");
+          if (rsmit != rtpit->second.end()) {
+            context.rid_scalability_mode_map = rsmit->get<std::map<std::string,std::string>>();
+          } else {
+            ASSERT(false);
+          }
+        }
+        SDP sdp(sdpit->second.get<std::string>());
+        std::string answer;
+        if (!sdp.Answer(mpmit->second.get<std::map<std::string,std::string>>(), c, answer, &context)) {
+          RAISE("fail to produce");
+        }
+        if (!c.rtp_enabled()) {
+          RAISE("nothing produced");
+        }
+        json status_map;
+        for (const auto &kv : context.created_producers) {
+          status_map[kv.first] = kv.second->status().ToJson();
+        }
+        Respond("produce_ack",msgid,{{"sdp",answer},{"status_map",status_map},{"mid_media_path_map",c.rtp_handler().mid_media_path_map()}});
+      } else if (fn == "publish_stream") {
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        const auto stit = args.find("stop");
+        auto stop = stit != args.end() && stit->second.get<bool>();
+        if (stop) {
+          if (!c.rtp_enabled()) {
+            RAISE("nothing published");
+          }
+          if (!c.UnpublishStream(pit->second.get<std::string>())) {
+            RAISE("fail to publish");
+          }
+        } else {
+          if (!c.PublishStream(pit->second.get<std::string>())) {
+            RAISE("fail to publish");
+          }
+        }
+        Respond("publish_stream_ack",msgid,json::object());
+      } else if (fn == "consume") {
+        QRPC_LOGJ(info, {{"ev","consume request"},{"args",args}});
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        std::map<rtp::Parameters::MediaKind, ControlOptions> options_map;
+        bool sync = false;
+        const auto oit = args.find("options");
+        if (oit != args.end()) {
+          QRPC_LOGJ(info, {{"ev","consume options"},{"options",oit->second}});
+          const auto &opts = oit->second.get<std::map<std::string,json>>();
+          const auto v = opts.find("video");
+          if (v != opts.end()) {
+            options_map.emplace(rtp::Parameters::MediaKind::VIDEO, v->second);
+          }
+          const auto a = opts.find("audio");
+          if (a != opts.end()) {
+            options_map.emplace(rtp::Parameters::MediaKind::AUDIO, a->second);
+          }
+          const auto syncit = opts.find("sync");
+          if (syncit != opts.end()) {
+            sync = syncit->second.get<bool>();
+          }
+        }
+        auto path = pit->second.get<std::string>();
+        std::string sdp;
+        std::map<std::string,rtp::Consumer*> created_consumers;
+        if (!c.PrepareConsume(path, options_map, sync, sdp, created_consumers)) {
+          RAISE("fail to prepare consume");
+        }
+        json status_map;
+        for (const auto &kv : created_consumers) {
+          auto st = rtp::ConsumerFactory::StatusFrom(kv.second);
+          status_map[kv.first] = st.ToJson();
+        }
+        Respond("consume_ack",msgid,{
+          {"status_map",status_map},{"sdp",sdp},
+          {"mid_media_path_map",c.rtp_handler().mid_media_path_map()}
+        });
+      } else if (fn == "pause") {
+        if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        std::string reason;
+        if (!c.rtp_handler().Pause(pit->second.get<std::string>(), reason)) {
+          RAISE("fail to pause track:" + reason);
+        }
+        Respond("pause_ack",msgid,json::object());
+      } else if (fn == "resume") {
+        if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        std::string reason;
+        if (!c.rtp_handler().Resume(pit->second.get<std::string>(), reason)) {
+          RAISE("fail to pause track:" + reason);
+        }
+        Respond("resume_ack",msgid,json::object());
+      } else if (fn == "ping") {
+        std::string error;
+        if (!c.rtp_enabled()) { RAISE("rtp not enabled");}
+        if (!c.rtp_handler().Ping(error)) {
+          RAISE("fail to ping:" + error);
+        }
+        Respond("ping_ack",msgid,json::object(),logger::level::trace);
+      } else if (fn == "close_media") {
+        std::string sdp_or_error;
+        std::vector<std::string> closed_paths;
+        const auto pit = args.find("path");
+        if (pit == args.end()) {
+          RAISE("no value for key 'path'");
+        }
+        if (!c.CloseMedia(pit->second.get<std::string>(), closed_paths, sdp_or_error)) {
+          RAISE("fail to close media:" + sdp_or_error);
+        }
+        Respond("close_media_ack",msgid,{{"paths",closed_paths},{"sdp",sdp_or_error}});
+      } else if (str::EndsWith(fn, "_ack")) {
+        // ignore ack 
+      } else {
+        RAISE("syscall is not supported");
       }
     } catch (const std::exception& error) {
       RAISE(error.what());
@@ -624,12 +686,25 @@ int ConnectionFactory::SyscallStream::OnRead(const char *p, size_t sz) {
   return QRPC_OK;
 }
 int ConnectionFactory::SyscallStream::Call(const char *fn) {
-  return Send({{"fn",fn}});
+  qrpc_msgid_t msgid;
+  return Call(fn, msgid, json::object());
 }
 int ConnectionFactory::SyscallStream::Call(const char *fn, const json &j) {
+  qrpc_msgid_t msgid;
+  return Call(fn, msgid, j);
+}
+int ConnectionFactory::SyscallStream::Call(const char *fn, qrpc_msgid_t &msgid, const json &j) {
+  msgid = msgid_factory_.New();
+  return Send({{"fn",fn},{"msgid",msgid},{"args",j}});
+}
+int ConnectionFactory::SyscallStream::Notify(const char *fn) {
+  return Notify(fn, json::object());
+}
+int ConnectionFactory::SyscallStream::Notify(const char *fn, const json &j) {
   return Send({{"fn",fn},{"args",j}});
 }
-int ConnectionFactory::SyscallStream::Call(const char *fn, uint32_t msgid, const json &j, logger::level llv) {
+
+int ConnectionFactory::SyscallStream::Respond(const char *fn, qrpc_msgid_t msgid, const json &j, logger::level llv) {
   QRPC_LOGVJ(llv, {{"ev","syscall response"},{"fn",fn},{"msgid",msgid},{"args",j}})
   return Send({{"fn",fn},{"msgid",msgid},{"args",j}});
 }
@@ -686,7 +761,6 @@ bool ConnectionFactory::Connection::PrepareConsume(
     parsed[parsed.size() - 1] = "";
   }
   auto &mscs = media_stream_configs();
-  std::vector<uint32_t> generated_ssrcs;
   InitRTP();
   if (rtp_handler().PrepareConsume(*h, str::Join(parsed, "/"), media_kind, 
     options_map, sync, mscs, created_consumers)) {
@@ -796,7 +870,6 @@ bool ConnectionFactory::Connection::ConsumeMedia(
     QRPC_LOGJ(warn, {{"ev","ignore because peer not found"},{"cname",parsed[0]}});
     return true;
   }
-  std::vector<uint32_t> generated_ssrcs;
   if (rtp_handler().Consume(*h, config, error)) {
     return true;
   } else {
@@ -841,7 +914,7 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   ufrag = random::word(32);
   pwd = random::word(32);
   // create ICE server
-  ice_server_.reset(new IceServer(this, ufrag, pwd, factory().config().consent_check_interval));
+  ice_server_.reset(new IceServer(this, ufrag, pwd, webrtc_params().consent_check_interval));
   if (ice_server_ == nullptr) {
     logger::die({{"ev","fail to create ICE server"}});
     return QRPC_EALLOC;
@@ -857,10 +930,10 @@ int ConnectionFactory::Connection::Init(std::string &ufrag, std::string &pwd) {
   sctp_association_.reset(
     new RTC::SctpAssociation(
       this, 
-      factory().config().max_outgoing_stream_size,
-      factory().config().initial_incoming_stream_size,
-      factory().config().send_buffer_size,
-      factory().config().send_buffer_size,
+      webrtc_params().max_outgoing_stream_size,
+      webrtc_params().initial_incoming_stream_size,
+      webrtc_params().send_buffer_size,
+      webrtc_params().send_buffer_size,
       true)
   );
   if (sctp_association_ == nullptr) {
@@ -941,7 +1014,7 @@ StreamFactory ConnectionFactory::Connection::DefaultStreamFactory() {
         return nullptr;
       }
     } else {
-      return this->factory().stream_factory()(config, conn);
+      return this->stream_factory()(config, conn);
     }
   };
 }
@@ -1028,22 +1101,32 @@ void ConnectionFactory::Connection::OnFinalize() {
   auto reconnect_wait = OnShutdown();
   if (factory().is_client()) {
     auto &c = factory().to<Client>();
+    auto cc = dynamic_cast<Client::Connection*>(this);
+    if (cc == nullptr) {
+      QRPC_LOGJ(warn, {{"ev","reconnection cancel"},{"r","connection type mismatch"},{"uf",ufrag()}});
+      ASSERT(false);
+      return;
+    }
     auto &uf = ufrag();
     if (reconnect_wait > 0) {
       QRPC_LOGJ(info, {{"ev","start reconnect wait"},{"backoff",reconnect_wait},{"ufrag",uf}})
-      c.alarm_processor().Set([&c, uf = uf]() {
+      c.alarm_processor().Set([&c, uf = uf, fm = cc->factory_method()]() mutable {
         auto epit = c.endpoints().find(uf);
         if (epit != c.endpoints().end()) {
           auto &ep = (*epit).second;
           QRPC_LOGJ(info, {{"ev","reconnection start"},{"uf",uf},
             {"ep",(ep.host + ":" + std::to_string(ep.port) + ep.path)}});
-          c.Connect(ep.host, ep.port, ep.path);
+          // cc's factory_methods_ will move into new connection
+          if (!c.Connect(ep, std::move(fm))) {
+            QRPC_LOGJ(warn, {{"ev","reconnection fails"},{"r","Connect() fails"},{"uf",uf}});
+            ASSERT(false);
+          }
           c.endpoints().erase(epit);
         } else {
           QRPC_LOGJ(warn, {{"ev","reconnection cancel"},{"r","endpoint not found"},{"uf",uf}});
           ASSERT(false);
         }
-        return 0;
+        return qrpc_alarm_stop_rv();
       }, qrpc_time_now() + reconnect_wait);
     } else {
       QRPC_LOGJ(info, {{"ev","stop reconnection"},{"ufrag",uf}})
@@ -1062,16 +1145,22 @@ void ConnectionFactory::Connection::Close() {
   if (syscall_ == nullptr) {
     syscall_ = std::dynamic_pointer_cast<SyscallStream>(OpenStream({
       .label = Stream::SYSCALL_NAME
-    }, [this](const Stream::Config &config, base::Connection &conn) {
-      return std::make_shared<SyscallStream>(conn, config, [this](Stream &s) {
-        this->closed_ = true;
+    }, [](const Stream::Config &config, base::Connection &conn) {
+      return std::make_shared<SyscallStream>(conn, config, [](Stream &s) {
         QRPC_LOGJ(info, {{"ev","server syscall stream opened"},{"sid",s.id()}});
-        return s.Send({{"fn","close"}});
+        return QRPC_OK;
       });
     }));
-  } else {
-    syscall_->Call("close");
   }
+  // here, still DCEP handshake may not be done, but we want to send close message to peer as soon as possible. 
+  // below payload received immediately after DATA_CHANNEL_OPEN received by peer, and processed as usual.
+  // if we need to wait handshake done, we can move this call to above closure.
+  syscall_->Call("close");
+  // we schedule connection close now, do not wait for peer to process above payload.
+  factory().ScheduleClose(*this, QRPC_CLOSE_REASON_LOCAL, 0, "closed by local");
+}
+void ConnectionFactory::Connection::Reset() {
+  logger::die({{"ev","not implemented"}});
 }
 IceProber *ConnectionFactory::Connection::InitIceProber(
   const std::string &ufrag, const std::string &pwd, uint64_t priority) {
@@ -1152,7 +1241,7 @@ void ConnectionFactory::Connection::OnDtlsEstablished() {
   int r;
   if ((r = OnConnect()) < 0) {
     logger::error({{"ev","application reject connection"},{"rc",r}});
-    factory().ScheduleClose(*this);
+    factory().ScheduleClose(*this, QRPC_CLOSE_REASON_LOCAL, r, "application reject connection");
   }
 }
 void ConnectionFactory::Connection::OnTcpSessionShutdown(Session *s) {
@@ -1204,7 +1293,7 @@ int ConnectionFactory::Connection::OnDtlsDataReceived(Session *session, const ui
   if (
     dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTING ||
     dtls_transport_->GetState() == RTC::DtlsTransport::DtlsState::CONNECTED) {
-    // logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"}});
+    // logger::debug({{"ev","DTLS data received, passing it to the DTLS transport"},{"proto","dtls"},{"len",sz},{"pl",str::HexDump(p, std::min((size_t)16, sz))}});
     dtls_transport_->ProcessDtlsData(p, sz);
   } else {
     logger::warn({
@@ -1226,6 +1315,10 @@ void ConnectionFactory::Connection::TryParseRtcpPacket(const uint8_t *p, size_t 
     ASSERT(false);
     return;
   }
+  // here, p and sz is modified to decrypted packet
+  ReceivePlainRtcpPacket(p, sz);
+}
+void ConnectionFactory::Connection::ReceivePlainRtcpPacket(const uint8_t *p, size_t sz) {
   RTC::RTCP::Packet* packet = RTC::RTCP::Packet::Parse(p, sz);
   if (packet == nullptr) {
     logger::warn({{"proto","srtcp"},
@@ -1292,17 +1385,19 @@ void ConnectionFactory::Connection::TryParseRtpPacket(const uint8_t *p, size_t s
         {"proto","srtp"},{"ssrc",packet->GetSsrc()},{"roc",roc},
         {"payloadType",packet->GetPayloadType()},{"seq",packet->GetSequenceNumber()}
       });
-      // encryption back to work as usual after a few times reach here (eg. firefox), so remove assertion
+      // encryption start to work as usual after a few times reach here (eg. firefox), so remove assertion
       // ASSERT(false);
     }
     delete packet;
   }
+  ReceivePlainRtpPacket(p, sz);
+}
+void ConnectionFactory::Connection::ReceivePlainRtpPacket(const uint8_t *p, size_t sz) {
   auto *packet = RTC::RtpPacket::Parse(p, sz);
   if (packet == nullptr) {
     QRPC_LOGJ(warn, {{"proto","rtcp"},
       {"ev","received data is not a valid RTP packet"},
-      {"decrypted",decrypted},{"len",sz},
-      {"pl",str::HexDump(p, std::min((size_t)32, sz))}});
+      {"len",sz},{"pl",str::HexDump(p, std::min((size_t)32, sz))}});
     ASSERT(false);
     return;
   }
@@ -1366,9 +1461,9 @@ int ConnectionFactory::Connection::Open(Stream &s) {
   int r;
   auto &c = s.config();
   DcepRequest req(c);
-  uint8_t buff[req.PayloadSize()];
+  uint8_t *buff = ALLOC_STACK_BUFFER(uint8_t, req.PayloadSize());
   if ((r = sctp_association_->SendSctpMessage(
-      s.config().params, req.ToPaylod(buff, sizeof(buff)), req.PayloadSize(), PPID::WEBRTC_DCEP
+      s.config().params, req.ToPaylod(buff, req.PayloadSize()), req.PayloadSize(), PPID::WEBRTC_DCEP
   )) < 0) {
     logger::error({{"proto","sctp"},{"ev","fail to send DCEP OPEN"},{"stream_id",s.id()},{"rv",r}});
     return QRPC_EALLOC;
@@ -1395,7 +1490,7 @@ void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentAdded(
 void ConnectionFactory::Connection::OnIceServerLocalUsernameFragmentRemoved(
   const IceServer *iceServer, const std::string& usernameFragment) {
   logger::info({{"ev","OnIceServerLocalUsernameFragmentRemoved"},{"c",str::dptr(this)},{"ufrag",usernameFragment}});
-  factory_.ScheduleClose(usernameFragment);
+  factory_.ScheduleClose(usernameFragment, QRPC_CLOSE_REASON_SHUTDOWN, 0, "ICE ufrag removed");
 }
 void ConnectionFactory::Connection::OnIceServerSessionAdded(const IceServer *iceServer, Session *session) {
   logger::info({{"ev","OnIceServerSessionAdded"},{"ss",str::dptr(session)}});
@@ -1419,7 +1514,7 @@ void ConnectionFactory::Connection::OnIceServerConnected(const IceServer *iceSer
   // If ready, run the DTLS handler.
   if (RunDtlsTransport() < 0) {
     logger::error({{"ev","fail to run DTLS transport"}});
-    factory().ScheduleClose(*this);
+    factory().ScheduleClose(*this, QRPC_CLOSE_REASON_PROTOCOL);
     return;
   }
 
@@ -1503,7 +1598,8 @@ void ConnectionFactory::Connection::OnDtlsTransportClosed(const RTC::DtlsTranspo
   // RTC::Transport::Disconnected();
   // above notifies TransportCongestionControlClient and TransportCongestionControlServer
   // may need to implement equivalent for performance
-  factory().ScheduleClose(*this); // this might be freed here, so don't touch after the line
+  // * this might be freed here, so don't touch after the line
+  factory().ScheduleClose(*this, QRPC_CLOSE_REASON_SHUTDOWN);
 }
 // Need to send DTLS data to the peer.
 void ConnectionFactory::Connection::OnDtlsTransportSendData(
@@ -1523,6 +1619,7 @@ void ConnectionFactory::Connection::OnDtlsTransportSendData(
 void ConnectionFactory::Connection::OnDtlsTransportApplicationDataReceived(
   const RTC::DtlsTransport*, const uint8_t* data, size_t len) {
   TRACK();
+  // logger::info({{"ev","sctp data received"},{"len",len},{"pl",str::HexDump(data, std::min(len, (size_t)16))}});
   sctp_association_->ProcessSctpData(data, len);
 }
 
@@ -1604,9 +1701,9 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
     }
     // send dcep ack
     DcepResponse ack;
-    uint8_t buff[ack.PayloadSize()];
+    uint8_t *buff = ALLOC_STACK_BUFFER(uint8_t, ack.PayloadSize());
     if ((r = sctpAssociation->SendSctpMessage(
-        s->config().params, ack.ToPaylod(buff, sizeof(buff)), ack.PayloadSize(), PPID::WEBRTC_DCEP
+        s->config().params, ack.ToPaylod(buff, ack.PayloadSize()), ack.PayloadSize(), PPID::WEBRTC_DCEP
     )) < 0) {
       logger::error({{"proto","sctp"},{"ev","fail to send DCEP ACK"},{"stream_id",streamId},{"rc",r}});
       s->Close(QRPC_CLOSE_REASON_LOCAL, r, "fail to send DCEP ACK");
@@ -1621,6 +1718,11 @@ void ConnectionFactory::Connection::OnSctpWebRtcDataChannelControlDataReceived(
       return;
     }
   } break;
+  default: {
+    logger::error({{"proto","sctp"},{"ev","unknown control message received"},{"sid",streamId},{"type",*msg}});
+    ASSERT(false);
+    return;
+  }
   }
 }
 void ConnectionFactory::Connection::OnSctpAssociationMessageReceived(
@@ -1632,7 +1734,7 @@ void ConnectionFactory::Connection::OnSctpAssociationMessageReceived(
   // TODO: callback app
   auto it = streams_.find(streamId);
   if (it == streams_.end()) {
-    logger::debug({{"ev","SCTP message received for unknown stream, ignoring it"},{"sid",streamId}});
+    logger::debug({{"ev","SCTP message received for unknown stream"},{"sid",streamId}});
     return;
   }
   int r;
@@ -1792,77 +1894,112 @@ bool ConnectionFactory::Connection::GetRtpRoc(uint32_t ssrc, uint32_t &roc, rtp:
 // client::WhipHttpProcessor, client::TcpSession, client::UdpSession
 namespace client {
   typedef ConnectionFactory::IceUFrag IceUFrag;
+  typedef ConnectionFactory::FactoryMethod FactoryMethod;
   class WhipHttpProcessor : public HttpClient::Processor {
   public:
-    WhipHttpProcessor(Client &c, const Client::Endpoint &ep) :
-      client_(c), ufrag_(), ep_(ep) {}
+    WhipHttpProcessor(Client &c, const Client::Endpoint &ep, const IceUFrag &uf, const std::string &pwd) :
+      client_(c), ufrag_(uf), pwd_(pwd), ep_(ep) {}
     ~WhipHttpProcessor() {}
   public:
     const IceUFrag &ufrag() const { return ufrag_; }
     const Client::Endpoint &endpoint() const { return ep_; }
     void SetUFrag(std::string &&ufrag) { ufrag_ = ufrag; }
   public:
-    base::TcpSession *HandleResponse(HttpSession &s) override {
+    TcpClient::TcpSession *HandleResponse(HttpClientSession &s) override {
       // in here, session that related with webrtc connection is not actively callbacked, 
       // so we can call CloseConnection
       const auto &uf = ufrag();
       if (s.fsm().rc() != HRC_OK) {
         logger::error({{"ev","signaling server returns error response"},
           {"status",s.fsm().rc()},{"ufrag",uf}});
-        client_.ScheduleClose(uf);
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, s.fsm().rc(), "signaling server error");
         return nullptr;
       }
-      SDP sdp(s.fsm().body());
+      std::string answer_sdp;
+      try {
+        auto body = json::parse(s.fsm().body());
+        auto it = body.find("sdp");
+        if (it == body.end() || !it->is_string()) {
+          logger::error({{"ev","signaling server returns invalid response body"},
+            {"body",body.dump()},{"ufrag",uf}});
+          client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "invalid signaling response");
+          return nullptr;
+        }
+        answer_sdp = it->get<std::string>();
+      } catch (const std::exception &e) {
+        logger::error({{"ev","fail to parse signaling server response"},
+          {"reason",e.what()},{"body",s.fsm().body()},{"ufrag",uf}});
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "fail to parse signaling response");
+        return nullptr;
+      }
+      SDP sdp(answer_sdp);
       auto c = client_.FindFromUfrag(uf);
       if (c == nullptr) {
         // may timeout
         logger::error({{"ev","connection not found"},{"ufrag",uf}});
-        client_.ScheduleClose(uf);
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "connection not found");
         return nullptr;
       }
       auto candidates = sdp.Candidates();
+      if (ep_.protocol != Client::Port::Protocol::ALL) {
+        for (auto it = candidates.begin(); it != candidates.end();) {
+          if (std::get<0>(*it) && ep_.protocol != Client::Port::Protocol::UDP) {
+            it = candidates.erase(it);
+          } else if (!std::get<0>(*it) && ep_.protocol != Client::Port::Protocol::TCP) {
+            it = candidates.erase(it);
+          } else {
+            ++it;
+          }
+        }
+      }
       if (candidates.size() <= 0) {
         logger::error({{"ev","signaling server returns no candidates"},
           {"sdp",sdp},{"ufrag",uf}});
-        client_.ScheduleClose(uf);
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "no candidates found");
         return nullptr;
       }
       if (!client_.Open(ep_, candidates, 0, c)) {
-        client_.ScheduleClose(uf);
+        client_.ScheduleClose(uf, QRPC_CLOSE_REASON_PROTOCOL, 0, "failed to open connection");
       }
       return nullptr;
     }
-    int SendRequest(HttpSession &s) override {
+    int SendRequest(HttpClientSession &s) override {
       int r;
-      std::string sdp, ufrag;
-      if ((r = client_.Offer(ep_, sdp, ufrag)) < 0) {
+      std::string sdp;
+      if ((r = client_.Offer(ep_, ufrag_, pwd_, sdp)) < 0) {
         QRPC_LOGJ(error, {{"ev","fail to generate offer"},{"rc",r}});
         return QRPC_ESYSCALL;
       }
-      SetUFrag(std::move(ufrag));
-      json sdp_json = {{"sdp", sdp}};
+      SetUFrag(std::move(ufrag_));
+      json sdp_json = {
+        {"sdp", sdp},
+        {"cname", client_.cname()},
+        {"capability", client_.capability_sdp()}
+      };
       std::string sdp_json_str = sdp_json.dump(), 
         sdp_json_len_str = std::to_string(sdp_json_str.length());
       HttpHeader h[] = {
-          {.key = "Content-Type", .val = "application/sdp"},
+          {.key = "Content-Type", .val = "application/json"},
           {.key = "Content-Length", .val = sdp_json_len_str.c_str()}
       };
       return s.Request("POST", ep_.path.c_str(), h, 2, sdp_json_str.c_str(), sdp_json_str.length());
     }
-    void HandleClose(HttpSession &, const CloseReason &r) override {
+    void HandleClose(HttpClientSession &, const CloseReason &r) override {
       // in here, session that related with webrtc connection should not be actively callbacked, 
       // so we can call CloseConnection
       if (r.code != QRPC_CLOSE_REASON_LOCAL || r.detail_code != QRPC_EGOAWAY) {
         QRPC_LOGJ(info, {{"ev","close webrtc connection by whip failure"},{"rc",r.code},{"dc",r.detail_code}});
-        client_.ScheduleClose(ufrag_);
+        client_.ScheduleClose(ufrag_, QRPC_CLOSE_REASON_PROTOCOL, r.detail_code, "whip http failure");
       }
     }
   private:
     Client &client_;
     IceUFrag ufrag_;
+    std::string pwd_;
     Client::Endpoint ep_;
   };
   typedef std::function<void (int)> OnIceFailure;
+  // TODO: use concept
   template <class BASE>
   class BaseSessionTmpl : public BASE {
   public:
@@ -1937,12 +2074,262 @@ namespace client {
   };
 }
 
+Client::Client(Loop &l, Config &&config) :
+  ConnectionFactory(l, ConnectionFactory::Config(config)),
+  client_config_(std::move(config)),
+  cname_(client_config_.media_config.cname ? client_config_.media_config.cname : GenerateClientCname()),
+  capability_sdp_(SDP::CapSdpFrom(client_config_.media_config)),
+  http_client_(l, client_config_.resolver) {
+  client_config_.ifaddrs = ConnectionFactory::config().ifaddrs;
+}
+
+Client::Client(Loop &l, Config &config) :
+  Client(l, std::move(config)) {}
+
 // Client
+int Client::Connection::OnMediaSyscallAck(
+  const std::string &fn, qrpc_error_t result, const std::map<std::string,nlohmann::json> &args,
+  std::function<int (const rtp::MediaStreamConfig &)> &&on_success
+) {
+  if (result < 0) {
+    QRPC_LOGJ(error, {{"ev","produce syscall failed"},{"rc",result}});
+    return result;
+  }
+  QRPC_LOGJ(info, {{"ev","produce syscall ack received"}});
+  // mid_media_path map
+  const auto &path_map = args.find("mid_media_path_map");
+  if (path_map == args.end()) {
+    QRPC_LOGJ(error, {{"ev","produce syscall ack missing mid_media_path_map"}});
+    return QRPC_EINVAL;
+  }
+  // parse args and update media_stream_configs_
+  const auto &sdp = args.find("sdp");
+  if (sdp == args.end()) {
+    QRPC_LOGJ(error, {{"ev","produce syscall ack missing sdp"}});
+    return QRPC_EINVAL;
+  }
+  SDP remote_offer(sdp->second.get<std::string>());
+  std::string answer; SDP::MediaContext mc;
+  // this generates producer
+  if (!remote_offer.Answer(path_map->second.get<std::map<std::string,std::string>>(), *this, answer, &mc)) {
+    QRPC_LOGJ(error, {{"ev","fail to answer remote offer in produce syscall ack"}});
+    return QRPC_EINVAL;
+  }
+  // generate consumer of genrated producer, which is attached to this connection.
+  // if RTP payload of these producers are provided, it will be sent to remote peer via these consumers
+  for (const auto &kv : mc.created_producers) {
+    auto *slot = media_stream_configs().FindSlot(kv.second->params()->mid);
+    if (slot == nullptr) {
+      QRPC_LOGJ(error, {{"ev","media stream config not found for created producer"},
+        {"mid",kv.second->params()->mid}});
+      return QRPC_EINVAL;
+    }
+    // apply media status and invoke callbacks if any
+    const auto &stmap = args.find("status_map");
+    if (stmap != args.end()) {
+      const auto &it = stmap->second.find(slot->media_path);
+      if (it != stmap->second.end()) {
+        const auto m = rtp_handler().FindFrom(slot->media_path, true);
+        if (m != nullptr) {
+          const auto &reasons = it->find("pausedReasons");
+          if (reasons != it->end()) {
+            for (const auto &r : reasons->get<std::vector<std::string>>()) {
+              m->OnStateChange("pause", r.c_str());
+            }
+          }
+        }
+      }
+    }
+    // context specific initialization
+    auto r = on_success(*slot);
+    if (r < 0) {
+      QRPC_LOGJ(error,{{"ev","on_success callback failed"},{"ec",r}});
+      ASSERT(false);
+      return r;
+    }
+  }
+  return QRPC_OK;
+}
+int Client::Connection::InitMedia(const qrpc_media_config_t &config) {
+  // 1. init rtp
+  InitRTP();
+  // 2. convert qrpc_media_config_t to sdp string
+  auto cap_sdp = SDP::CapSdpFrom(config);
+  std::string answer;
+  if (!SetRtpCapability(cap_sdp, answer)) {
+    logger::error({{"ev","fail to set rtp capability"},{"reason",answer}});
+    return QRPC_EINVAL;;
+  }
+  return QRPC_OK;
+}
+int Client::Connection::OpenMedia(const qrpc_media_produce_config_t &c) {
+  // convert and add qrpc_media_produce_config_t into media_stream_configs_ to prepare for actual media production
+  rtp::MediaStreamConfig video, audio;
+  // here, mid has fixed value. but actually mid is decided by server side (see SyscallStream::OnRead fn == "produce")
+  // with creating produce stream, and respond back client side with "sdp" parameter of response payload.
+  if (!audio.Set(c.path,
+    rtp::MediaStreamConfig::MediaKind::AUDIO, rtp::MediaStreamConfig::Direction::SEND,
+    c.audio.params, rtp::MediaStreamConfig::ControlOptions(c.audio.paused), rid_seed_)) {
+    QRPC_LOGJ(error, {{"ev","invalid audio media params"}});
+    return QRPC_EINVAL;
+  }
+  if (!video.Set(c.path,
+    rtp::MediaStreamConfig::MediaKind::VIDEO, rtp::MediaStreamConfig::Direction::SEND,
+    c.video.params, rtp::MediaStreamConfig::ControlOptions(c.video.paused), rid_seed_)) {
+    QRPC_LOGJ(error, {{"ev","invalid video media params"}});
+    return QRPC_EINVAL;
+  }
+  std::map<std::string, qrpc_on_media_produce_t> on_produce_map = {
+    {audio.media_path, c.audio.source},
+    {video.media_path, c.video.source}
+  };
+  // send message "produce" via $syscall stream
+  auto midPathMap = json::object();
+  auto ridScalabilityModeMap = json::object();
+  int i = 0;
+  // set midPathMap and ridScalabilityModeMap from above audio, video
+  for (const auto &msc : std::vector<rtp::MediaStreamConfig>{audio, video}) {
+    // mid is fixed ("0" or "1"), actual value is decided by server side and set to audio/video object below callback
+    midPathMap[std::to_string(i++)] = msc.media_path;
+    for (const auto &e : msc.encodings) {
+      if (!e.rid.empty() && !e.scalabilityMode.empty()) {
+        ridScalabilityModeMap[e.rid] = e.scalabilityMode;
+      }
+    }
+  }
+  return Call("produce", {
+    // TODO: if does not worked without application section, add dummy one
+    {"sdp", SDP::MediaSdpFrom(c.audio.params, c.video.params)},
+    {"initOptions", {{"video", {{"pause", c.video.paused}}},{"audio", {{"pause", c.audio.paused}}}}},
+    {"midPathMap", midPathMap}, {"rtp", {{"ridScalabilityModeMap", ridScalabilityModeMap}}}
+  }, [this, &on_produce_map](qrpc_error_t result, const std::map<std::string,json> &args) {
+    return OnMediaSyscallAck("produce_ack", result, args, [this, &on_produce_map](const rtp::MediaStreamConfig &slot) {
+      // create consumer for this producer, by consuming it with itself.
+      // this sends RTP packet which is provided to ReceiveRtpPacket to its peer.
+      std::string error;
+      if (!rtp_handler().Consume(rtp_handler(), slot, error)) {
+        QRPC_LOGJ(error, {{"ev","fail to consume self"},{"error",error}});
+        return QRPC_EINVAL;
+      }
+      auto it = on_produce_map.find(slot.media_path);
+      if (it == on_produce_map.end()) {
+        QRPC_LOGJ(error, {{"ev","fail to find media producer callback"},{"path",slot.media_path}});
+        ASSERT(false);
+        return QRPC_EINVAL;
+      } else {
+        for (const auto &kv : slot.ssrcs) {
+          // Avoid deleted copy-assignment by constructing in place and setting fields.
+          auto pair = media_stream_producers_.emplace(
+            std::piecewise_construct,
+            std::forward_as_tuple(kv.first), std::forward_as_tuple(it->second));
+          if (pair.second) {
+            continue;
+          }
+          auto &producer = pair.first->second;
+          producer.callback = it->second;
+          producer.context.keyframe_required = false;
+          producer.context.last_produced = qrpc_time_now();
+          if (!slot.GetEncoding(kv.first, producer.context.encoding)) {
+            QRPC_LOGJ(error, {{"ev","fail to find encoding for ssrc"},{"ssrc",kv.first}});
+            ASSERT(false);
+            return QRPC_EINVAL;
+          }
+        }
+      }
+      // start produce task
+      factory().to<Client>().StartProduce();
+      return QRPC_OK;
+    });
+  });
+}
+int Client::Connection::CloseMedia(const std::string &path) {
+  return Call("close_media", {
+    {"path", path}
+  }, [this, path](qrpc_error_t result, const std::map<std::string,json> &args) {
+    if (result < 0) {
+      QRPC_LOGJ(error, {{"ev","close_media syscall failed"},{"rc",result}});
+      return result;
+    }
+    QRPC_LOGJ(info, {{"ev","close_media syscall ack received"},{"path",path}});
+    // remove media stream configs
+    auto it = media_stream_configs().begin();
+    while (it != media_stream_configs().end()) {
+      if (it->media_path == path) {
+        it = media_stream_configs().erase(it);
+      } else {
+        ++it;
+      }
+    }
+    return QRPC_OK;
+  });
+}
+int Client::Connection::WatchMedia(const qrpc_media_consume_config_t &c) {
+  // find media_stream_configs() so that config for c.path already exists
+  auto sync = media_stream_configs().FindSlotByPath(c.path) != nullptr;
+  return Call("consume", {
+    {"path", c.path},
+    {"initOptions", {{"sync", sync},{"audio", {{"pause", c.audio.paused}}},{"video", {{"pause", c.video.paused}}}}}
+  }, [this](qrpc_error_t result, const std::map<std::string,json> &args) {
+    return OnMediaSyscallAck("consume_ack", result, args, [](const rtp::MediaStreamConfig &) {
+      // nothing to do for consumer
+      return QRPC_OK;
+    });
+  });
+}
+int Client::Connection::OnSyscallAck(qrpc_msgid_t msgid, const std::map<std::string,json> &args) {
+  QRPC_LOGJ(info, {{"ev","syscall ack received"},{"msgid",msgid}});
+  auto it = inflight_syscalls_.find(msgid);
+  if (it == inflight_syscalls_.end()) {
+    // timeout or no need to wait response
+    return QRPC_OK;
+  }
+  return it->second.callback(QRPC_OK, args);
+}
+void Client::Connection::SendRtcpPacket(RTC::RTCP::Packet* packet) {
+  // hook FIR/PLI and set keyframe_required flag
+  if (packet->GetType() == RTC::RTCP::Type::PSFB) {
+    auto* feedback = static_cast<RTC::RTCP::FeedbackPsPacket*>(packet);
+    switch (feedback->GetMessageType()) {
+      case RTC::RTCP::FeedbackPs::MessageType::FIR:
+      {
+        auto* fir = static_cast<RTC::RTCP::FeedbackPsFirPacket*>(packet);
+        bool handled = false;
+        for (auto it = fir->Begin(); it != fir->End(); ++it) {
+          auto& item = *it;
+          uint32_t ssrc = item->GetSsrc();
+          auto pit = media_stream_producers_.find(ssrc);
+          if (pit != media_stream_producers_.end()) {
+            pit->second.context.keyframe_required = true;
+            logger::info({{"ev","keyframe required set by rtcp feedback"},{"ssrc",ssrc}});
+            handled = true;
+          }
+        }
+        if (handled) {
+          return; // skip sending fir packet to peer (because peer sends them)
+        }
+        break;
+      }
+      case RTC::RTCP::FeedbackPs::MessageType::PLI: {
+          uint32_t ssrc = feedback->GetMediaSsrc();
+          auto it = media_stream_producers_.find(ssrc);
+          if (it != media_stream_producers_.end()) {
+            it->second.context.keyframe_required = true;
+            logger::info({{"ev","keyframe required set by rtcp feedback"},{"ssrc",ssrc}});
+            return; // skip sending fir/pli packet to peer (because peer sends them)
+          }
+        }
+      default:
+        break;
+    }
+  }
+  // delegate to base class
+  ConnectionFactory::Connection::SendRtcpPacket(packet);
+}
 bool Client::Open(
   const Endpoint &ep,
   const std::vector<Candidate> &candidates,
   size_t idx,
-  std::shared_ptr<Connection> &c
+  std::shared_ptr<ConnectionFactory::Connection> &c
 ) {
   if (candidates.size() <= idx) {
     logger::info({
@@ -1955,7 +2342,7 @@ bool Client::Open(
       // this means, entire handshake process restarts ()
       if (http_client_.Connect(ep.host, ep.port, new client::WhipHttpProcessor(*this, {
         .host = ep.host, .path = ep.path, .port = ep.port, .protocol = Port::Protocol::TCP
-      }))) {
+      }, c->ufrag(), c->ice_server().GetPassword()))) {
         logger::info({{"ev","fallback to TCP connection"},{"host",ep.host},
           {"port",ep.port},{"path",ep.path}});
         return true;
@@ -1972,7 +2359,7 @@ bool Client::Open(
   auto on_failure = [this, endpoint = ep, candidates, idx, c, ufrag](int status) mutable {
     // try next candidate
     if (!this->Open(endpoint, candidates, idx + 1, c)) {
-      this->ScheduleClose(ufrag);
+      this->ScheduleClose(ufrag, QRPC_CLOSE_REASON_LOCAL, 0, "failed to open connection");
     }
   };
   // set remote finger print
@@ -2002,15 +2389,11 @@ bool Client::Open(
   }
   return true;
 }
-int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
-  logger::info({{"ev","new client connection"}});
-  // client connection's dtls role is server, workaround fo osx safari (16.4) does not initiate DTLS handshake
-  // even if sdp anwser ask to do it.
-  std::string pwd;
-  auto c = Create(RTC::DtlsTransport::Role::SERVER, ufrag, pwd);
+int Client::Offer(const Endpoint &ep, const IceUFrag &ufrag, const std::string &pwd, std::string &sdp) {
+  auto c = FindFromUfrag(ufrag);
   if (c == nullptr) {
-    logger::error({{"ev","fail to allocate connection"}});
-    return QRPC_EALLOC;
+    logger::error({{"ev","connection not found"},{"ufrag",ufrag}});
+    return QRPC_EINVAL;
   }
   int r;
   if ((r = SDP::Offer(*c, ufrag, pwd, ep.protocol, sdp)) < 0) {
@@ -2018,13 +2401,9 @@ int Client::Offer(const Endpoint &ep, std::string &sdp, std::string &ufrag) {
     return QRPC_EINVAL;
   }
   endpoints_[ufrag] = ep;
-  connections_[ufrag] = c;
   return QRPC_OK;
 }
-bool Client::Connect(
-  const std::string &host, int port, const std::string &path,
-  Port::Protocol proto
-) {
+bool Client::Connect(const Endpoint &ep, FactoryMethod &&fm) {
   if (udp_clients_.size() <= 0 && tcp_clients_.size() <= 0) {
     // init client
     int r;
@@ -2037,13 +2416,38 @@ bool Client::Connect(
       return r;
     }
   }
-
+  logger::info({{"ev","new client connection"}});
+  // client connection's dtls role is server, workaround fo osx safari (16.4) does not initiate DTLS handshake
+  // even if sdp anwser ask to do it.
+  std::string ufrag, pwd;
+  auto c = Create(RTC::DtlsTransport::Role::SERVER, ufrag, pwd, fm);
+  if (c == nullptr) {
+    logger::error({{"ev","fail to allocate connection"}});
+    return QRPC_EALLOC;
+  }
+  {
+    std::shared_ptr<Connection> cc;
+    if ((cc = std::dynamic_pointer_cast<Connection>(c)) == nullptr) {
+      logger::error({{"ev","connection is not Client::Connection"}});
+      return QRPC_EINVAL;
+    }
+    if (cc->transport_config().Derive(ep, config()) < 0) {
+      logger::error({{"ev","derive transport config failed"}});
+      return QRPC_EINVAL;
+    }
+    cc->SetCname(cname());
+  }
+  // set factory method to connection, so that it can be used on reconnection
+  std::dynamic_pointer_cast<Connection>(c)->SetFactoryMethod(std::move(fm));
+  connections_[ufrag] = std::move(c);
   QRPC_LOGJ(info, {{"ev","connect start"},
-    {"ep",(host + ":" + std::to_string(port) + path)}});
+    {"ep",(ep.host + ":" + std::to_string(ep.port) + ep.path)}});
   
-  return http_client_.Connect(host, port, new client::WhipHttpProcessor(*this, {
-    .host = host, .path = path, .port = port, .protocol = proto,
-  }));
+  if (!http_client_.Connect(ep.host, ep.port, new client::WhipHttpProcessor(*this, ep, ufrag, pwd))) {
+    ScheduleClose(ufrag, QRPC_CLOSE_REASON_LOCAL, 0, "fail to connect to signaling server");
+    return false;
+  }
+  return true;
 }
 int Client::Setup(const std::vector<Port> &ports) {
   // setup TCP/UDP ports
@@ -2063,6 +2467,7 @@ int Client::Setup(const std::vector<Port> &ports) {
   return QRPC_OK;
 }
 void Client::Fin() {
+  StopProduce();
   for (auto it = udp_clients_.begin(); it != udp_clients_.end();) {
     auto p = it++;
     (*p).Fin();
@@ -2071,6 +2476,7 @@ void Client::Fin() {
     auto p = it++;
     (*p).Fin();
   }
+  ConnectionFactory::Fin();
 }
 
 
@@ -2083,22 +2489,28 @@ ConnectionFactory &Listener::UdpSession::connection_factory() {
   return factory().to<UdpPort>().connection_factory();
 }
 // Listener
-bool Listener::Listen(
-  int signaling_port, int port,
-  const std::string &listen_ip, const std::string &path
-) {
+bool Listener::Listen(int signaling_port, const Endpoint &ep) {
   int r;
   if (signaling_port <= 0) {
     DIE("signaling port must be positive");
   }
-  if ((r = Start({
-    {.protocol = ConnectionFactory::Port::UDP, .port = port},
-    {.protocol = ConnectionFactory::Port::TCP, .port = port}
-  })) < 0) {
+  if (transport_config_.Derive(ep, config()) < 0) {
+    DIE("derive transport config failed");
+  }
+  auto ports = std::vector<Port>();
+  if (ep.protocol == Port::Protocol::ALL) {
+    ports.push_back({.protocol = Port::Protocol::UDP, .port = ep.port});
+    ports.push_back({.protocol = Port::Protocol::TCP, .port = ep.port});
+  } else if (ep.protocol != Port::Protocol::NONE) {
+    ports.push_back({.protocol = ep.protocol, .port = ep.port});
+  } else {
+    DIE("invalid protocol");
+  }
+  if ((r = Start(ports)) < 0) {
     logger::error({{"ev","fail to start server"},{"rc",r}});
     return false;
   }
-  router_.Route(std::regex(path), [this](HttpSession &s, std::cmatch &) {
+  router_.Route(std::regex(ep.path), [this](HttpListenerSession &s, std::cmatch &) mutable {
     int r;
     json response_json;
     if ((r = Accept(s.fsm().body(), response_json)) < 0) {
@@ -2130,13 +2542,13 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
       logger::error({{"ev","fail to find sdp to answer"},{"req",client_req}});
       return QRPC_EINVAL;
     }
-    auto client_sdp = client_sdp_it->get<std::string>();
-    auto cnit = client_req.find("cname");
+    const auto &client_sdp = client_sdp_it->get<std::string>();
+    const auto &cnit = client_req.find("cname");
     if (cnit == client_req.end()) {
       logger::error({{"ev","fail to find value for key 'cname'"},{"req",client_req}});
       return QRPC_EINVAL;
     }
-    const auto capit = client_req.find("capability");
+    const auto &capit = client_req.find("capability");
     if (capit == client_req.end()) {
       QRPC_LOGJ(error, {{"ev","fail to find value for key 'capability'"},{"req",client_req}});
       return QRPC_OK;
@@ -2144,14 +2556,14 @@ int Listener::Accept(const std::string &client_req_body, json &response) {
     // server connection's dtls role is client, workaround fo osx safari (16.4) does not initiate DTLS handshake
     // even if sdp anwser ask to do it.
     std::string ufrag, pwd;
-    auto c = Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd);
+    auto c = Create(RTC::DtlsTransport::Role::CLIENT, ufrag, pwd, factory_method_);
     if (c == nullptr) {
       logger::error({{"ev","fail to allocate connection"}});
       return QRPC_EALLOC;
     }
     logger::info({{"ev","allocate connection"},{"ufrag",ufrag}});
     std::string answer;
-    auto cap_sdp = capit->get<std::string>();
+    const auto &cap_sdp = capit->get<std::string>();
     if (!c->SetRtpCapability(cap_sdp, answer)) {
       QRPC_LOGJ(error, {{"ev","fail to parse capability"},{"capability_sdp",cap_sdp}});
       return QRPC_OK;
@@ -2210,6 +2622,7 @@ void Listener::Fin() {
     auto p = it++;
     (*p).Fin();
   }
+  ConnectionFactory::Fin();
 }
 } //namespace webrtc
 } //namespace base

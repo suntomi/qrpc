@@ -11,6 +11,12 @@ namespace base {
     typedef std::function<qrpc_time_t ()> Handler;
     virtual Id Set(const Handler &h, qrpc_time_t) = 0;
     virtual bool Cancel(Id id) = 0;
+    qrpc_alarm_t ToHandle() {
+      return reinterpret_cast<qrpc_alarm_t>(this);
+    }
+    static AlarmProcessor *FromHandle(qrpc_alarm_t al) {
+      return const_cast<AlarmProcessor *>(reinterpret_cast<const AlarmProcessor *>(al));
+    }
   };
   class NopAlarmProcessor : public AlarmProcessor {
   public:

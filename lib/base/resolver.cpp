@@ -14,6 +14,25 @@ AsyncResolver::Config::~Config() {
   }
   server_list = nullptr;
 }
+AsyncResolver::Config AsyncResolver::Config::From(const qrpc_dns_conf_t &dns) {
+  Config r;
+  r.SetTimeout(dns.query_timeout);
+  if (dns.use_round_robin) {
+    r.SetRotateDns();
+  }
+  r.SetLookup(dns.use_hosts, dns.use_dns);
+  r.SetPollInterval(dns.poll_interval);
+  if (dns.dns_hosts != nullptr) {
+    for (int i = 0; i < dns.n_dns_hosts; i++) {
+      auto port = (dns.dns_hosts[i].port > 0) ? dns.dns_hosts[i].port : 53;
+      if (!r.SetServerHostPort(dns.dns_hosts[i].addr, port)) {
+        logger::die({{"ev", "invalid dns server address"},
+          {"host", dns.dns_hosts[i].addr}, {"port", port}});
+      }
+    }
+  }
+  return r;
+}
 void AsyncResolver::Config::SetTimeout(qrpc_time_t t_o) {
   flags |= ARES_OPT_TIMEOUTMS;
   timeout = (int)qrpc_time_to_msec(t_o);
@@ -72,7 +91,7 @@ bool AsyncResolver::Initialize(const Config &config) {
     return false;
   }
   ares_set_servers_ports(channel_, config.server_list);
-  if (loop_.alarm_processor().Set([this, interval = config.granularity](){
+  if (loop_.alarm_processor().Set([this, interval = config.poll_interval](){
       Poll();
       return qrpc_time_now() + interval;
   }, qrpc_time_now()) < 0) {
